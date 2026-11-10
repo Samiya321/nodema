@@ -91,11 +91,11 @@ Pages Functions 将 `/api/*` 和 `/subscriptions/*` 转发给 Worker 服务绑�
 仓库 vars：`ENCRYPTION_KEY_ID`（缺省 local-v1）、`ECHO_URL`。入口 GeoIP/ASN 默认使用 GitHub 的 P3TERX/GeoLite.mmdb Release，无需 MaxMind 账号。可选 Secrets `MAXMIND_ACCOUNT_ID` 和 `MAXMIND_LICENSE_KEY` 同时配置后，auto 模式优先使用官方源；仓库变量 `GEOIP_DOWNLOAD_PROVIDER` 可显式选择 auto/github/maxmind/disabled。
 
 - `export-build.yml`：保存、编辑或重试订阅方案时调用；Actions 生成并发布当前成品，独立于长时间健康检测任务。
-- `source-sync.yml`：保存、修改输入、重新启用来源或点击同步时自动调用，复用完整 daily-check 工作流；一次处理所有已排队或到期来源，再检测并发布。
-- `daily-check.yml`：北京时间每天 04:17，也可复用或手动调用。每天一份 DAILY 完整快照，同日新节点进入 SUPPLEMENTAL 不可变补测批次，恢复保留期内的未完成批次。动态 matrix 最多 4 个并行 Job，每个批次独立完整发布。可传入已有 run UUID 单独恢复。
+- `source-sync.yml`（Sync sources）：只在 Dashboard 点击“同步来源”时调用；拉取已请求或到期的来源、生成 Sub-Store 子来源、刷新机场流量并发布订阅，**不检测节点**。导入/编辑来源不会自动启动它。
+- `daily-check.yml`：Dashboard“检测”按钮以 `scope`（SELF_HOSTED/AIRPORT/ALL）调用，创建 MANUAL 批次；北京时间每天 04:17 的定时运行读取设置页（默认开启、仅自建）。先同步待同步来源再检测，恢复保留期内未完成批次；动态 matrix 最多 4 个并行 Job（默认每片 100 节点、每 Job 16 并发）。可传入已有 run UUID 单独恢复。详见 [SOURCES_AIRPORTS_NAMING.md](SOURCES_AIRPORTS_NAMING.md)。
 - `backup.yml`：北京时间每周日 05:41，配置备份 AES 后，加密备份并上传仅含密文的 artifact，保留 7 天；未配置则明确跳过，不上传明文备份。
 - `tests.yml`：可在 PR 执行，但只使用合成数据和本地 PostgreSQL，不使用生产 Secrets。
-- `usage.yml`：同仓库默认分支的每日、来源、订阅构建、备份工作流完成后读取安全的 jobs 起止时间和计数，并采样数据库容量。自动 `GITHUB_TOKEN` 只需 `actions: read` / `contents: read`，无需新增长期 token。
+- `usage.yml`：同仓库默认分支的每日检测、来源同步（Sync sources）、订阅构建、备份工作流完成后读取安全的 jobs 起止时间和计数，并采样数据库容量。自动 `GITHUB_TOKEN` 只需 `actions: read` / `contents: read`，无需新增长期 token。
 
 生产工作流只接受默认分支；Actions SHA 已固定。GitHub schedule 可能延迟，必须保留手动入口。Runner 异常、Echo 异常和未完成分片不会发布整批 DOWN。Source 的 sync_requested_at 在调度前写库，一次同步尝试完成后清除；并发修改以 revision 检查保护。导入与检测流水线串行调度，订阅构建使用独立并发组；即便连续点击导致旧的 pending 工作流被替换，后一个仍会处理全部数据库待同步请求。同步失败显示 FAILED，可重试；部分解析的有效节点仍会检测。
 

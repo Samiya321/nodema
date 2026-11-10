@@ -5,13 +5,19 @@
 ## 当前可核对的基线
 
 - 生产实例已部署：Dashboard https://nodema-dashboard.pages.dev；API https://nodema-api.simb.workers.dev；Echo https://nodema-echo.simb.workers.dev。
-- 公开源码：Samiya321/nodema，main。最近功能 commit：`4429df6`（批量导入和 GitHub GeoLite），界面修正 `fb340e8`。后续文档 commit 不改变运行代码。
-- 迁移 head：`0013_export_usage`；22 张业务表，另有 alembic_version。
-- 最近运行代码的全量验证：300 Python + 33 Worker + 3 Echo = 336；[CI 42906811341](https://github.com/Samiya321/nodema/actions/runs/42906811341) 通过，含 19 种 loopback 配置握手及 100 节点合成链路。
+- 公开源码：Samiya321/nodema，main。生产仍运行 `fb340e8`（迁移 `0013_export_usage`）。
+- **分支 `claude/subscription-perf-node-mgmt-9e651c`（未合并、未部署）**：检测稳定性/速度、手动同步与检测、机场/Sub-Store 子来源、保留语义、新命名与前端重写；迁移 head `0014_sources_airports_naming`，26 张业务表。本地验证 324 Python + 32 Worker + 3 Echo，loopback 握手与 100 节点合成链路通过。设计见 [SOURCES_AIRPORTS_NAMING.md](SOURCES_AIRPORTS_NAMING.md)；上线顺序见下文“0014 上线”。
 - Cloudflare API version `8156a79e-b9b6-4192-8e77-609d04fac6d2`；Pages 预览 https://5bdfc055.nodema-dashboard.pages.dev。后续部署以实际资源状态为准。
 - 当前没有已知待补的本轮代码缺口。用户真实节点、大陆体验、长期配额、生产恢复不属于已完成的合成验收证明。不得把“基础链路通过”写成所有公网参数都已保证可用。
 
 先看 git 与实际云端状态。历史记录中的“尚未导入真实节点”和表行数不代表此刻数据库为空；用户可以随时从 Dashboard 导入，禁止据此清库。
+
+## 0014 上线（需用户授权，按顺序）
+
+1. 合并后 main 上任何 Actions（含 04:17 定时）都会执行 `alembic upgrade head`；旧 Worker 严格检查 head，迁移后旧 Dashboard 会显示未就绪。因此在用户确认的时间窗口内一次完成：先做新鲜加密备份，再手动运行一次迁移（或 `source-sync.yml`），随即部署 API Worker、Pages、Echo（Echo 新增 `org` 字段，旧 Echo 也兼容，只是 ASN 名称回退到 GeoLite）。
+2. 迁移会把仍为旧默认的命名模板换成 `{FLAG}{ROUTE}|{ASN} {SEQ}`，订阅中的节点名称会随下一次生成变化；客户端策略组如按旧名称匹配需要调整。
+3. 现有 Sub-Store 来源在下一次同步时转换为父来源 + 子来源；旧节点关联保留。
+4. 生产 repo vars 未覆盖 CHECK_CONCURRENCY，新默认 16 生效；若 Runner 出现资源问题可设 vars 回退。
 
 ## 用户最终决策（覆盖早期方案）
 
@@ -26,6 +32,10 @@
 | 批量链接 | 普通订阅和 Sub-Store API 可混合，每行一个，每批 100 个/128 KiB，单 URL 8 KiB；逐行结果、去重、一次调度 |
 | 检测 | DNS/TCP 预检、缓存、失败冷却和必要的完整代理 HTTPS；无下载测速、不做任意网段扫描 |
 | 大陆参考 | GitHub Runner 只能提供理论 P1/P2/P3/U 候选排序；真实线路/大陆可达性 UNKNOWN，禁止猜 IPLC/IEPL/CN2 |
+| 触发方式（2026-11-11） | 导入/编辑/删除不启动 Actions；用户点“同步来源”或按范围“检测”；每日定时默认只测自建，可在设置页修改 |
+| 来源与节点保留（2026-11-11） | 上游失效/移除/来源删除不删除或停测自建节点；机场节点随订阅暂停/过期/流量用完停测；删除来源默认保留节点 |
+| 机场与 Sub-Store（2026-11-11） | subscription-userinfo 识别机场并归组；Sub-Store 条目物化为独立子来源；机场与自建分开检测 |
+| 命名（2026-11-11） | `🇸🇬HK->SG|Webbing 01`：落地国旗、入口->落地（相同只写一个）、ASN 简称、组内稳定两位序号；之后可能加线路字段 |
 | 存活指标 | 首次入库不可因重导入刷新；北京时间加入当天算第 1 天，同时展示累计已检测/可用天数和可用率；未检测日不进分母 |
 | 订阅导出 | Actions 预生成五格式，Worker 读取现成文件；固定私有链接默认长期有效，支持筛选、排序、Top N、编辑、重建、撤销、到期 |
 | GeoIP | auto 优先已配完整官方 MaxMind 凭据，否则用 P3TERX/GeoLite.mmdb 的 GitHub Release；不需额外申请 Key。校验失败不阻断测活 |

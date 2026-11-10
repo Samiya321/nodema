@@ -86,7 +86,10 @@ PY
 每日主流程默认北京时间 04:17，备份默认周日 05:41。GitHub 定时可能延迟；手工执行固定工作流前确认本次任务允许生产写入/检测：
 
 ```bash
+# 只同步来源（不检测）
 gh workflow run source-sync.yml --repo Samiya321/nodema --ref main
+# 检测某一范围（SELF_HOSTED / AIRPORT / ALL）
+gh workflow run daily-check.yml --repo Samiya321/nodema --ref main -f scope=SELF_HOSTED
 gh workflow run export-build.yml --repo Samiya321/nodema --ref main
 # 恢复指定 run 使用 daily-check.yml 的 run_id 输入，不把示例 ID 当真实 ID
 ```
