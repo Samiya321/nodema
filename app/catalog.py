@@ -14,6 +14,9 @@ from app.scans import ScanService, now
 
 FILTER_KEYS = {
     "id",
+    "node_group",
+    "provider_id",
+    "asn_label",
     "q",
     "status",
     "protocol",
@@ -106,21 +109,9 @@ class Catalog:
 
     def preview(self, template):
         render_name("N000001", "vless", "tcp", "tls", template)
-        return [
-            {
-                "id": node["id"],
-                "name": render_name(
-                    node["short_id"],
-                    node["protocol"],
-                    node["transport"],
-                    node["security"],
-                    template,
-                    entry_country=node["entry_country"],
-                    exit_country=node["exit_country"],
-                ),
-            }
-            for node in self.nodes(limit=20)["items"]
-        ]
+        # Rendered by SQL so the preview always matches subscriptions exactly.
+        items = self.page({}, limit=20, template=template)["items"]
+        return [{"id": node["id"], "name": node["name"]} for node in items]
 
     def nodes(
         self,
@@ -155,7 +146,7 @@ class Catalog:
         }
         return self.page(filters, sort=sort, offset=offset, limit=limit)
 
-    def page(self, filters=None, *, sort="short_id:asc", offset=0, limit=100):
+    def page(self, filters=None, *, sort="short_id:asc", offset=0, limit=100, template=None):
         if (
             type(offset) is not int
             or offset < 0
@@ -182,7 +173,7 @@ class Catalog:
                         "offset": offset,
                         "limit": limit,
                         "fresh": self.settings.freshness_hours,
-                        "tpl": self.template(),
+                        "tpl": template or self.template(),
                     },
                 )
         except (TypeError, ValueError):

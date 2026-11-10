@@ -27,6 +27,12 @@ export default {
         ip,
         country: typeof cf?.country === "string" ? cf.country : null,
         asn: typeof cf?.asn === "number" ? cf.asn : null,
+        org:
+          typeof cf?.asOrganization === "string" &&
+          cf.asOrganization.length > 0 &&
+          cf.asOrganization.length <= 200
+            ? cf.asOrganization
+            : null,
       }),
       { headers },
     );

@@ -152,6 +152,22 @@ def test_keys_and_naming():
     settings.fingerprint_key_b64 = settings.encryption_key_b64
     with pytest.raises(AssetError, match="INVALID_KEYS"):
         settings.keys()
-    assert render_name("N000001", "vless", "ws", "tls").startswith("UNK → UNK | VLESS-WS-TLS")
+    assert render_name("N000001", "vless", "ws", "tls") == "🏳?|Unknown N000001"
+    assert (
+        render_name(
+            "N1",
+            "vless",
+            None,
+            None,
+            entry_country="HK",
+            exit_country="SG",
+            asn_label="Webbing",
+            seq=1,
+        )
+        == "🇸🇬HK->SG|Webbing 01"
+    )
+    assert render_name(
+        "N1", "vless", None, None, entry_country="SG", exit_country="SG", seq=12
+    ) == ("🇸🇬SG|Unknown 12")
     with pytest.raises(AssetError, match="INVALID_NAME_TEMPLATE"):
         render_name("N000001", "vless", None, None, "{SHORT_ID.__class__}")

@@ -15,6 +15,10 @@ import httpcore
 
 from app.domain import AssetError
 
+# Panels commonly send subscription-userinfo (and a Clash/Mihomo document, which is
+# parsed like any other format) only to client-like user agents.
+DEFAULT_USER_AGENT = "clash.meta"
+
 
 def public_ip(value: str) -> bool:
     try:
@@ -177,12 +181,14 @@ class Fetcher:
         max_redirects=3,
         pool_factory=None,
         allow_http=False,
+        user_agent=DEFAULT_USER_AGENT,
     ):
         self.max_bytes, self.timeout, self.max_redirects = max_bytes, timeout, max_redirects
         self.pool_factory = pool_factory or self._pool
         self._metrics = ContextVar("nodema_fetch_metrics", default=None)
         self._deadline = ContextVar("nodema_fetch_deadline", default=None)
         self.allow_http = allow_http
+        self.user_agent = user_agent
         self._metric_lock = Lock()
 
     @property
@@ -213,6 +219,12 @@ class Fetcher:
         )
 
     def fetch(self, url: str, *, user_agent=None) -> bytes:
+        return self.fetch_meta(url, user_agent=user_agent)[0]
+
+    def fetch_meta(self, url: str, *, user_agent=None) -> tuple[bytes, dict]:
+        """Body plus a few bounded, non-credential metadata headers (airport usage)."""
+        from app.ingestion.airport import KEPT_HEADERS, MAX_HEADER_LENGTH
+
         if self._deadline.get() is None:
             self.reset_metrics()
         metrics = self.metrics
@@ -238,7 +250,7 @@ class Fetcher:
                         "GET",
                         url,
                         headers={
-                            "User-Agent": user_agent or "nodema/0.2",
+                            "User-Agent": user_agent or self.user_agent,
                             "Accept-Encoding": "identity",
                         },
                         extensions={"timeout": {"connect": 5, "read": 10, "write": 5, "pool": 5}},
@@ -264,7 +276,12 @@ class Fetcher:
                             self.max_bytes,
                         )
                         _remaining(deadline)
-                        return body
+                        kept = {}
+                        for name in KEPT_HEADERS:
+                            value = headers.get(name.encode())
+                            if value is not None:
+                                kept[name] = value[:MAX_HEADER_LENGTH].decode("latin-1")
+                        return body, kept
             raise AssetError("FETCH_REDIRECT_LIMIT")
         except AssetError:
             raise

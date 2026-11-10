@@ -14,6 +14,7 @@ class SubstoreEntry:
     urls: list[str] = field(repr=False)
     user_agent: str | None = field(default=None, repr=False)
     processors: bool = False
+    name: str | None = field(default=None, repr=False)
 
 
 @dataclass(repr=False)
@@ -74,8 +75,17 @@ def parse_substore_index(payload: bytes, *, required=False, max_items=10000):
                 or any(ord(c) < 32 or ord(c) > 126 for c in user_agent)
             ):
                 raise AssetError("INVALID_SUBSCRIPTION_USER_AGENT")
+            name = entry.get("displayName") or entry.get("name")
             result.entries.append(
-                SubstoreEntry(ordinal, mode, content, urls, user_agent, bool(entry.get("process")))
+                SubstoreEntry(
+                    ordinal,
+                    mode,
+                    content,
+                    urls,
+                    user_agent,
+                    bool(entry.get("process")),
+                    name if isinstance(name, str) else None,
+                )
             )
         except AssetError as error:
             result.issues.append(ParseIssue(error.code, ordinal))

@@ -55,7 +55,7 @@ def test_queue_stable_link_versions_and_recovery(service, monitor_settings, fixt
     )
 
 
-@pytest.mark.parametrize("change", ["node", "source", "membership", "config"])
+@pytest.mark.parametrize("change", ["node", "source", "membership", "airport", "config"])
 def test_selected_node_changes_block_old_file_immediately(
     service, monitor_settings, fixture_bytes, change
 ):
@@ -69,6 +69,8 @@ def test_selected_node_changes_block_old_file_immediately(
             session.execute(sa.text("UPDATE sources SET enabled=false"))
         elif change == "membership":
             session.execute(sa.text("UPDATE node_sources SET is_present=false"))
+        elif change == "airport":
+            session.execute(sa.text("UPDATE sources SET kind='AIRPORT', enabled=false"))
         else:
             session.execute(sa.update(Node).where(Node.id == node_id).values(config_data=b"{}"))
     assert not exports.get(identifier)["serving"]
@@ -78,6 +80,10 @@ def test_selected_node_changes_block_old_file_immediately(
     if change == "config":
         assert result["failed"] == 1
         assert not exports.get(identifier)["serving"]
+    elif change in ("source", "membership"):
+        # Self-hosted nodes outlive a paused source or an upstream removal.
+        assert result["ready"] == 1
+        assert exports.download(identifier, profile["token"])[0].startswith(b"vless://")
     else:
         assert result["ready"] == 1
         assert exports.download(identifier, profile["token"])[0] == b""

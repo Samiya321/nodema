@@ -1,16 +1,23 @@
+"""Sub-Store indexes materialize independent child sources; airports are detected
+from usage headers. Upstream failures never remove what was already imported."""
+
 import json
+from datetime import UTC, datetime, timedelta
 
 import pytest
 import sqlalchemy as sa
 
-from app.database.models import Node, NodeSource, Source
+from app.checker.health import Observation
+from app.database.models import Provider, Source
 from app.domain import AssetError, SourceType
+from app.scans import ScanService
 
 pytestmark = pytest.mark.integration
 API = "http://store.example:3000/api/subs"
 REMOTE = "https://subscriptions.example/remote?token=synthetic-private"
-LOCAL = "trojan://synthetic-local@local.example:443"
-URI = b"trojan://synthetic-remote@remote.example:443"
+LOCAL = "trojan://synthetic-local@local.example:443#Local"
+URI = b"trojan://synthetic-remote@remote.example:443#Remote"
+FUTURE = int((datetime.now(UTC) + timedelta(days=30)).timestamp())
 
 
 def body(entries):
@@ -18,96 +25,197 @@ def body(entries):
 
 
 class Fetcher:
-    def __init__(self, entries):
-        self.index, self.remote = body(entries), URI
+    def __init__(self, entries, headers=None):
+        self.index, self.remote, self.headers = body(entries), URI, headers or {}
+        self.agents = {}
 
-    def fetch(self, url, **kwargs):
+    def fetch_meta(self, url, *, user_agent=None):
+        self.agents[url] = user_agent
         if url == API:
-            return self.index
+            if isinstance(self.index, AssetError):
+                raise self.index
+            return self.index, {}
         assert url == REMOTE
         if isinstance(self.remote, AssetError):
             raise self.remote
-        return self.remote
+        return self.remote, dict(self.headers)
 
 
-def test_substore_child_change_without_index_change_and_plaintext_snapshots(service):
-    fetcher = Fetcher([{"name": "synthetic", "url": REMOTE, "source": "remote"}])
+def sync_all(service, rounds=3):
+    """Mirror `nodema source sync-all`: follow children created by an index."""
+    results = []
+    for _ in range(rounds):
+        pending = [
+            s["id"]
+            for s in service.list_sources()
+            if s["enabled"] and (s["sync_requested_at"] or s["last_sync_status"] == "NEVER")
+        ]
+        if not pending:
+            break
+        results += [service.sync_source(source_id) for source_id in pending]
+    return results
+
+
+def api_source(service, fetcher):
     service.fetcher = fetcher
-    source = service.create_source(
+    return service.create_source(
         name="Sub-Store", source_type=SourceType.SUBSCRIPTION_URL, payload=API.encode()
     )["id"]
-    first = service.sync_source(source)
-    assert first["status"] == "SUCCESS" and first["created_nodes"] == 1
-    assert service.sync_source(source)["status"] == "UNCHANGED"
-    assert service.get_source(source)["last_parse_summary"]["subscription"]["remote"] == 1
-    old_hash = service.get_source(source)["content_hash"]
-    fetcher.remote = URI.replace(b"synthetic-remote", b"synthetic-changed")
-    assert service.sync_source(source)["created_nodes"] == 1
-    assert service.get_source(source)["content_hash"] != old_hash
-    assert len(service.list_nodes()) == 2 and sum(n["eligible"] for n in service.list_nodes()) == 1
-    with service.sessions() as session:
-        saved = session.get(Source, source)
-        assert b"synthetic-private" in saved.payload_data + saved.url_data
-        snapshot = json.loads(bytes(saved.payload_data))
-        assert snapshot["format"] == "nodema-resolved-substore-v1"
-        assert len(snapshot["documents"]) == 2
-        assert all(
-            json.loads(n.config_data)["protocol"] == n.protocol
-            for n in session.scalars(sa.select(Node))
-        )
-    assert REMOTE not in str(service.get_source(source))
 
 
-def test_substore_partial_failure_keeps_memberships_until_complete_snapshot(service):
+def children(service, parent):
+    return [s for s in service.list_sources() if s["parent_source_id"] == parent]
+
+
+def test_index_materializes_independent_children(service):
     fetcher = Fetcher(
-        [{"source": "local", "mergeSources": "localFirst", "content": LOCAL, "url": REMOTE}]
+        [
+            {"name": "remote-one", "url": REMOTE, "source": "remote", "ua": "custom-ua/1"},
+            {"name": "mine", "source": "local", "content": LOCAL},
+        ]
     )
-    service.fetcher = fetcher
-    source = service.create_source(
-        name="Sub-Store", source_type=SourceType.SUBSCRIPTION_URL, payload=API.encode()
-    )["id"]
-    assert service.sync_source(source)["unique_nodes"] == 2
-    fetcher.remote = AssetError("FETCH_TIMEOUT")
-    result = service.sync_source(source)
-    assert result["status"] == "PARTIAL"
-    assert result["subscription"]["failed_references"] == 1
+    parent = api_source(service, fetcher)
+    first = service.sync_source(parent)
+    assert first["status"] == "SUCCESS" and first["children"]["created"] == 2
+    assert service.get_source(parent)["detected_kind"] == "SUBSTORE"
+    sync_all(service)
+    kids = children(service, parent)
+    assert {k["type"] for k in kids} == {"SUBSCRIPTION_URL", "RAW_TEXT"}
+    assert all(k["last_sync_status"] == "SUCCESS" for k in kids)
+    assert fetcher.agents[REMOTE] == "custom-ua/1"
+    assert len(service.list_nodes()) == 2 and all(n["eligible"] for n in service.list_nodes())
+    again = service.sync_source(parent)
+    assert again["children"]["created"] == 0 and again["children"]["unchanged"] == 2
+    assert REMOTE not in str(service.get_source(parent))
+
+
+def test_dead_api_or_dead_link_never_hides_nodes(service):
+    fetcher = Fetcher(
+        [{"name": "remote", "url": REMOTE}, {"name": "local", "source": "local", "content": LOCAL}]
+    )
+    parent = api_source(service, fetcher)
+    sync_all(service)
     assert sum(n["eligible"] for n in service.list_nodes()) == 2
-    fetcher.index = body([{"source": "local", "content": LOCAL}])
-    assert service.sync_source(source)["status"] == "SUCCESS"
-    assert sum(n["eligible"] for n in service.list_nodes()) == 1
-    with service.sessions() as session:
-        assert session.scalar(sa.select(sa.func.count()).select_from(NodeSource)) == 2
-
-
-def test_invalid_or_empty_api_response_never_clears_assets(service):
-    fetcher = Fetcher([{"source": "local", "content": LOCAL}])
-    service.fetcher = fetcher
-    source = service.create_source(
-        name="Sub-Store", source_type=SourceType.SUBSCRIPTION_URL, payload=API.encode()
-    )["id"]
-    service.sync_source(source)
-    for raw in (
+    for broken in (
+        AssetError("FETCH_TIMEOUT"),
         body([]),
         b'{"status":"failed","data":[],"message":"sensitive"}',
         b"<html>Login</html>",
     ):
-        fetcher.index = raw
-        result = service.sync_source(source)
-        assert result["status"] == "FAILED"
-        assert service.list_nodes()[0]["eligible"]
-        assert "sensitive" not in str(service.get_source(source))
+        fetcher.index = broken
+        assert service.sync_source(parent)["status"] == "FAILED"
+        assert "sensitive" not in str(service.get_source(parent))
+    fetcher.remote = AssetError("FETCH_HTTP_ERROR")
+    for kid in children(service, parent):
+        service.request_sync(kid["id"])
+    sync_all(service)
+    assert sum(n["eligible"] for n in service.list_nodes()) == 2
+    # An upstream that drops a node also keeps it (retained, flagged as not present).
+    fetcher.remote = b"trojan://another@other.example:443#Other"
+    remote_kid = next(k for k in children(service, parent) if k["type"] == "SUBSCRIPTION_URL")
+    service.sync_source(remote_kid["id"])
+    nodes = service.list_nodes()
+    assert len(nodes) == 3 and all(n["eligible"] for n in nodes)
 
 
-def test_substore_aggregate_budget_is_separate_from_ordinary_document_budget(service):
-    service.max_items = 1
-    service.fetcher = Fetcher([{"url": REMOTE}])
-    service.fetcher.remote = URI + b"\n" + URI.replace(b"remote.example", b"other.example")
-    api = service.create_source(
-        name="API", source_type=SourceType.SUBSCRIPTION_URL, payload=API.encode()
+def test_entries_removed_from_index_keep_their_child(service):
+    fetcher = Fetcher(
+        [{"name": "remote", "url": REMOTE}, {"name": "local", "source": "local", "content": LOCAL}]
+    )
+    parent = api_source(service, fetcher)
+    sync_all(service)
+    fetcher.index = body([{"name": "local", "source": "local", "content": LOCAL}])
+    result = service.sync_source(parent)
+    assert len(result["children"]["missing_from_index"]) == 1
+    assert len(children(service, parent)) == 2
+
+
+def test_direct_import_is_not_duplicated_by_index(service):
+    fetcher = Fetcher([{"name": "remote", "url": REMOTE}])
+    service.fetcher = fetcher
+    service.create_source(
+        name="direct", source_type=SourceType.SUBSCRIPTION_URL, payload=REMOTE.encode()
+    )
+    parent = api_source(service, fetcher)
+    assert service.sync_source(parent)["children"]["shared"] == 1
+    assert children(service, parent) == []
+
+
+def airport_headers(expire=FUTURE, used=100, total=1000):
+    return {
+        "subscription-userinfo": f"upload=0; download={used}; total={total}; expire={expire}",
+        "profile-title": "base64:" + "U3ludGhldGljIEFpcg==",  # "Synthetic Air"
+        "profile-web-page-url": "https://air.example/user/login?token=secret",
+    }
+
+
+def airport_source(service, headers):
+    fetcher = Fetcher([], headers)
+    fetcher.remote = (
+        URI
+        + b"\ntrojan://info@remote.example:443#%E5%89%A9%E4%BD%99%E6%B5%81%E9%87%8F%EF%BC%9A10GB"
+    )
+    service.fetcher = fetcher
+    source = service.create_source(
+        name="air", source_type=SourceType.SUBSCRIPTION_URL, payload=REMOTE.encode()
     )["id"]
-    assert service.sync_source(api)["unique_nodes"] == 2
-    ordinary = service.create_source(
-        name="ordinary", source_type=SourceType.RAW_TEXT, payload=service.fetcher.remote
-    )["id"]
-    result = service.sync_source(ordinary)
-    assert result["status"] == "FAILED" and result["error_code"] == "TOO_MANY_ITEMS"
+    return source, service.sync_source(source)
+
+
+def test_airport_headers_classify_group_and_filter_info_nodes(service):
+    source, result = airport_source(service, airport_headers())
+    assert result["info_nodes"] == 1 and result["unique_nodes"] == 1
+    saved = service.get_source(source)
+    assert saved["detected_kind"] == "AIRPORT"
+    assert saved["traffic_total"] == 1000 and saved["traffic_download"] == 100
+    assert saved["profile_url"] == "https://air.example"  # never the token-bearing path
+    with service.sessions() as session:
+        provider = session.get(Provider, saved["provider_id"])
+        assert provider.name == "Synthetic Air"
+        group = session.scalar(sa.text("SELECT node_group FROM nodema_node_scope"))
+        assert group == "AIRPORT"
+    assert service.list_nodes()[0]["eligible"]
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        airport_headers(expire=int((datetime.now(UTC) - timedelta(days=1)).timestamp())),
+        airport_headers(used=1000, total=1000),
+    ],
+)
+def test_expired_or_exhausted_airport_is_not_tested(service, headers):
+    airport_source(service, headers)
+    assert not service.list_nodes()[0]["eligible"]
+
+
+def test_scan_scope_separates_airport_and_self_hosted(service, monitor_settings):
+    airport_source(service, airport_headers())
+    service.create_source(
+        name="vps", source_type=SourceType.RAW_TEXT, payload=b"trojan://own@vps.example:443#VPS"
+    )
+    sync_all(service)
+
+    class Checker:
+        def preflight(self):
+            pass
+
+        def close(self):
+            pass
+
+        def check(self, identity, short_id):
+            return Observation(status="UP", exit_country="JP", exit_ip="8.8.8.8")
+
+    scans = ScanService(service, monitor_settings, checker_factory=Checker)
+    self_hosted = scans.create(scope="SELF_HOSTED", manual=True)
+    assert self_hosted["node_count"] == 1 and self_hosted["kind"] == "MANUAL"
+    airports = scans.create(scope="AIRPORT", manual=True)
+    assert airports["node_count"] == 1
+    # A manual retest of the same scope while the first is unfinished skips pending nodes.
+    assert scans.create(scope="SELF_HOSTED", manual=True)["node_count"] == 0
+    for run in (self_hosted, airports):
+        scans.run_shard(run["id"], 0)
+        assert scans.finalize(run["id"])["status"] == "COMPLETED"
+    assert scans.create(scope="ALL", manual=True)["node_count"] == 2
+    with service.sessions() as session:
+        assert session.scalar(sa.select(sa.func.count()).select_from(Source)) == 2

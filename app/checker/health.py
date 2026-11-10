@@ -34,6 +34,7 @@ class Observation:
     exit_country: str | None = None
     exit_city: str | None = None
     exit_asn: int | None = None
+    exit_asn_org: str | None = None
     dns_duration_ms: int | None = None
     tcp_duration_ms: int | None = None
     http_duration_ms: int | None = None
@@ -124,7 +125,15 @@ class EchoClient:
                 raise ValueError
             if asn is not None and (type(asn) is not int or not 0 <= asn <= 4294967295):
                 raise ValueError
-            return {"ip": str(ip), "country": country.upper() if country else None, "asn": asn}
+            org = data.get("org")
+            if not isinstance(org, str) or not 0 < len(org) <= 200 or not org.isprintable():
+                org = None
+            return {
+                "ip": str(ip),
+                "country": country.upper() if country else None,
+                "asn": asn,
+                "org": org,
+            }
         except AssetError:
             self.metrics["echo_failures"] += 1
             raise
@@ -379,6 +388,9 @@ class HealthChecker:
             }
             result.exit_country = data.get("country") or geo["country"]
             result.exit_asn = data.get("asn") if data.get("asn") is not None else geo["asn"]
+            # Prefer the GeoLite organization only when it describes the same ASN.
+            same_asn = geo.get("asn") == result.exit_asn
+            result.exit_asn_org = data.get("org") or (geo.get("organization") if same_asn else None)
             result.exit_city = geo["city"]
             result.status = (
                 "DEGRADED" if result.http_duration_ms > self.settings.degraded_http_ms else "UP"
