@@ -21,8 +21,7 @@ const env = {
   ENCRYPTION_KEY_ID: "test-v1",
   ENCRYPTION_KEY_B64: Buffer.alloc(32, "E").toString("base64"),
   ADMIN_PASSWORD: "synthetic-worker-admin-password-long-enough",
-  NAME_TEMPLATE:
-    "{ENTRY_COUNTRY} → {EXIT_COUNTRY} | {PROTOCOL}-{TRANSPORT}-{SECURITY} | {SHORT_ID}",
+  NAME_TEMPLATE: "{FLAG}{ROUTE}|{ASN} {SEQ}",
   FRESHNESS_HOURS: "36",
   EXPORT_TTL_HOURS: "24",
   GITHUB_REPOSITORY: "",
@@ -151,7 +150,7 @@ test("Worker/Python/PostgreSQL round trip", async (t) => {
     sourceId = value.id;
     assert.ok(value.sync_requested_at);
     assert.equal(value.pipeline.dispatched, false);
-    assert.equal(value.pipeline.reason, "DISPATCH_NOT_CONFIGURED");
+    assert.equal(value.pipeline.reason, "MANUAL_SYNC");
     assert.ok(!JSON.stringify(value).includes("vless://"));
     const readiness = await (await request("/api/readiness")).json();
     assert.equal(readiness.checks.storage, "PLAINTEXT");
@@ -168,36 +167,7 @@ print(json.dumps(s.sync_source(UUID('${sourceId}')),default=str))`),
     nodeId = (await (await request("/api/nodes")).json()).items[0].id;
   });
   await t.test(
-    "Source sync queues Actions, never parses in Worker",
-    async () => {
-      assert.equal(
-        (await request(`/api/sources/${sourceId}/sync`, { method: "POST" }))
-          .status,
-        202,
-      );
-      const original = globalThis.fetch;
-      env.GITHUB_REPOSITORY = "synthetic-owner/synthetic-repo";
-      env.GITHUB_DISPATCH_TOKEN = "synthetic-actions-token";
-      try {
-        globalThis.fetch = async (url, options) => {
-          assert.match(String(url), /source-sync.yml\/dispatches$/);
-          assert.deepEqual(JSON.parse(options.body).inputs, {});
-          return new Response(null, { status: 204 });
-        };
-        assert.equal(
-          (await request(`/api/sources/${sourceId}/sync`, { method: "POST" }))
-            .status,
-          202,
-        );
-      } finally {
-        globalThis.fetch = original;
-        env.GITHUB_REPOSITORY = "";
-        env.GITHUB_DISPATCH_TOKEN = "";
-      }
-    },
-  );
-  await t.test(
-    "source create and edit automatically submit one complete pipeline",
+    "imports, edits and per-source sync only record requests; sync and tests start explicitly",
     async () => {
       const original = globalThis.fetch;
       env.GITHUB_REPOSITORY = "synthetic-owner/synthetic-repo";
@@ -208,68 +178,75 @@ print(json.dumps(s.sync_source(UUID('${sourceId}')),default=str))`),
           calls.push({ url: String(url), body: JSON.parse(options.body) });
           return new Response(null, { status: 204 });
         };
+        const marked = await request(`/api/sources/${sourceId}/sync`, {
+          method: "POST",
+        });
+        assert.equal(marked.status, 202);
+        assert.equal((await marked.json()).status, "REQUESTED");
         const created = await request("/api/sources", {
           method: "POST",
           data: {
             name: "queued batch",
             type: "RAW_TEXT",
+            kind: "SELF_HOSTED",
             payload:
               "vless://00000000-0000-4000-8000-000000000001@batch.example:443",
           },
         });
         assert.equal(created.status, 201);
         const saved = await created.json();
-        assert.equal(saved.pipeline.dispatched, true);
-        assert.ok(saved.sync_requested_at);
+        assert.equal(saved.pipeline.dispatched, false);
+        assert.equal(saved.kind, "SELF_HOSTED");
         const updated = await (
           await request(`/api/sources/${saved.id}`, {
             method: "PATCH",
-            data: { format_hint: "AUTO" },
+            data: { format_hint: "AUTO", user_agent: "custom-agent/1" },
           })
         ).json();
-        assert.equal(updated.pipeline.dispatched, true);
-        assert.equal(calls.length, 2);
-        assert.ok(
-          calls.every((c) => c.url.endsWith("source-sync.yml/dispatches")),
-        );
-        assert.ok(calls.every((c) => Object.keys(c.body.inputs).length === 0));
+        assert.equal(updated.pipeline.dispatched, false);
+        assert.equal(updated.user_agent, "custom-agent/1");
         await request(`/api/sources/${saved.id}`, { method: "DELETE" });
-      } finally {
-        globalThis.fetch = original;
-        env.GITHUB_REPOSITORY = "";
-        env.GITHUB_DISPATCH_TOKEN = "";
-      }
-    },
-  );
-  await t.test(
-    "failed dispatch preserves the saved source and pending request",
-    async () => {
-      const original = globalThis.fetch;
-      env.GITHUB_REPOSITORY = "synthetic-owner/synthetic-repo";
-      env.GITHUB_DISPATCH_TOKEN = "synthetic-actions-token";
-      try {
+        assert.equal(calls.length, 0);
+        const pipeline = await (await request("/api/pipeline")).json();
+        assert.ok(pipeline.pending_sources >= 1);
+        assert.equal(pipeline.settings.daily_scan_scope, "SELF_HOSTED");
+        assert.equal(
+          (await request("/api/pipeline/sync", { method: "POST" })).status,
+          202,
+        );
+        assert.equal(
+          (
+            await request("/api/scans", {
+              method: "POST",
+              data: { scope: "AIRPORT" },
+            })
+          ).status,
+          202,
+        );
+        assert.equal(
+          (
+            await request("/api/scans", {
+              method: "POST",
+              data: { scope: "EVERYTHING" },
+            })
+          ).status,
+          400,
+        );
+        assert.deepEqual(
+          calls.map((c) => [c.url.split("/").at(-2), c.body.inputs]),
+          [
+            ["source-sync.yml", {}],
+            ["daily-check.yml", { run_id: "", scope: "AIRPORT" }],
+          ],
+        );
         globalThis.fetch = async () => {
           throw new Error("synthetic-private-network-error");
         };
-        const response = await request("/api/sources", {
-          method: "POST",
-          data: {
-            name: "retry batch",
-            type: "RAW_TEXT",
-            payload:
-              "vless://00000000-0000-4000-8000-000000000001@retry.example:443",
-          },
-        });
-        assert.equal(response.status, 201);
-        const saved = await response.json();
-        assert.equal(saved.pipeline.reason, "DISPATCH_FAILED");
-        assert.equal(saved.pipeline.dispatched, false);
-        const stored = await (await request(`/api/sources/${saved.id}`)).json();
-        assert.ok(stored.sync_requested_at);
+        const failed = await request("/api/pipeline/sync", { method: "POST" });
+        assert.equal(failed.status, 502);
         assert.ok(
-          !JSON.stringify(saved).includes("synthetic-private-network-error"),
+          !(await failed.text()).includes("synthetic-private-network-error"),
         );
-        await request(`/api/sources/${saved.id}`, { method: "DELETE" });
       } finally {
         globalThis.fetch = original;
         env.GITHUB_REPOSITORY = "";
@@ -332,7 +309,8 @@ for shard in scans.get(run['id'])['shards']:scans.run_shard(run['id'],shard['sha
 scans.finalize(run['id'])`);
     const node = await (await request(`/api/nodes/${nodeId}`)).json();
     assert.equal(node.status, "UP");
-    assert.match(node.name, /SG → JP/);
+    assert.equal(node.name, "🇯🇵SG->JP|Unknown 01");
+    assert.equal(node.node_group, "SELF_HOSTED");
     assert.equal(node.history.length, 1);
     const aliases = await (
       await request(`/api/nodes/${nodeId}/aliases`)
@@ -535,7 +513,7 @@ for r in scans.plan()['runs']:
   ];
   for (const protocol of protocols) {
     const nodes = await (
-      await request("/api/nodes?protocol=" + protocol)
+      await request(`/api/nodes?protocol=${protocol}&source_id=${source.id}`)
     ).json();
     assert.ok(
       nodes.items.some(
@@ -557,9 +535,10 @@ for r in scans.plan()['runs']:
   ).json();
   assert.equal(Number(sourceDetail.present_nodes), 6);
   for (const format of ["mihomo", "singbox", "uri", "json", "csv"]) {
+    // Nodes of earlier, deleted test sources are retained; scope to this source.
     const created = await request("/api/exports", {
       method: "POST",
-      data: { format },
+      data: { format, filters: { source_id: source.id } },
     });
     const artifact = await publish(created);
     assert.equal(artifact.node_count, 6);
@@ -638,17 +617,35 @@ from uuid import UUID
 class Fetcher:
  def fetch(self,url):
   assert url == '${endpoint}'
-  return json.dumps({'status':'success','data':[{'source':'local','content':'trojan://synthetic-substore@substore.example:443'}]}).encode()
+  return json.dumps({'status':'success','data':[{'name':'mine','source':'local','content':'trojan://synthetic-substore@substore.example:443'}]}).encode()
 assets=AssetService(session_factory(make_engine(os.environ['DATABASE_URL'])),b'H'*32,fetcher=Fetcher())
-print(json.dumps(assets.sync_source(UUID('${source.id}')),default=str))`),
+parent=assets.sync_source(UUID('${source.id}'))
+child=[s for s in assets.list_sources() if s['parent_source_id']==UUID('${source.id}')][0]
+print(json.dumps({'parent':parent,'child':assets.sync_source(child['id'])},default=str))`),
   );
-  assert.equal(imported.status, "SUCCESS");
-  assert.equal(imported.unique_nodes, 1);
+  assert.equal(imported.parent.status, "SUCCESS");
+  assert.equal(imported.parent.children.created, 1);
+  assert.equal(imported.child.unique_nodes, 1);
   const detail = await (await request(`/api/sources/${source.id}`)).json();
-  assert.equal(detail.last_parse_summary.subscription.kind, "substore");
-  assert.equal(detail.last_parse_summary.subscription.local, 1);
+  assert.equal(detail.detected_kind, "SUBSTORE");
+  assert.equal(detail.url_host, "store.example");
   assert.ok(!JSON.stringify(detail).includes("synthetic-substore"));
-  await request(`/api/sources/${source.id}`, { method: "DELETE" });
+  const stores = await (await request("/api/substores")).json();
+  assert.equal(stores.length, 1);
+  assert.deepEqual(
+    [stores[0].children, stores[0].healthy_children, stores[0].node_count],
+    [1, 1, 1],
+  );
+  const one = await (await request(`/api/substores/${source.id}`)).json();
+  assert.equal(one.children[0].origin_label, "mine · 本地");
+  assert.ok(!JSON.stringify(stores).includes("synthetic-api-secret"));
+  const removed = await (
+    await request("/api/sources/batch", {
+      method: "POST",
+      data: { ids: [source.id], action: "delete", include_children: true },
+    })
+  ).json();
+  assert.equal(removed.changed, 2);
 });
 
 test("shared SQL filtering, Runner summaries, reference policy and annotations agree across runtimes", async () => {
@@ -1152,7 +1149,7 @@ test("archived scans expose their summary and cannot dispatch retries", async ()
   }
 });
 
-test("bulk subscription import is atomic, deduplicated and dispatches once", async () => {
+test("bulk subscription import is atomic, deduplicated and never dispatches", async () => {
   const original = globalThis.fetch;
   env.GITHUB_REPOSITORY = "synthetic-owner/synthetic-repo";
   env.GITHUB_DISPATCH_TOKEN = "synthetic-actions-token";
@@ -1193,9 +1190,8 @@ test("bulk subscription import is atomic, deduplicated and dispatches once", asy
     );
     assert.equal(result.items[0].id, result.items[2].id);
     assert.ok(!JSON.stringify(result).includes("synthetic-bulk-secret"));
-    assert.equal(calls.length, 1);
-    assert.match(calls[0].url, /source-sync.yml\/dispatches$/);
-    assert.deepEqual(calls[0].body.inputs, {});
+    assert.equal(calls.length, 0);
+    assert.equal(result.pipeline.reason, "MANUAL_SYNC");
     for (const id of ids)
       assert.ok(
         (await (await request(`/api/sources/${id}`)).json()).sync_requested_at,
@@ -1205,7 +1201,7 @@ test("bulk subscription import is atomic, deduplicated and dispatches once", asy
     ).json();
     assert.equal(repeat.created, 0);
     assert.equal(repeat.duplicates, 3);
-    assert.equal(calls.length, 1);
+    assert.equal(calls.length, 0);
     for (const urls of [
       "https://limits.example/\n".repeat(101),
       "x".repeat(131073),
@@ -1227,7 +1223,7 @@ test("bulk subscription import is atomic, deduplicated and dispatches once", asy
     ).json();
     assert.equal(failed.created, 1);
     ids.add(failed.items[0].id);
-    assert.equal(failed.pipeline.reason, "DISPATCH_FAILED");
+    assert.equal(failed.pipeline.reason, "MANUAL_SYNC");
     assert.ok(
       (await (await request(`/api/sources/${failed.items[0].id}`)).json())
         .sync_requested_at,
@@ -1273,4 +1269,137 @@ test("bulk URL validation matches shared Python fixtures", async () => {
     if (c.url) assert.equal(subscriptionURL(c.value), c.url);
     else assert.throws(() => subscriptionURL(c.value));
   }
+});
+
+test("airports, providers, ASN labels, settings and batch actions", async () => {
+  await request("/api/naming-rules", {
+    method: "PUT",
+    data: { template: "{FLAG}{ROUTE}|{ASN} {SEQ}" },
+  });
+  const created = await (
+    await request("/api/sources", {
+      method: "POST",
+      data: {
+        name: "Synthetic airport",
+        type: "SUBSCRIPTION_URL",
+        payload: "https://air.example/sub?token=synthetic-air-secret",
+      },
+    })
+  ).json();
+  const synced = JSON.parse(
+    py(`import json,os,base64
+from uuid import UUID
+from app.config import Settings
+from app.database.session import make_engine,session_factory
+from app.ingestion.service import AssetService
+from app.scans import ScanService
+from app.checker.health import Observation
+class Fetcher:
+ def fetch_meta(self,url,user_agent=None):
+  return b'trojan://synthetic-air@air-node.example:443#HK', {'subscription-userinfo':'upload=1; download=99; total=1000; expire=4102444800','profile-title':'Synthetic Air'}
+assets=AssetService(session_factory(make_engine(os.environ['DATABASE_URL'])),b'H'*32,fetcher=Fetcher())
+result=assets.sync_source(UUID('${created.id}'))
+settings=Settings(_env_file=None,database_url=os.environ['DATABASE_URL'],encryption_key_b64=base64.b64encode(b'E'*32).decode(),fingerprint_key_b64=base64.b64encode(b'H'*32).decode(),retry_delay_seconds=0)
+class Fake:
+ def preflight(self):pass
+ def check(self,d,name):return Observation(status='UP',entry_country='HK',exit_country='SG',exit_asn=64999,exit_asn_org='WEBBING HONG KONG LIMITED',exit_ip='8.8.8.8',http_duration_ms=3)
+ def close(self):pass
+scans=ScanService(assets,settings,checker_factory=Fake)
+run=scans.create(scope='AIRPORT',manual=True)
+for s in scans.get(run['id'])['shards']:scans.run_shard(run['id'],s['shard_no'])
+scans.finalize(run['id'])
+print(json.dumps({'status':result['status'],'count':run['node_count']}))`),
+  );
+  assert.deepEqual(synced, { status: "SUCCESS", count: 1 });
+  const airports = await (await request("/api/airports")).json();
+  const air = airports.sources.find((s) => s.id === created.id);
+  assert.equal(air.traffic_total, 1000);
+  assert.equal(air.usable, true);
+  assert.equal(air.up_count, 1);
+  assert.equal(air.url_host, "air.example");
+  assert.ok(!JSON.stringify(airports).includes("synthetic-air-secret"));
+  const provider = airports.providers.find((p) => p.id === air.provider_id);
+  assert.equal(provider.name, "Synthetic Air");
+  const renamed = await (
+    await request(`/api/providers/${provider.id}`, {
+      method: "PATCH",
+      data: { name: "Renamed Air", website: "https://air.example/path?t=1" },
+    })
+  ).json();
+  assert.deepEqual(
+    [renamed.name, renamed.website],
+    ["Renamed Air", "https://air.example"],
+  );
+  const moved = await (
+    await request(`/api/sources/${created.id}`, {
+      method: "PATCH",
+      data: { provider_id: "new", provider_name: "Second Air" },
+    })
+  ).json();
+  assert.notEqual(moved.provider_id, provider.id);
+  const nodes = await (await request("/api/nodes?node_group=AIRPORT")).json();
+  assert.equal(nodes.total, 1);
+  assert.equal(nodes.items[0].name, "🇸🇬HK->SG|Webbing 01");
+  const labels = await (await request("/api/asn-labels")).json();
+  assert.equal(labels.observed.find((o) => o.asn === 64999).label, "Webbing");
+  assert.equal(
+    (
+      await request("/api/asn-labels/64999", {
+        method: "PUT",
+        data: { label: "WBG" },
+      })
+    ).status,
+    200,
+  );
+  const relabelled = await (
+    await request("/api/nodes?node_group=AIRPORT")
+  ).json();
+  assert.equal(relabelled.items[0].name, "🇸🇬HK->SG|WBG 01");
+  assert.equal(
+    (
+      await request("/api/asn-labels/64999", {
+        method: "PUT",
+        data: { label: "bad|label" },
+      })
+    ).status,
+    400,
+  );
+  await request("/api/asn-labels/64999", { method: "DELETE" });
+  const settings = await (
+    await request("/api/settings", {
+      method: "PUT",
+      data: { daily_scan_enabled: false, daily_scan_scope: "ALL" },
+    })
+  ).json();
+  assert.deepEqual(settings, {
+    daily_scan_enabled: false,
+    daily_scan_scope: "ALL",
+  });
+  const disabled = await (
+    await request("/api/nodes/batch", {
+      method: "POST",
+      data: { ids: [nodes.items[0].id], enabled: false },
+    })
+  ).json();
+  assert.equal(disabled.changed, 1);
+  const paused = await (
+    await request("/api/sources/batch", {
+      method: "POST",
+      data: { ids: [created.id], action: "disable" },
+    })
+  ).json();
+  assert.equal(paused.changed, 1);
+  assert.equal(
+    (
+      await request("/api/sources/batch", {
+        method: "POST",
+        data: { ids: ["not-a-uuid"], action: "delete" },
+      })
+    ).status,
+    400,
+  );
+  await request("/api/sources/batch", {
+    method: "POST",
+    data: { ids: [created.id], action: "delete" },
+  });
 });

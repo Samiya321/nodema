@@ -30,6 +30,8 @@ class SourceCreate(BaseModel):
     type: SourceType
     payload: SecretStr
     format_hint: InputFormat = InputFormat.AUTO
+    kind: str = "AUTO"
+    user_agent: str | None = Field(default=None, max_length=512)
 
 
 class SourceUpdate(BaseModel):
@@ -39,6 +41,8 @@ class SourceUpdate(BaseModel):
     payload: SecretStr | None = None
     format_hint: InputFormat | None = None
     sync_interval_seconds: int | None = Field(default=None, gt=0)
+    kind: str | None = None
+    user_agent: str | None = Field(default=None, max_length=512)
 
 
 class SourceBulkCreate(BaseModel):
@@ -61,6 +65,10 @@ class ExportCreate(BaseModel):
     format: str
     filters: dict = Field(default_factory=dict)
     expires_in_hours: int | None = None
+
+
+class ScanCreate(BaseModel):
+    scope: str = "SELF_HOSTED"
 
 
 def create_app(settings=None, *, assets=None):
@@ -221,6 +229,8 @@ def create_app(settings=None, *, assets=None):
             source_type=body.type,
             payload=body.payload.get_secret_value().encode(),
             format_hint=body.format_hint,
+            kind=body.kind,
+            user_agent=body.user_agent,
         )
 
     @app.post("/api/sources/bulk", dependencies=auth)
@@ -228,12 +238,16 @@ def create_app(settings=None, *, assets=None):
         result = assets.create_sources_bulk(
             body.urls.get_secret_value(), name_prefix=body.name_prefix
         )
-        result["pipeline"] = (
-            dispatch_source_sync(settings)
-            if result["created"]
-            else {"dispatched": False, "reason": "NO_NEW_SOURCES"}
-        )
+        # Imports never start Actions; the user syncs/tests explicitly.
+        result["pipeline"] = {
+            "dispatched": False,
+            "reason": "MANUAL_SYNC" if result["created"] else "NO_NEW_SOURCES",
+        }
         return result
+
+    @app.post("/api/pipeline/sync", dependencies=auth, status_code=202)
+    def pipeline_sync():
+        return dispatch_source_sync(settings)
 
     @app.get("/api/sources/{source_id}", dependencies=auth)
     def source(source_id: UUID):
@@ -282,9 +296,9 @@ def create_app(settings=None, *, assets=None):
         return scans.list()
 
     @app.post("/api/scans", dependencies=auth)
-    def create_scan():
-        # Queue an immutable snapshot; execution is explicitly handled by CLI/Actions.
-        run = scans.create()
+    def create_scan(body: ScanCreate | None = None):
+        # Queue an immutable manual snapshot; execution is explicitly handled by CLI/Actions.
+        run = scans.create(scope=(body or ScanCreate()).scope, manual=True)
         return {**run, **dispatch_scan(settings, run["id"])}
 
     @app.post("/api/scans/{run_id}/retry", dependencies=auth)

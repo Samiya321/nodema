@@ -5,14 +5,24 @@ on:
   workflow_dispatch:
     inputs:
       run_id:
-        description: Existing scan UUID to resume (empty imports and tests missing nodes)
+        description: Existing scan UUID to resume (empty syncs requested sources and starts a new test)
         required: false
         type: string
+      scope:
+        description: Nodes to test (airports and self-hosted nodes are never mixed unless ALL)
+        required: false
+        type: choice
+        default: SELF_HOSTED
+        options: [SELF_HOSTED, AIRPORT, ALL]
   workflow_call:
     inputs:
       run_id:
         required: false
         type: string
+      scope:
+        required: false
+        type: string
+        default: SELF_HOSTED
 permissions:
   contents: read
 concurrency:
@@ -81,12 +91,17 @@ jobs:
       - id: plan
         env:
           REQUESTED_RUN_ID: ${{ inputs.run_id }}
+          REQUESTED_SCOPE: ${{ inputs.scope || 'SELF_HOSTED' }}
+          EVENT_NAME: ${{ github.event_name }}
         shell: bash
         run: |
           if [ -n "$REQUESTED_RUN_ID" ]; then
             uv run nodema scan prepare --run-id "$REQUESTED_RUN_ID"
+          elif [ "$EVENT_NAME" = "schedule" ]; then
+            # The dashboard decides whether the daily run happens and which scope it tests.
+            uv run nodema scan prepare --trigger schedule
           else
-            uv run nodema scan prepare
+            uv run nodema scan prepare --trigger manual --scope "$REQUESTED_SCOPE"
           fi
       - id: geoip
         name: Download GeoLite once and encrypt for this workflow

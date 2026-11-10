@@ -68,7 +68,7 @@ def test_bulk_limits_before_write(service, text, code):
     assert not service.list_sources()
 
 
-def test_bulk_api_auth_once_dispatch_and_failure_retains_requests(
+def test_bulk_api_never_dispatches_and_retains_requests(
     service, monitor_settings, monkeypatch
 ):
     import app.api as api
@@ -89,9 +89,12 @@ def test_bulk_api_auth_once_dispatch_and_failure_retains_requests(
     result = client.post("/api/sources/bulk", headers=headers, json=data)
     assert result.status_code == 200
     assert "synthetic-demo" not in result.text
-    assert len(calls) == 1 and result.json()["created"] == 2
+    # Imports only persist sync requests; Actions start from an explicit "sync" click.
+    assert calls == [] and result.json()["created"] == 2
+    assert result.json()["pipeline"] == {"dispatched": False, "reason": "MANUAL_SYNC"}
     assert all(s["sync_requested_at"] for s in service.list_sources())
     assert client.post("/api/sources/bulk", headers=headers, json=data).json()["duplicates"] == 2
+    assert client.post("/api/pipeline/sync", headers=headers).status_code == 202
     assert len(calls) == 1
     assert (
         "synthetic-demo"
