@@ -1,0 +1,21 @@
+{
+  "name": "nodema-dashboard",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "types": "wrangler types",
+    "check": "tsc --noEmit",
+    "dev": "npm run build && wrangler pages dev dist --port 8788 --inspector-port 9231 --log-level error",
+    "deploy": "npm run build && wrangler pages deploy dist"
+  },
+  "devDependencies": {
+    "wrangler": "^4",
+    "typescript": "^5",
+    "@types/node": "^24"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

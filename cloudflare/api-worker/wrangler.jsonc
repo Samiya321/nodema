@@ -1,0 +1,12 @@
+{
+  "$schema":"./node_modules/wrangler/config-schema.json",
+  "name":"nodema-api","main":"src/index.ts","compatibility_date":"2026-11-07",
+  "compatibility_flags":["nodejs_compat"],
+  "observability":{"enabled":false},
+  "hyperdrive":[{"binding":"HYPERDRIVE","id":"00000000000000000000000000000000",
+    "localConnectionString":"postgres://nodema:local_dev_only@127.0.0.1:55432/nodema"}],
+  "vars":{"FRESHNESS_HOURS":"36",
+    "NAME_TEMPLATE":"{ENTRY_COUNTRY} → {EXIT_COUNTRY} | {PROTOCOL}-{TRANSPORT}-{SECURITY} | {SHORT_ID}",
+    "GITHUB_REPOSITORY":"","GITHUB_WORKFLOW_REF":"main"},
+  "secrets":{"required":["ADMIN_PASSWORD","GITHUB_DISPATCH_TOKEN"]}
+}

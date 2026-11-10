@@ -1,0 +1,171 @@
+{
+  "benchmark": "synthetic-worker-export-create-and-download",
+  "runtime": "Node + actual Worker handle + PostgreSQL; not Cloudflare isolate, CPU or quota validation",
+  "synthetic_metadata": true,
+  "results": [
+    {
+      "nodes": 1000,
+      "format": "mihomo",
+      "status": 201,
+      "bytes": 163459,
+      "create_and_download_ms": 174,
+      "node_cpu_ms": 179,
+      "database_queries": 15,
+      "peak_node_heap_bytes": 19285352,
+      "peak_array_buffer_bytes": 3197972
+    },
+    {
+      "nodes": 1000,
+      "format": "singbox",
+      "status": 201,
+      "bytes": 156465,
+      "create_and_download_ms": 100,
+      "node_cpu_ms": 61,
+      "database_queries": 15,
+      "peak_node_heap_bytes": 19475216,
+      "peak_array_buffer_bytes": 3463159
+    },
+    {
+      "nodes": 1000,
+      "format": "uri",
+      "status": 201,
+      "bytes": 110450,
+      "create_and_download_ms": 97,
+      "node_cpu_ms": 68,
+      "database_queries": 15,
+      "peak_node_heap_bytes": 20464048,
+      "peak_array_buffer_bytes": 3652454
+    },
+    {
+      "nodes": 1000,
+      "format": "json",
+      "status": 201,
+      "bytes": 725346,
+      "create_and_download_ms": 130,
+      "node_cpu_ms": 42,
+      "database_queries": 11,
+      "peak_node_heap_bytes": 26497864,
+      "peak_array_buffer_bytes": 14253185
+    },
+    {
+      "nodes": 1000,
+      "format": "csv",
+      "status": 201,
+      "bytes": 168769,
+      "create_and_download_ms": 125,
+      "node_cpu_ms": 33,
+      "database_queries": 11,
+      "peak_node_heap_bytes": 24711320,
+      "peak_array_buffer_bytes": 12226181
+    },
+    {
+      "nodes": 5000,
+      "format": "mihomo",
+      "status": 201,
+      "bytes": 819459,
+      "create_and_download_ms": 796,
+      "node_cpu_ms": 456,
+      "database_queries": 39,
+      "peak_node_heap_bytes": 40374336,
+      "peak_array_buffer_bytes": 11029256
+    },
+    {
+      "nodes": 5000,
+      "format": "singbox",
+      "status": 201,
+      "bytes": 784465,
+      "create_and_download_ms": 653,
+      "node_cpu_ms": 275,
+      "database_queries": 39,
+      "peak_node_heap_bytes": 39646536,
+      "peak_array_buffer_bytes": 7039298
+    },
+    {
+      "nodes": 5000,
+      "format": "uri",
+      "status": 201,
+      "bytes": 554450,
+      "create_and_download_ms": 701,
+      "node_cpu_ms": 289,
+      "database_queries": 39,
+      "peak_node_heap_bytes": 43795192,
+      "peak_array_buffer_bytes": 11291156
+    },
+    {
+      "nodes": 5000,
+      "format": "json",
+      "status": 201,
+      "bytes": 3628907,
+      "create_and_download_ms": 911,
+      "node_cpu_ms": 201,
+      "database_queries": 19,
+      "peak_node_heap_bytes": 43001176,
+      "peak_array_buffer_bytes": 34035006
+    },
+    {
+      "nodes": 5000,
+      "format": "csv",
+      "status": 201,
+      "bytes": 844769,
+      "create_and_download_ms": 828,
+      "node_cpu_ms": 185,
+      "database_queries": 19,
+      "peak_node_heap_bytes": 44605320,
+      "peak_array_buffer_bytes": 35031714
+    },
+    {
+      "nodes": 15000,
+      "format": "mihomo",
+      "status": 201,
+      "bytes": 2469459,
+      "create_and_download_ms": 4836,
+      "node_cpu_ms": 1680,
+      "database_queries": 99,
+      "peak_node_heap_bytes": 50460232,
+      "peak_array_buffer_bytes": 21709450
+    },
+    {
+      "nodes": 15000,
+      "format": "singbox",
+      "status": 201,
+      "bytes": 2364465,
+      "create_and_download_ms": 4419,
+      "node_cpu_ms": 1296,
+      "database_queries": 99,
+      "peak_node_heap_bytes": 48671792,
+      "peak_array_buffer_bytes": 35398198
+    },
+    {
+      "nodes": 15000,
+      "format": "uri",
+      "status": 201,
+      "bytes": 1674450,
+      "create_and_download_ms": 4380,
+      "node_cpu_ms": 1224,
+      "database_queries": 99,
+      "peak_node_heap_bytes": 43795080,
+      "peak_array_buffer_bytes": 26064590
+    },
+    {
+      "nodes": 15000,
+      "format": "json",
+      "status": 400,
+      "error_code": "EXPORT_TOO_LARGE",
+      "create_and_download_ms": 2446,
+      "database_queries": 18,
+      "peak_node_heap_bytes": 44216816,
+      "peak_array_buffer_bytes": 14411334
+    },
+    {
+      "nodes": 15000,
+      "format": "csv",
+      "status": 201,
+      "bytes": 2544769,
+      "create_and_download_ms": 4552,
+      "node_cpu_ms": 597,
+      "database_queries": 39,
+      "peak_node_heap_bytes": 40484552,
+      "peak_array_buffer_bytes": 27043719
+    }
+  ]
+}

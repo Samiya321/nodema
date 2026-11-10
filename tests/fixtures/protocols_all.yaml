@@ -1,0 +1,58 @@
+proxies:
+- name: Synthetic SS
+  type: ss
+  server: ss.example
+  port: 443
+  password: synthetic:ss@secret
+  cipher: aes-128-gcm
+- name: Synthetic Trojan
+  type: trojan
+  server: trojan.example
+  port: 443
+  password: synthetic:trojan@secret
+  sni: tls.example
+  alpn:
+  - h2
+  - http/1.1
+  network: ws
+  ws-opts:
+    path: /ws
+    headers:
+      Host: cdn.example
+- name: Synthetic AnyTLS
+  type: anytls
+  server: anytls.example
+  port: 443
+  password: synthetic-anytls
+  sni: tls.example
+  skip-cert-verify: false
+- name: Synthetic HY2
+  type: hysteria2
+  server: hy2.example
+  port: 443
+  password: synthetic-user:synthetic-pass
+  sni: tls.example
+  obfs: salamander
+  obfs-password: synthetic-obfs
+- name: Synthetic VMess
+  type: vmess
+  server: vmess.example
+  port: 443
+  uuid: 00000000-0000-4000-8000-000000000001
+  network: ws
+  tls: true
+  servername: tls.example
+  ws-opts:
+    path: /ws
+  alterId: 0
+  cipher: auto
+- name: Synthetic VLESS
+  type: vless
+  server: vless.example
+  port: 443
+  uuid: 00000000-0000-4000-8000-000000000002
+  network: ws
+  tls: true
+  servername: tls.example
+  ws-opts:
+    path: /ws

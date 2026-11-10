@@ -1,0 +1,1 @@
+{"$schema":"./node_modules/wrangler/config-schema.json","name":"nodema-dashboard","pages_build_output_dir":"dist","compatibility_date":"2026-11-07","compatibility_flags":["nodejs_compat"],"services":[{"binding":"API","service":"nodema-api"}]}

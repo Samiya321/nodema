@@ -1,0 +1,59 @@
+name: Tests (synthetic data only)
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: nodema
+          POSTGRES_PASSWORD: local_dev_only
+          POSTGRES_DB: nodema_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U nodema" --health-interval 2s
+          --health-timeout 3s --health-retries 20
+    env:
+      TEST_DATABASE_URL: postgresql+psycopg://nodema:local_dev_only@127.0.0.1:5432/nodema_test
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff
+        with:
+          python-version: '3.12'
+      - run: uv sync --frozen
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run pytest --cov=app --cov-report=term
+        env:
+          TEST_PG_CONTAINER: ${{ job.services.postgres.id }}
+      - name: Verify real protocol handshakes on loopback
+        run: |
+          uv run python scripts/install_mihomo.py
+          uv run python scripts/smoke_protocols.py
+      - name: Verify 100-node real local pipeline
+        run: uv run python scripts/benchmark_pipeline.py --sizes 100
+      - run: node --check app/web/app.js
+      - name: TypeScript Worker and Python interoperability
+        working-directory: cloudflare/api-worker
+        run: npm ci && npm run types && npm run check && npm test
+      - name: Worker build
+        working-directory: cloudflare/api-worker
+        run: npx wrangler deploy --dry-run --outdir dist/worker
+      - name: Pages build
+        working-directory: web/dashboard
+        run: npm ci && npm run types && npm run check && npm run build && npx wrangler pages functions build --outdir dist/functions
+  echo:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cloudflare/echo-worker
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - run: npm ci
+      - run: npm run types && npm run check && npm test
+      - run: npx wrangler deploy --dry-run --outdir dist/worker

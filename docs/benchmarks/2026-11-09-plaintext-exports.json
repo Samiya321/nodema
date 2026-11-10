@@ -1,0 +1,62 @@
+{
+  "benchmark": "synthetic-worker-export-create-and-download",
+  "runtime": "Node + actual Worker handle + PostgreSQL; not Cloudflare isolate, CPU or quota validation",
+  "synthetic_metadata": true,
+  "results": [
+    {
+      "nodes": 5000,
+      "format": "mihomo",
+      "status": 201,
+      "bytes": 819459,
+      "create_and_download_ms": 668,
+      "node_cpu_ms": 332,
+      "database_queries": 39,
+      "peak_node_heap_bytes": 32635264,
+      "peak_array_buffer_bytes": 11111523
+    },
+    {
+      "nodes": 5000,
+      "format": "singbox",
+      "status": 201,
+      "bytes": 784465,
+      "create_and_download_ms": 523,
+      "node_cpu_ms": 139,
+      "database_queries": 39,
+      "peak_node_heap_bytes": 33687328,
+      "peak_array_buffer_bytes": 16082981
+    },
+    {
+      "nodes": 5000,
+      "format": "uri",
+      "status": 201,
+      "bytes": 554450,
+      "create_and_download_ms": 562,
+      "node_cpu_ms": 222,
+      "database_queries": 39,
+      "peak_node_heap_bytes": 32866632,
+      "peak_array_buffer_bytes": 9275236
+    },
+    {
+      "nodes": 5000,
+      "format": "json",
+      "status": 201,
+      "bytes": 4273898,
+      "create_and_download_ms": 939,
+      "node_cpu_ms": 253,
+      "database_queries": 19,
+      "peak_node_heap_bytes": 46652912,
+      "peak_array_buffer_bytes": 51270120
+    },
+    {
+      "nodes": 5000,
+      "format": "csv",
+      "status": 201,
+      "bytes": 1094842,
+      "create_and_download_ms": 880,
+      "node_cpu_ms": 166,
+      "database_queries": 19,
+      "peak_node_heap_bytes": 55663088,
+      "peak_array_buffer_bytes": 39735594
+    }
+  ]
+}

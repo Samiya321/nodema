@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <title>Nodema · 节点资产管理</title>
+    <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/assets/style.css" />
+    <script src="/assets/app.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">跳至主要内容</a>
+    <section id="login" class="login">
+      <form id="login-form" class="login-form">
+        <div class="mark" aria-hidden="true">n</div>
+        <h1>打开你的节点资产库</h1>
+        <p>查看节点、管理来源，追踪每一次检测。</p>
+        <input
+          type="text"
+          name="username"
+          value="admin"
+          autocomplete="username"
+          hidden
+        /><label for="admin-token">管理员密钥</label
+        ><input
+          id="admin-token"
+          type="password"
+          required
+          autocomplete="current-password"
+          minlength="24"
+          aria-describedby="login-help login-error"
+        />
+        <p id="login-help" class="help">密钥仅保存在本次页面会话中。</p>
+        <p id="login-error" class="error" role="alert"></p>
+        <button type="submit" class="primary">进入资产库</button>
+      </form>
+    </section>
+    <div id="workspace" class="workspace" hidden>
+      <aside class="sidebar">
+        <a class="brand" href="#overview"
+          ><span class="mark" aria-hidden="true">n</span
+          ><span>Nodema<small>你的节点资产库</small></span></a
+        >
+        <nav aria-label="主要导航">
+          <a href="#overview" data-page="overview">总览</a
+          ><a href="#nodes" data-page="nodes">节点资产</a
+          ><a href="#sources" data-page="sources">订阅与来源</a
+          ><a href="#scans" data-page="scans">检测记录</a
+          ><a href="#naming" data-page="naming">命名规则</a
+          ><a href="#exports" data-page="exports">订阅导出</a
+          ><a href="#usage" data-page="usage">运行与用量</a
+          ><a href="#quality" data-page="quality">大陆参考规则</a>
+        </nav>
+        <div class="sidebar-footer">
+          <span class="privacy-label"
+            ><span class="privacy-dot" aria-hidden="true"></span
+            >私有资产空间</span
+          >
+          <button id="logout" class="quiet">退出</button>
+        </div>
+      </aside>
+      <main id="main" tabindex="-1">
+        <header class="page-header">
+          <div>
+            <p id="page-context" class="subtle">资产与健康状态</p>
+            <h1 id="page-title">总览</h1>
+          </div>
+          <button id="refresh" class="secondary">刷新数据</button>
+        </header>
+        <p id="notice" class="notice" role="status" aria-live="polite"></p>
+        <div id="page-content" aria-busy="false"></div>
+      </main>
+    </div>
+    <dialog id="detail" aria-labelledby="detail-title">
+      <div class="dialog-header">
+        <h2 id="detail-title">详情</h2>
+        <button id="close-detail" aria-label="关闭详情" class="secondary">
+          关闭
+        </button>
+      </div>
+      <div id="detail-content"></div>
+    </dialog>
+  </body>
+</html>

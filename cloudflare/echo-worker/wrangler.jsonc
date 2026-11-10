@@ -1,0 +1,9 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "nodema-echo",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-11-07",
+  "compatibility_flags": ["nodejs_compat"],
+  // Privacy requirement: do not record caller IPs or request logs.
+  "observability": {"enabled": false}
+}

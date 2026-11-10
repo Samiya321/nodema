@@ -1,0 +1,14 @@
+.git
+.env
+.env.*
+private
+local-inputs
+backups
+output
+.venv
+**/node_modules
+**/__pycache__
+.pytest_cache
+.ruff_cache
+.coverage*
+cloudflare

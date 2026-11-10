@@ -1,0 +1,40 @@
+[project]
+name = "nodema"
+version = "0.2.0"
+description = "Private proxy asset management and daily health monitoring"
+requires-python = ">=3.12"
+dependencies = [
+  "SQLAlchemy>=2.0,<3", "alembic>=1.16,<2", "psycopg[binary]>=3.2,<4",
+  "cryptography>=46", "PyYAML>=6,<7", "httpcore>=1,<2", "dnspython>=2.7,<3",
+  "pydantic-settings>=2.10,<3", "typer>=0.16,<1",
+  "fastapi>=0.115,<1", "uvicorn>=0.34,<1", "geoip2>=5,<6",
+]
+
+[project.scripts]
+nodema = "app.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8,<10", "pytest-cov>=6", "ruff>=0.12", "httpx>=0.28,<1"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--strict-markers"
+markers = ["integration: requires TEST_DATABASE_URL (PostgreSQL)"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+extend-exclude = ["private", "local-inputs", "backups", "output", ".playwright-cli"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.ruff.lint.per-file-ignores]
+"app/cli.py" = ["B008"]

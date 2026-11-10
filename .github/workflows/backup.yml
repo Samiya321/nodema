@@ -1,0 +1,49 @@
+name: Encrypted database backup
+on:
+  schedule:
+    - cron: '41 21 * * 6' # Sunday 05:41 Asia/Shanghai
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: nodema-backup
+  cancel-in-progress: false
+jobs:
+  backup:
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL || secrets.DATABASE_URL }}
+      ENCRYPTION_KEY_B64: ${{ secrets.ENCRYPTION_KEY_B64 }}
+      ENCRYPTION_KEY_ID: ${{ vars.ENCRYPTION_KEY_ID || 'local-v1' }}
+      FINGERPRINT_KEY_B64: ${{ secrets.FINGERPRINT_KEY_B64 }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - id: network
+        name: Start network interface counters
+        run: python3 scripts/job_network.py
+      - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff
+        with:
+          python-version: '3.12'
+      - id: dependencies
+        run: uv sync --frozen
+      - name: Note optional backup is disabled
+        if: env.ENCRYPTION_KEY_B64 == ''
+        run: echo "Encrypted backup skipped because no backup key is configured." >> "$GITHUB_STEP_SUMMARY"
+      - run: uv run nodema backup --output-file backups/database.nma --docker-client
+        if: env.ENCRYPTION_KEY_B64 != ''
+      - if: env.ENCRYPTION_KEY_B64 != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: encrypted-database-${{ github.run_id }}
+          path: backups/database.nma
+          retention-days: 7
+          if-no-files-found: error
+      - name: Record job network usage
+        if: always() && steps.network.outcome == 'success' && steps.dependencies.outcome == 'success'
+        env:
+          JOB_RESULT: ${{ job.status }}
+          USAGE_JOB_KEY: backup
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: uv run nodema usage record-job --sample-file private/job-network.json --outcome "$JOB_RESULT"

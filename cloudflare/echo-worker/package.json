@@ -1,0 +1,22 @@
+{
+  "name": "nodema-echo",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "types": "wrangler types",
+    "check": "tsc --noEmit",
+    "build": "tsc",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "dev": "wrangler dev --port 8789 --inspector-port 9232 --log-level error",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "typescript": "^5",
+    "wrangler": "^4"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

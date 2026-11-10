@@ -1,0 +1,1 @@
+vless://00000000-0000-4000-8000-000000000001@edge.example:443?type=ws&security=tls&sni=sni.example&host=ws.example&path=%2Fdemo#Synthetic%20A

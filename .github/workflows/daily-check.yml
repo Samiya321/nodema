@@ -1,0 +1,185 @@
+name: Daily node health
+on:
+  schedule:
+    - cron: '17 20 * * *' # 04:17 Asia/Shanghai; GitHub may delay scheduled jobs.
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: Existing scan UUID to resume (empty imports and tests missing nodes)
+        required: false
+        type: string
+  workflow_call:
+    inputs:
+      run_id:
+        required: false
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: nodema-daily
+  cancel-in-progress: false
+env:
+  DATABASE_URL: ${{ secrets.DATABASE_URL }}
+  MIGRATION_DATABASE_URL: ${{ secrets.MIGRATION_DATABASE_URL || secrets.DATABASE_URL }}
+  ENCRYPTION_KEY_B64: ${{ secrets.ENCRYPTION_KEY_B64 }}
+  ENCRYPTION_KEY_ID: ${{ vars.ENCRYPTION_KEY_ID || 'local-v1' }}
+  FINGERPRINT_KEY_B64: ${{ secrets.FINGERPRINT_KEY_B64 }}
+  ECHO_URL: ${{ vars.ECHO_URL }}
+  ECHO_TOKEN: ${{ secrets.ECHO_TOKEN }}
+  SCAN_TIMEZONE: Asia/Shanghai
+  FRESHNESS_HOURS: ${{ vars.FRESHNESS_HOURS || '36' }}
+  CHECK_CONCURRENCY: ${{ vars.CHECK_CONCURRENCY || '4' }}
+  CHECK_BATCH_SIZE: ${{ vars.CHECK_BATCH_SIZE || '16' }}
+  MIHOMO_REUSE: ${{ vars.MIHOMO_REUSE || 'true' }}
+  MIHOMO_MAX_NODES_PER_PROCESS: ${{ vars.MIHOMO_MAX_NODES_PER_PROCESS || '250' }}
+  RUNNER_PROBE_ID: ${{ vars.RUNNER_PROBE_ID || 'auto' }}
+  DNS_CACHE_MAX_TTL_SECONDS: ${{ vars.DNS_CACHE_MAX_TTL_SECONDS || '300' }}
+  DNS_NEGATIVE_TTL_SECONDS: ${{ vars.DNS_NEGATIVE_TTL_SECONDS || '15' }}
+  TCP_CACHE_TTL_SECONDS: ${{ vars.TCP_CACHE_TTL_SECONDS || '60' }}
+  TCP_FAILURE_TTL_SECONDS: ${{ vars.TCP_FAILURE_TTL_SECONDS || '15' }}
+  PRECHECK_GATE_ENABLED: ${{ vars.PRECHECK_GATE_ENABLED || 'true' }}
+  PRECHECK_SAMPLE_RATE: ${{ vars.PRECHECK_SAMPLE_RATE || '0.1' }}
+  CHECK_FORCE_FULL: ${{ vars.CHECK_FORCE_FULL || 'false' }}
+  FAILURE_COOLDOWN_ENABLED: ${{ vars.FAILURE_COOLDOWN_ENABLED || 'true' }}
+  FAILURE_COOLDOWN_THRESHOLD: ${{ vars.FAILURE_COOLDOWN_THRESHOLD || '3' }}
+  FAILURE_COOLDOWN_BASE_HOURS: ${{ vars.FAILURE_COOLDOWN_BASE_HOURS || '6' }}
+  FAILURE_COOLDOWN_MAX_HOURS: ${{ vars.FAILURE_COOLDOWN_MAX_HOURS || '72' }}
+jobs:
+  prepare:
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      workers: ${{ steps.plan.outputs.workers }}
+      run_ids: ${{ steps.plan.outputs.run_ids }}
+      has_tasks: ${{ steps.plan.outputs.has_tasks }}
+      geoip_ready: ${{ steps.geoip.outputs.geoip_ready }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - id: network
+        name: Start network interface counters
+        run: python3 scripts/job_network.py
+      - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
+        with:
+          python-version: '3.12'
+      - id: dependencies
+        run: uv sync --frozen
+      - run: uv run alembic upgrade head
+      - name: Archive expired scan detail
+        run: uv run nodema cleanup
+      - name: Synchronize authorized sources
+        if: inputs.run_id == ''
+        shell: bash
+        run: |
+          set +e
+          uv run nodema source sync-all --due-only
+          result=$?
+          set -e
+          if [ "$result" -ne 0 ] && [ "$result" -ne 2 ]; then exit "$result"; fi
+      - name: Build subscriptions after source updates
+        run: uv run nodema export build-pending
+      - id: plan
+        env:
+          REQUESTED_RUN_ID: ${{ inputs.run_id }}
+        shell: bash
+        run: |
+          if [ -n "$REQUESTED_RUN_ID" ]; then
+            uv run nodema scan prepare --run-id "$REQUESTED_RUN_ID"
+          else
+            uv run nodema scan prepare
+          fi
+      - id: geoip
+        name: Download GeoLite once and encrypt for this workflow
+        if: steps.plan.outputs.has_tasks == 'true'
+        env:
+          MAXMIND_ACCOUNT_ID: ${{ secrets.MAXMIND_ACCOUNT_ID }}
+          MAXMIND_LICENSE_KEY: ${{ secrets.MAXMIND_LICENSE_KEY }}
+        run: uv run nodema geoip-pack --output-file private/geoip.nma
+      - name: Share encrypted GeoLite bundle
+        if: steps.geoip.outputs.geoip_ready == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: geoip-${{ github.run_id }}-${{ github.run_attempt }}
+          path: private/geoip.nma
+          retention-days: 1
+          if-no-files-found: error
+      - name: Record job network usage
+        if: always() && steps.network.outcome == 'success' && steps.dependencies.outcome == 'success'
+        env:
+          JOB_RESULT: ${{ job.status }}
+          USAGE_JOB_KEY: prepare
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: uv run nodema usage record-job --sample-file private/job-network.json --outcome "$JOB_RESULT"
+  check:
+    needs: prepare
+    if: needs.prepare.outputs.has_tasks == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        include: ${{ fromJSON(needs.prepare.outputs.workers) }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - id: network
+        name: Start network interface counters
+        run: python3 scripts/job_network.py
+      - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
+        with:
+          python-version: '3.12'
+      - id: dependencies
+        run: uv sync --frozen
+      - run: uv run python scripts/install_mihomo.py
+      - name: Fetch encrypted GeoLite bundle
+        if: needs.prepare.outputs.geoip_ready == 'true'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: geoip-${{ github.run_id }}-${{ github.run_attempt }}
+          path: private
+      - name: Install verified GeoLite databases
+        if: needs.prepare.outputs.geoip_ready == 'true'
+        run: |
+          uv run nodema geoip-install --input-file private/geoip.nma
+          echo 'GEOIP_CITY_PATH=private/geoip/GeoLite2-City.mmdb' >> "$GITHUB_ENV"
+          echo 'GEOIP_ASN_PATH=private/geoip/GeoLite2-ASN.mmdb' >> "$GITHUB_ENV"
+      - env:
+          TASKS_JSON: ${{ matrix.tasks_json }}
+        run: uv run nodema scan worker-batch --tasks-json "$TASKS_JSON"
+      - name: Record job network usage
+        if: always() && steps.network.outcome == 'success' && steps.dependencies.outcome == 'success'
+        env:
+          JOB_RESULT: ${{ job.status }}
+          USAGE_JOB_KEY: check-${{ strategy.job-index }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: uv run nodema usage record-job --sample-file private/job-network.json --outcome "$JOB_RESULT"
+  finalize:
+    needs: [prepare, check]
+    if: always() && needs.prepare.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - id: network
+        name: Start network interface counters
+        run: python3 scripts/job_network.py
+      - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
+        with:
+          python-version: '3.12'
+      - id: dependencies
+        run: uv sync --frozen
+      - env:
+          RUN_IDS_JSON: ${{ needs.prepare.outputs.run_ids }}
+        run: uv run nodema scan finalize-batch --run-ids-json "$RUN_IDS_JSON"
+      - name: Publish current subscriptions
+        if: always() && steps.dependencies.outcome == 'success'
+        run: uv run nodema export build-pending
+      - if: success()
+        run: uv run nodema cleanup
+      - name: Record job network usage
+        if: always() && steps.network.outcome == 'success' && steps.dependencies.outcome == 'success'
+        env:
+          JOB_RESULT: ${{ job.status }}
+          USAGE_JOB_KEY: finalize
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: uv run nodema usage record-job --sample-file private/job-network.json --outcome "$JOB_RESULT"

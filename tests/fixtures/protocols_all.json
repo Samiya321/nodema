@@ -1,0 +1,93 @@
+{
+  "outbounds": [
+    {
+      "type": "shadowsocks",
+      "tag": "Synthetic SS",
+      "server": "ss.example",
+      "server_port": 443,
+      "password": "synthetic:ss@secret",
+      "method": "aes-128-gcm"
+    },
+    {
+      "type": "trojan",
+      "tag": "Synthetic Trojan",
+      "server": "trojan.example",
+      "server_port": 443,
+      "password": "synthetic:trojan@secret",
+      "tls": {
+        "enabled": true,
+        "server_name": "tls.example",
+        "alpn": [
+          "h2",
+          "http/1.1"
+        ]
+      },
+      "transport": {
+        "type": "ws",
+        "path": "/ws",
+        "headers": {
+          "Host": "cdn.example"
+        }
+      }
+    },
+    {
+      "type": "anytls",
+      "tag": "Synthetic AnyTLS",
+      "server": "anytls.example",
+      "server_port": 443,
+      "password": "synthetic-anytls",
+      "tls": {
+        "enabled": true,
+        "server_name": "tls.example",
+        "insecure": false
+      }
+    },
+    {
+      "type": "hysteria2",
+      "tag": "Synthetic HY2",
+      "server": "hy2.example",
+      "server_port": 443,
+      "password": "synthetic-user:synthetic-pass",
+      "tls": {
+        "enabled": true,
+        "server_name": "tls.example"
+      },
+      "obfs": {
+        "type": "salamander",
+        "password": "synthetic-obfs"
+      }
+    },
+    {
+      "type": "vmess",
+      "tag": "Synthetic VMess",
+      "server": "vmess.example",
+      "server_port": 443,
+      "uuid": "00000000-0000-4000-8000-000000000001",
+      "tls": {
+        "enabled": true,
+        "server_name": "tls.example"
+      },
+      "transport": {
+        "type": "ws",
+        "path": "/ws"
+      },
+      "security": "auto",
+      "alter_id": 0
+    },
+    {
+      "type": "vless",
+      "tag": "Synthetic VLESS",
+      "server": "vless.example",
+      "server_port": 443,
+      "uuid": "00000000-0000-4000-8000-000000000002",
+      "tls": {
+        "enabled": true,
+        "server_name": "tls.example"
+      },
+      "transport": {
+        "type": "ws",
+        "path": "/ws"
+      }
+    }
+  ]
+}

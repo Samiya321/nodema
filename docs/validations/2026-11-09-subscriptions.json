@@ -1,0 +1,259 @@
+{
+  "date": "2026-11-09",
+  "parser_version": "protocols-v3",
+  "scope": "local_authorized_subscriptions",
+  "source_labels": "S1-S6 follow the user-provided order",
+  "unique_nodes": 259,
+  "protocols": {
+    "vmess": 66,
+    "hysteria2": 6,
+    "shadowsocks": 125,
+    "vless": 6,
+    "anytls": 1,
+    "trojan": 55
+  },
+  "statuses": {
+    "UP": 41,
+    "UNSUPPORTED": 4,
+    "DOWN": 214
+  },
+  "attempt_count": 473,
+  "scan_completed": true,
+  "shards": 11,
+  "scan_wall_seconds": 754.251239,
+  "echo": "https://api.ipify.org?format=json",
+  "geoip_configured": false,
+  "exports": {
+    "mihomo": {
+      "nodes": 41,
+      "bytes": 13962
+    },
+    "singbox": {
+      "error_code": "RUNTIME_UNSUPPORTED"
+    },
+    "uri": {
+      "error_code": "RUNTIME_UNSUPPORTED"
+    },
+    "json": {
+      "nodes": 41,
+      "bytes": 18090
+    },
+    "csv": {
+      "nodes": 41,
+      "bytes": 3693
+    }
+  },
+  "python_tests_passed": 188,
+  "worker_tests_passed": 20,
+  "loopback_handshakes_passed": 19,
+  "local_remote_parity": [
+    {
+      "source": "S1",
+      "local_valid": 19,
+      "local_unique": 19,
+      "local_matches_remote_import": true,
+      "issues": 2
+    },
+    {
+      "source": "S2",
+      "local_valid": 7,
+      "local_unique": 7,
+      "local_matches_remote_import": true,
+      "issues": 0
+    },
+    {
+      "source": "S3",
+      "local_valid": 19,
+      "local_unique": 19,
+      "local_matches_remote_import": true,
+      "issues": 7
+    },
+    {
+      "source": "S4",
+      "local_valid": 13,
+      "local_unique": 13,
+      "local_matches_remote_import": true,
+      "issues": 0
+    },
+    {
+      "source": "S5",
+      "local_valid": 203,
+      "local_unique": 199,
+      "local_matches_remote_import": true,
+      "issues": 2
+    },
+    {
+      "source": "S6",
+      "local_valid": 2,
+      "local_unique": 2,
+      "local_matches_remote_import": true,
+      "issues": 0
+    }
+  ],
+  "source_statuses": [
+    {
+      "source": "S1",
+      "status": "DOWN",
+      "count": 1
+    },
+    {
+      "source": "S1",
+      "status": "UP",
+      "count": 18
+    },
+    {
+      "source": "S2",
+      "status": "DOWN",
+      "count": 7
+    },
+    {
+      "source": "S3",
+      "status": "DOWN",
+      "count": 1
+    },
+    {
+      "source": "S3",
+      "status": "UP",
+      "count": 18
+    },
+    {
+      "source": "S4",
+      "status": "DOWN",
+      "count": 5
+    },
+    {
+      "source": "S4",
+      "status": "UNSUPPORTED",
+      "count": 4
+    },
+    {
+      "source": "S4",
+      "status": "UP",
+      "count": 4
+    },
+    {
+      "source": "S5",
+      "status": "DOWN",
+      "count": 199
+    },
+    {
+      "source": "S6",
+      "status": "DOWN",
+      "count": 1
+    },
+    {
+      "source": "S6",
+      "status": "UP",
+      "count": 1
+    }
+  ],
+  "final_failures": [
+    {
+      "code": "ENTRY_DNS_NOT_FOUND",
+      "tcp_status": "NOT_RUN",
+      "count": 96
+    },
+    {
+      "code": "ECHO_REQUEST_FAILED",
+      "tcp_status": "FAILED",
+      "count": 81
+    },
+    {
+      "code": "ECHO_REQUEST_FAILED",
+      "tcp_status": "SUCCESS",
+      "count": 35
+    },
+    {
+      "code": "RUNTIME_UNSUPPORTED",
+      "tcp_status": "NOT_RUN",
+      "count": 4
+    },
+    {
+      "code": "ECHO_REQUEST_FAILED",
+      "tcp_status": "NOT_APPLICABLE",
+      "count": 2
+    }
+  ],
+  "protocol_statuses": [
+    {
+      "protocol": "anytls",
+      "status": "UP",
+      "count": 1
+    },
+    {
+      "protocol": "hysteria2",
+      "status": "DOWN",
+      "count": 5
+    },
+    {
+      "protocol": "hysteria2",
+      "status": "UNSUPPORTED",
+      "count": 1
+    },
+    {
+      "protocol": "shadowsocks",
+      "status": "DOWN",
+      "count": 122
+    },
+    {
+      "protocol": "shadowsocks",
+      "status": "UNSUPPORTED",
+      "count": 2
+    },
+    {
+      "protocol": "shadowsocks",
+      "status": "UP",
+      "count": 1
+    },
+    {
+      "protocol": "trojan",
+      "status": "DOWN",
+      "count": 55
+    },
+    {
+      "protocol": "vless",
+      "status": "DOWN",
+      "count": 3
+    },
+    {
+      "protocol": "vless",
+      "status": "UNSUPPORTED",
+      "count": 1
+    },
+    {
+      "protocol": "vless",
+      "status": "UP",
+      "count": 2
+    },
+    {
+      "protocol": "vmess",
+      "status": "DOWN",
+      "count": 29
+    },
+    {
+      "protocol": "vmess",
+      "status": "UP",
+      "count": 37
+    }
+  ],
+  "native_configuration_crosschecks": [
+    {
+      "source": "S4",
+      "protocol": "trojan",
+      "native": "ECHO_REQUEST_FAILED",
+      "converted": "ECHO_REQUEST_FAILED"
+    },
+    {
+      "source": "S4",
+      "protocol": "hysteria2",
+      "native": "ECHO_REQUEST_FAILED",
+      "converted": "ECHO_REQUEST_FAILED"
+    },
+    {
+      "source": "S6",
+      "protocol": "vless",
+      "native": "ECHO_REQUEST_FAILED",
+      "converted": "ECHO_REQUEST_FAILED"
+    }
+  ]
+}

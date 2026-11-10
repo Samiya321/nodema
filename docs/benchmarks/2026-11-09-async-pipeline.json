@@ -1,0 +1,47 @@
+{
+  "benchmark": "loopback-vless-tls-full-pipeline",
+  "synthetic_metadata": true,
+  "results": [
+    {
+      "mode": "bounded-reuse",
+      "full_checks": 100,
+      "dns_requests": 0,
+      "tcp_probes": 1,
+      "tcp_cache_hits": 99,
+      "runtime_starts": 4,
+      "runtime_reloads": 96,
+      "nodes": 100,
+      "shards": 1,
+      "max_workers": 4,
+      "import_seconds": 0.064,
+      "check_wall_seconds": 0.603,
+      "pipeline_seconds": 0.963,
+      "local_worker_minutes": 0.01,
+      "mean_check_ms": 12.32,
+      "timeout_ratio": 0.0,
+      "execution_failure_ratio": 0.0,
+      "attempts": 100,
+      "retry_attempts": 0,
+      "error_codes": {},
+      "published_up": 100,
+      "database_roundtrips": 425,
+      "peak_pool_connections": 2,
+      "empty_schema_bytes": 573440,
+      "after_import_bytes": 835584,
+      "after_publish_bytes": 1335296,
+      "database_bytes": 1572864,
+      "echo_requests": 104,
+      "echo_response_bytes": 10296,
+      "export_bytes": {
+        "mihomo": 21409,
+        "singbox": 23015,
+        "uri": 17200,
+        "json": 98096,
+        "csv": 23195
+      },
+      "idempotent_replay": true,
+      "github_actions_minutes": null,
+      "public_network_bytes": null
+    }
+  ]
+}

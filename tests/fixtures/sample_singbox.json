@@ -1,0 +1,26 @@
+{
+  "outbounds": [
+    {
+      "type": "vless",
+      "tag": "Synthetic C",
+      "server": "edge.example",
+      "server_port": 443,
+      "uuid": "00000000-0000-4000-8000-000000000001",
+      "tls": {
+        "enabled": true,
+        "server_name": "sni.example"
+      },
+      "transport": {
+        "type": "ws",
+        "path": "/demo",
+        "headers": {
+          "Host": "ws.example"
+        }
+      }
+    },
+    {
+      "type": "direct",
+      "tag": "direct"
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+ss://aes-128-gcm:synthetic%3Ass%40secret@ss.example:443/#Synthetic%20SS
+trojan://synthetic%3Atrojan%40secret@trojan.example:443/?type=ws&sni=tls.example&host=cdn.example&path=%2Fws&alpn=h2%2Chttp%2F1.1#Synthetic%20Trojan
+anytls://synthetic-anytls@anytls.example:443/?sni=tls.example&insecure=0#Synthetic%20AnyTLS
+hy2://synthetic-user%3Asynthetic-pass@hy2.example:443/?sni=tls.example&obfs=salamander&obfs-password=synthetic-obfs#Synthetic%20HY2
+vmess://eyJ2IjogIjIiLCAicHMiOiAiU3ludGhldGljIFZNZXNzIiwgImFkZCI6ICJ2bWVzcy5leGFtcGxlIiwgInBvcnQiOiAiNDQzIiwgImlkIjogIjAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMSIsICJhaWQiOiAiMCIsICJzY3kiOiAiYXV0byIsICJuZXQiOiAid3MiLCAidGxzIjogInRscyIsICJzbmkiOiAidGxzLmV4YW1wbGUiLCAicGF0aCI6ICIvd3MifQ==
+vless://00000000-0000-4000-8000-000000000002@vless.example:443?type=ws&path=%2Fws&security=tls&sni=tls.example#Synthetic%20VLESS

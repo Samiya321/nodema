@@ -1,0 +1,95 @@
+{
+  "date": "2026-11-09",
+  "source_order": "user-provided order",
+  "parser_version": "protocols-v4",
+  "results": [
+    {
+      "api": "A1",
+      "root_fetch": "success",
+      "definitions": 170,
+      "import_status": "PARTIAL",
+      "unique_nodes": 15078,
+      "valid_declarations": 15865,
+      "issues": 1955,
+      "evidence": "encrypted_live_response_replay",
+      "summary": {
+        "kind": "substore",
+        "raw_import": true,
+        "indexes": 1,
+        "subscriptions": 170,
+        "local": 46,
+        "remote": 111,
+        "mixed": 8,
+        "processor_entries": 165,
+        "invalid_entries": 5,
+        "remote_references": 143,
+        "resolved_references": 39,
+        "failed_references": 104
+      }
+    },
+    {
+      "api": "A2",
+      "root_fetch": "success",
+      "definitions": 85,
+      "import_status": "PARTIAL",
+      "unique_nodes": 142,
+      "valid_declarations": 142,
+      "issues": 14,
+      "evidence": "encrypted_live_response_replay",
+      "summary": {
+        "kind": "substore",
+        "raw_import": true,
+        "indexes": 1,
+        "subscriptions": 85,
+        "local": 0,
+        "remote": 84,
+        "mixed": 0,
+        "processor_entries": 84,
+        "invalid_entries": 1,
+        "remote_references": 84,
+        "resolved_references": 71,
+        "failed_references": 13
+      }
+    },
+    {
+      "api": "A3",
+      "root_fetch": "success",
+      "definitions": 18,
+      "import_status": "PARTIAL",
+      "unique_nodes": 0,
+      "valid_declarations": 0,
+      "issues": 18,
+      "evidence": "encrypted_live_response_replay",
+      "summary": {
+        "kind": "substore",
+        "raw_import": true,
+        "indexes": 1,
+        "subscriptions": 18,
+        "local": 0,
+        "remote": 17,
+        "mixed": 0,
+        "processor_entries": 1,
+        "invalid_entries": 1,
+        "remote_references": 17,
+        "resolved_references": 0,
+        "failed_references": 17
+      }
+    },
+    {
+      "api": "A4",
+      "root_fetch": "FETCH_TIMEOUT",
+      "definitions": null,
+      "import_status": "FAILED",
+      "unique_nodes": 0
+    },
+    {
+      "api": "A5",
+      "root_fetch": "FETCH_TIMEOUT",
+      "definitions": null,
+      "import_status": "FAILED",
+      "unique_nodes": 0
+    }
+  ],
+  "unique_assets": 15220,
+  "node_health_checks": false
+}

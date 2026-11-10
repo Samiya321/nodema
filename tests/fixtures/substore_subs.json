@@ -1,0 +1,27 @@
+{
+  "status": "success",
+  "data": [
+    {
+      "name": "Synthetic local",
+      "source": "local",
+      "content": "trojan://synthetic-local@local.example:443#Synthetic%20Local",
+      "url": "https://ignored.example/not-used",
+      "process": []
+    },
+    {
+      "name": "Synthetic remote",
+      "source": "remote",
+      "url": "https://subscriptions.example/one\nhttp://subscriptions.example:3000/two",
+      "content": "ignored content",
+      "process": [{"type": "Script Operator", "args": {"content": "throw new Error('must never run')"}}]
+    },
+    {
+      "name": "Synthetic mixed",
+      "source": "local",
+      "mergeSources": "remoteFirst",
+      "content": "anytls://synthetic-mixed@mixed.example:443#Synthetic%20Mixed",
+      "url": "https://subscriptions.example/one",
+      "process": []
+    }
+  ]
+}

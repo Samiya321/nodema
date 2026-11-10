@@ -1,0 +1,14 @@
+# Entirely synthetic. Never used to contact a proxy endpoint.
+proxies:
+  - name: Synthetic B
+    type: vless
+    server: edge.example
+    port: 443
+    uuid: 00000000-0000-4000-8000-000000000001
+    network: ws
+    tls: true
+    servername: sni.example
+    ws-opts:
+      path: /demo
+      headers:
+        Host: ws.example

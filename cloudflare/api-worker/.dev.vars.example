@@ -1,0 +1,3 @@
+# Copy the administrator/dispatch values from your private .env; never commit .dev.vars.
+ADMIN_PASSWORD=
+GITHUB_DISPATCH_TOKEN=

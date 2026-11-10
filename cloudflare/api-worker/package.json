@@ -1,0 +1,29 @@
+{
+  "name": "nodema-api",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "types": "wrangler types",
+    "check": "tsc --noEmit",
+    "build": "tsc",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "dev": "wrangler dev --port 8787 --inspector-port 9230 --log-level error",
+    "predeploy": "node check-deployment.mjs && npm run check",
+    "deploy": "wrangler deploy"
+  },
+  "dependencies": {
+    "pg": "^8.16.3",
+    "yaml": "^2"
+  },
+  "devDependencies": {
+    "@types/node": "^24",
+    "@types/pg": "^8",
+    "jsonc-parser": "^3.3.1",
+    "typescript": "^5",
+    "wrangler": "^4"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
