@@ -115,9 +115,12 @@ export async function catalogOverview(
 ) {
   return (
     await rows(
-      `WITH data AS (SELECT status,eligible,exit_country FROM nodema_catalog($1,$2,'GENERAL'))
+      `WITH data AS (SELECT status,eligible,exit_country,node_group FROM nodema_catalog($1,$2,'GENERAL'))
     SELECT jsonb_build_object('total',(SELECT count(*) FROM data),
-      'eligible',(SELECT count(*) FROM data WHERE eligible),
+      'groups',coalesce((SELECT jsonb_object_agg(node_group,jsonb_build_object('total',total,'eligible',eligible,'statuses',statuses))
+        FROM (SELECT node_group,sum(n)::int total,sum(e)::int eligible,jsonb_object_agg(status,n) statuses
+          FROM (SELECT node_group,status,count(*) n,count(*) FILTER(WHERE eligible) e FROM data GROUP BY 1,2) s
+          GROUP BY node_group) g),'{}'),
       'statuses',coalesce((SELECT jsonb_object_agg(status,n) FROM (SELECT status,count(*) n FROM data GROUP BY status) s),'{}'),
       'countries',coalesce((SELECT jsonb_object_agg(country,n) FROM (SELECT coalesce(exit_country,'UNK') country,count(*) n FROM data GROUP BY 1) s),'{}')) AS summary`,
       [freshness, template],

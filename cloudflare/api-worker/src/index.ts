@@ -515,7 +515,9 @@ export async function handle(
     if (path === "/api/sources" && method === "GET")
       return json(
         await rows(
-          `SELECT ${sourceColumns},nodema_source_kind(kind,detected_kind) AS effective_kind,
+          `SELECT ${sourceColumns},CASE WHEN detected_kind='UNKNOWN' AND type='SUBSCRIPTION_URL'
+              AND convert_from(url_data,'UTF8') ~ '/api/subs/?([?#].*)?$' THEN 'SUBSTORE'
+              ELSE nodema_source_kind(kind,detected_kind) END AS effective_kind,
             (SELECT count(*)::int FROM node_sources ns WHERE ns.source_id=sources.id) AS node_count,
             (SELECT count(*)::int FROM node_sources ns WHERE ns.source_id=sources.id AND ns.is_present) AS present_count,
             (SELECT count(*)::int FROM node_sources ns JOIN node_current_status c ON c.node_id=ns.node_id
