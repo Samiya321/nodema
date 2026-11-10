@@ -56,6 +56,10 @@ class EndpointCache:
             self._values[key] = (self.clock() + max(0, ttl), copy.deepcopy(result))
             return result
 
+    def verdict(self, key, probe, ttl):
+        """Single-flight, short-lived shared boolean (e.g. "is the runner network healthy")."""
+        return self._cached(("verdict", key), lambda: ({"ok": bool(probe())}, ttl), None)["ok"]
+
     def _negative_ttl(self, error):
         ttl = self.settings.dns_negative_ttl_seconds
         try:

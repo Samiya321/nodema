@@ -53,6 +53,13 @@ class Observation:
         return values
 
 
+ENVIRONMENT_VERDICT_TTL_SECONDS = 20
+# Errors that prove the whole Runner is unusable; every other per-node error is retried.
+GLOBAL_ENVIRONMENT_ERRORS = frozenset(
+    {"ECHO_ENVIRONMENT_ERROR", "RUNNER_NETWORK_ERROR", "MIHOMO_UNAVAILABLE"}
+)
+
+
 def milliseconds(start):
     return max(0, round((time.monotonic() - start) * 1000))
 
@@ -217,6 +224,35 @@ class HealthChecker:
         except AssetError:
             raise AssetError("ECHO_ENVIRONMENT_ERROR") from None
 
+    def environment_ok(self):
+        """Direct Echo canary, shared by all workers for a short TTL.
+
+        A node-specific DNS/proxy failure must only become an environment failure when
+        the Runner itself can no longer reach the fixed Echo endpoint.
+        """
+
+        def probe():
+            try:
+                self.echo.request()
+                return True
+            except AssetError:
+                return False
+
+        verdict = getattr(self.cache, "verdict", None)
+        if verdict is None:
+            return probe()
+        return verdict("echo-direct", probe, ENVIRONMENT_VERDICT_TTL_SECONDS)
+
+    def _start_runtime(self, proxy):
+        """A crashed per-worker runtime is restarted once before reporting an error."""
+        try:
+            self.runtime.start(proxy)
+        except AssetError as error:
+            if not error.code.startswith("MIHOMO_"):
+                raise
+            self.runtime.close()
+            self.runtime.start(proxy)
+
     def check(self, identity, short_id):
         started = time.monotonic()
         result = self._check(identity, short_id)
@@ -247,9 +283,15 @@ class HealthChecker:
             if resolution["status"] == "FAILED":
                 self.metrics["preflight_skips"] += 1
             if resolution["status"] == "ERROR":
-                result.status = "ENVIRONMENT_ERROR"
                 if result.error_code == "DNS_TIMEOUT":
                     result.timeout_stages.append("DNS")
+                # One slow/broken authoritative server is a node problem (retried, then
+                # DOWN); only a failing Runner canary turns it into an environment error.
+                if not self.environment_ok():
+                    result.status = "ENVIRONMENT_ERROR"
+                    result.error_code = "RUNNER_NETWORK_ERROR"
+                elif result.error_code == "DNS_ENVIRONMENT_ERROR":
+                    result.error_code = "ENTRY_DNS_ERROR"
             return result
         ips = resolution["ips"]
         result.entry_ips = list(ips)
@@ -323,7 +365,7 @@ class HealthChecker:
         self.metrics["full_checks"] += 1
         # Only a successful proxy HTTPS response can establish UP.
         try:
-            self.runtime.start(proxy)
+            self._start_runtime(proxy)
             started = time.monotonic()
             data = self.echo.request(self.runtime.port)
             result.http_duration_ms = milliseconds(started)
@@ -351,10 +393,9 @@ class HealthChecker:
                 result.status = "ENVIRONMENT_ERROR"
             else:
                 result.proxy_status = result.http_status = "FAILED"
-                # A broken Echo cannot turn a batch into DOWN.
-                try:
-                    self.echo.request()
-                except AssetError:
+                # A broken Echo cannot turn a batch into DOWN. The direct canary is
+                # shared and cached briefly, so dead nodes don't each pay an extra request.
+                if not self.environment_ok():
                     result.status, result.error_code = "ENVIRONMENT_ERROR", "ECHO_ENVIRONMENT_ERROR"
         finally:
             try:

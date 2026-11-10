@@ -119,10 +119,13 @@ def test_environment_error_never_publishes_batch_down_and_resume(
         done = session.scalar(
             sa.select(sa.func.count()).select_from(ScanItem).where(ScanItem.status == "DONE")
         )
-        assert done == 1
+        # Retries are deferred to one pass at the end, so the first failure is still
+        # pending when the Runner-wide Echo failure aborts the shard.
+        assert done == 0
     scans.run_shard(run["id"], 0)
     assert scans.finalize(run["id"])["status"] == "COMPLETED"
-    assert len(checker.calls) == 4  # completed item was not tested again
+    # Checks in flight when the Runner failed are never trusted, so both nodes resume.
+    assert len(checker.calls) == 6
 
 
 def test_preflight_failure_and_expired_lease_recovery(service, monitor_settings, fixture_bytes):

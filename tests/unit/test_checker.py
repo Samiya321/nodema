@@ -162,3 +162,67 @@ def test_hysteria2_skips_tcp_and_requires_proxy_success(
     )
     assert result.status == "UP" and result.tcp_status == "NOT_APPLICABLE"
     assert result.tcp_duration_ms is None and result.http_status == "SUCCESS"
+
+
+class TimeoutResolver:
+    def resolve_name(self, *args, **kwargs):
+        import dns.exception
+
+        raise dns.exception.Timeout
+
+
+def dns_identity(fixture_bytes):
+    identity = parse_document(fixture_bytes("sample_vless.txt")).nodes[0].identity
+    identity["server_host"] = "slow-dns.example"
+    return identity
+
+
+def test_node_dns_timeout_with_healthy_runner_is_node_failure(monitor_settings, fixture_bytes):
+    checker = HealthChecker(
+        monitor_settings, runtime=Runtime(), echo=Echo(), geoip=Geo(), resolver=TimeoutResolver()
+    )
+    result = checker.check(dns_identity(fixture_bytes), "N1")
+    assert result.status == "UNKNOWN" and result.error_code == "DNS_TIMEOUT"
+    assert result.timeout_stages == ["DNS"]
+
+
+def test_node_dns_timeout_with_broken_runner_is_environment(monitor_settings, fixture_bytes):
+    class Broken(Echo):
+        calls = 0
+
+        def request(self, port=None):
+            Broken.calls += 1
+            raise AssetError("ECHO_REQUEST_FAILED")
+
+    checker = HealthChecker(
+        monitor_settings, runtime=Runtime(), echo=Broken(), geoip=Geo(), resolver=TimeoutResolver()
+    )
+    first = checker.check(dns_identity(fixture_bytes), "N1")
+    second = checker.check(dns_identity(fixture_bytes), "N2")
+    assert first.status == second.status == "ENVIRONMENT_ERROR"
+    assert first.error_code == "RUNNER_NETWORK_ERROR"
+    assert Broken.calls == 1  # the canary verdict is shared for a short TTL
+
+
+def test_crashed_runtime_is_restarted_once(monkeypatch, monitor_settings, fixture_bytes):
+    import app.checker.health as module
+
+    monkeypatch.setattr(module.socket, "create_connection", lambda *a, **k: nullcontext())
+
+    class Flaky(Runtime):
+        starts = closes = 0
+
+        def start(self, proxy):
+            Flaky.starts += 1
+            if Flaky.starts == 1:
+                raise AssetError("MIHOMO_START_FAILED")
+
+        def close(self):
+            Flaky.closes += 1
+
+    identity = parse_document(fixture_bytes("sample_vless.txt")).nodes[0].identity
+    identity["server_host"] = "198.51.100.1"
+    result = HealthChecker(monitor_settings, runtime=Flaky(), echo=Echo(), geoip=Geo()).check(
+        identity, "N1"
+    )
+    assert result.status == "UP" and Flaky.starts == 2 and Flaky.closes >= 1
