@@ -479,7 +479,11 @@ def usage_sample():
 
 @usage_app.command("collect-actions")
 @safe_command
-def usage_actions(run_id: int = typer.Option(..., min=1), attempt: int = typer.Option(..., min=1)):
+def usage_actions(
+    run_id: int = typer.Option(..., min=1),
+    attempt: int = typer.Option(..., min=1),
+    trusted_branch: str | None = None,
+):
     from app.actions_usage import collect_actions
 
     settings = Settings()
@@ -490,7 +494,7 @@ def usage_actions(run_id: int = typer.Option(..., min=1), attempt: int = typer.O
             os.environ.get("GITHUB_TOKEN", ""),
             run_id,
             attempt,
-            trusted_branch=settings.github_workflow_ref,
+            trusted_branch=trusted_branch or settings.github_workflow_ref,
         )
     )
 

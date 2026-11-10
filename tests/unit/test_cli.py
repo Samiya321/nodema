@@ -52,3 +52,44 @@ def test_daily_source_due_tolerates_schedule_jitter():
     assert source_due(previous, 86400, current)
     assert not source_due(current, 86400, current)
     assert not source_due(previous, 604800, current)
+
+
+def test_usage_collection_accepts_default_branch_without_overriding_github_reserved_env(
+    monkeypatch,
+):
+    import base64
+    from types import SimpleNamespace
+
+    from app import actions_usage
+
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://unused")
+    monkeypatch.setenv("FINGERPRINT_KEY_B64", base64.b64encode(b"H" * 32).decode())
+    monkeypatch.setenv("GITHUB_REPOSITORY", "synthetic/repo")
+    monkeypatch.setenv("GITHUB_TOKEN", "synthetic-token")
+    monkeypatch.setenv(
+        "GITHUB_WORKFLOW_REF", "synthetic/repo/.github/workflows/usage.yml@refs/heads/main"
+    )
+    monkeypatch.setattr("app.cli.service", lambda: SimpleNamespace(sessions=None))
+    captured = {}
+
+    def collect(*args, **kwargs):
+        captured.update(kwargs)
+        return {"status": "VERIFIED"}
+
+    monkeypatch.setattr(actions_usage, "collect_actions", collect)
+    response = CliRunner().invoke(
+        app,
+        [
+            "usage",
+            "collect-actions",
+            "--run-id",
+            "42",
+            "--attempt",
+            "1",
+            "--trusted-branch",
+            "main",
+        ],
+    )
+    assert response.exit_code == 0, response.output
+    assert captured["trusted_branch"] == "main"
+    assert "synthetic-token" not in response.output

@@ -24,7 +24,7 @@ jobs:
       ENCRYPTION_KEY_ID: ${{ vars.ENCRYPTION_KEY_ID || 'local-v1' }}
       FINGERPRINT_KEY_B64: ${{ secrets.FINGERPRINT_KEY_B64 }}
       GITHUB_TOKEN: ${{ github.token }}
-      GITHUB_WORKFLOW_REF: ${{ github.event.repository.default_branch }}
+      NODEMA_TRUSTED_BRANCH: ${{ github.event.repository.default_branch }}
       COMPLETED_RUN_ID: ${{ github.event.workflow_run.id }}
       COMPLETED_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
     steps:
@@ -37,5 +37,5 @@ jobs:
           python-version: '3.12'
       - run: uv sync --frozen
       - run: uv run alembic upgrade head
-      - run: uv run nodema usage collect-actions --run-id "$COMPLETED_RUN_ID" --attempt "$COMPLETED_ATTEMPT"
+      - run: uv run nodema usage collect-actions --run-id "$COMPLETED_RUN_ID" --attempt "$COMPLETED_ATTEMPT" --trusted-branch "$NODEMA_TRUSTED_BRANCH"
       - run: uv run nodema usage sample
