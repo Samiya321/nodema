@@ -1,5 +1,7 @@
 # Nodema · 私有节点资产与健康监测
 
+**接管此项目：先读 [AGENTS.md](AGENTS.md) → [接管指南](docs/HANDOFF.md) → [生产操作手册](docs/PRODUCTION_OPERATIONS.md)。本机私密资料另见 `private/README.md`，不进入公开仓库。**
+
 个人使用的 Shadowsocks / Trojan / AnyTLS / Hysteria2 / VMess / VLESS 资产管理系统。生产部署采用 **Cloudflare Pages + TypeScript Worker API + Neon PostgreSQL + GitHub Actions Python 检测任务**，不要求常驻服务器。
 
 云端实例已于 2026-11-11 发布，地址、验证结果和当前边界见 [云端部署记录](docs/CLOUD_DEPLOYMENT.md)。
