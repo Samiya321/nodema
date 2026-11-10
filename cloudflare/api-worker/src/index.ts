@@ -278,14 +278,14 @@ export async function handle(
         /^[\w.-]+\/[\w.-]+$/.test(env.GITHUB_REPOSITORY) &&
         Boolean(env.GITHUB_DISPATCH_TOKEN) &&
         Boolean(env.GITHUB_WORKFLOW_REF);
-      if (version !== "0012_trigger_search_path")
+      if (version !== "0013_export_usage")
         return json({
           ready: false,
           checks: { schema: false, dispatch: dispatchReady },
         });
       const checks = {
         database: true,
-        schema: version === "0012_trigger_search_path",
+        schema: version === "0013_export_usage",
         storage: "PLAINTEXT",
         dispatch: dispatchReady,
       };

@@ -123,7 +123,8 @@ def test_interrupted_execution_is_reported_without_changing_node_status(
     assert usage.summary()["recent"][0]["outcome"] == "INTERRUPTED"
 
 
-def test_github_usage_is_trusted_idempotent_and_never_stores_job_names(service):
+@pytest.mark.parametrize("workflow", ["daily-check", "source-sync", "backup", "export-build"])
+def test_github_usage_is_trusted_idempotent_and_never_stores_job_names(service, workflow):
     at = datetime.now(UTC) - timedelta(minutes=3)
 
     def stamp(delta):
@@ -136,7 +137,7 @@ def test_github_usage_is_trusted_idempotent_and_never_stores_job_names(service):
         "head_repository": {"full_name": "synthetic/repo"},
         "head_branch": "main",
         "event": "workflow_dispatch",
-        "path": ".github/workflows/daily-check.yml",
+        "path": f".github/workflows/{workflow}.yml",
         "status": "completed",
         "conclusion": "failure",
         "run_started_at": stamp(0),
@@ -162,8 +163,8 @@ def test_github_usage_is_trusted_idempotent_and_never_stores_job_names(service):
             "id": 3,
             "run_id": 123456,
             "conclusion": "skipped",
-            "started_at": None,
-            "completed_at": None,
+            "started_at": stamp(3),
+            "completed_at": stamp(2),
         },
     ]
 

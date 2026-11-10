@@ -188,7 +188,7 @@ def test_concurrent_migration_processes_share_one_schema(db_engine):
         with db_engine.connect() as conn:
             assert (
                 conn.scalar(sa.text(f'SELECT version_num FROM "{schema}".alembic_version'))
-                == "0012_trigger_search_path"
+                == "0013_export_usage"
             )
             tables = set(
                 conn.scalars(

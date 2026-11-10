@@ -510,7 +510,9 @@ class DatabaseSample(Base):
 class ActionRun(Base):
     __tablename__ = "action_runs"
     __table_args__ = (
-        sa.CheckConstraint("workflow IN ('daily-check','source-sync','backup')", name="workflow"),
+        sa.CheckConstraint(
+            "workflow IN ('daily-check','source-sync','backup','export-build')", name="workflow"
+        ),
         sa.CheckConstraint(
             "attempt > 0 AND runner_ms >= 0 AND job_count >= 0 "
             "AND failed_jobs >= 0 AND unmeasured_jobs >= 0",

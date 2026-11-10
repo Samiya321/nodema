@@ -128,7 +128,10 @@ def collect_actions(
         conclusion = job.get("conclusion")
         if conclusion not in CONCLUSIONS:
             raise AssetError("ACTIONS_RUN_NOT_COMPLETE")
-        failed += int(conclusion not in ("success", "skipped", "neutral"))
+        if conclusion == "skipped":
+            # GitHub bookkeeping timestamps may be inverted for jobs that never ran.
+            continue
+        failed += int(conclusion not in ("success", "neutral"))
         if job.get("started_at") and job.get("completed_at"):
             first, last = timestamp(job["started_at"]), timestamp(job["completed_at"])
             if last < first:
