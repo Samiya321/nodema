@@ -72,8 +72,7 @@ def downgrade():
         execute("DROP FUNCTION " + signature)
     execute("DROP VIEW nodema_node_scope")
     execute(
-        "DROP FUNCTION "
-        "nodema_source_usable(boolean,timestamptz,timestamptz,bigint,bigint,bigint)"
+        "DROP FUNCTION nodema_source_usable(boolean,timestamptz,timestamptz,bigint,bigint,bigint)"
     )
     execute("DROP FUNCTION nodema_source_kind(text,text)")
     op.drop_table("node_names")
