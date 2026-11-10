@@ -1,7 +1,7 @@
 name: Collect safe workflow usage
 on:
   workflow_run:
-    workflows: [Daily node health, Import and check queued sources, Encrypted database backup, Build private subscriptions]
+    workflows: [Daily node health, Sync sources, Encrypted database backup, Build private subscriptions]
     types: [completed]
 permissions:
   contents: read

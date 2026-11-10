@@ -3,6 +3,7 @@ import { SafeError, digest, equal, token } from "./crypto.js";
 import { handleExports } from "./export-api.js";
 import { usageSummary } from "./usage.js";
 import { importLinks, subscriptionURL } from "./source-bulk.js";
+import { handleManagement, providerName } from "./management.js";
 import { catalogPage, catalogOverview, filtersFromParams } from "./catalog.js";
 import {
   annotation,
@@ -26,7 +27,27 @@ const number = (value: unknown, fallback: number) => {
   return Number.isFinite(n) && n > 0 ? n : fallback;
 };
 const sourceColumns =
-  "id,name,type,format_hint,enabled,sync_interval_seconds,content_hash,applied_hash,parser_version,last_checked_at,sync_requested_at,last_synced_at,last_sync_status,last_error_code,last_parse_summary,revision,deleted_at";
+  "id,name,type,format_hint,enabled,sync_interval_seconds,content_hash,applied_hash,parser_version,last_checked_at,sync_requested_at,last_synced_at,last_sync_status,last_error_code,last_parse_summary,revision,deleted_at," +
+  "kind,detected_kind,parent_source_id,origin_label,user_agent,provider_id,traffic_upload,traffic_download,traffic_total,expires_at,userinfo_at,profile_title,profile_url,last_success_at,created_at," +
+  "substring(convert_from(url_data,'UTF8') from '^[A-Za-z]+://([^/:?#]+)') AS url_host";
+// Imports and edits never start Actions; the dashboard asks the user to sync/test.
+const MANUAL_PIPELINE = { dispatched: false, reason: "MANUAL_SYNC" };
+function sourceKind(value: unknown): string {
+  const s = value ?? "AUTO";
+  if (!["AUTO", "AIRPORT", "SELF_HOSTED"].includes(String(s)))
+    throw new SafeError("INVALID_SOURCE_KIND");
+  return String(s);
+}
+function userAgent(value: unknown): string | null {
+  if (value === null || value === undefined || value === "") return null;
+  if (
+    typeof value !== "string" ||
+    value.length > 512 ||
+    /[^\x20-\x7e]/.test(value)
+  )
+    throw new SafeError("INVALID_SUBSCRIPTION_USER_AGENT");
+  return value;
+}
 const securityHeaders = {
   "Cache-Control": "no-store",
   "Referrer-Policy": "no-referrer",
@@ -133,7 +154,9 @@ async function dispatch(
     throw new SafeError("DISPATCH_NOT_CONFIGURED");
   if (!/^[\w.-]+\/[\w.-]+$/.test(env.GITHUB_REPOSITORY))
     throw new SafeError("INVALID_DISPATCH_CONFIGURATION");
-  const response = await fetch(
+  let response: Response;
+  try {
+    response = await fetch(
     `https://api.github.com/repos/${env.GITHUB_REPOSITORY}/actions/workflows/${workflow}/dispatches`,
     {
       method: "POST",
@@ -147,23 +170,13 @@ async function dispatch(
       signal: AbortSignal.timeout(10000),
     },
   );
-  await response.body?.cancel();
-  if (response.status !== 204) throw new SafeError("DISPATCH_FAILED");
-  return { status: "QUEUED", dispatched: true };
-}
-
-async function queuePipeline(env: Env) {
-  try {
-    return await dispatch(env, "source-sync.yml", {});
-  } catch (error) {
-    // The DB request survives a dispatch outage. Return the saved asset ID so
-    // clients retry its sync, rather than unknowingly creating another Source.
-    return {
-      status: "PENDING",
-      dispatched: false,
-      reason: error instanceof SafeError ? error.code : "DISPATCH_FAILED",
-    };
+  } catch {
+    // Never surface network driver details; the persisted request can be retried.
+    throw new SafeError("DISPATCH_FAILED", 502);
   }
+  await response.body?.cancel();
+  if (response.status !== 204) throw new SafeError("DISPATCH_FAILED", 502);
+  return { status: "QUEUED", dispatched: true };
 }
 
 async function queueExportBuild(env: Env) {
@@ -183,8 +196,7 @@ export async function handle(
   env: Env,
   connect?: () => Promise<Client>,
 ): Promise<Response> {
-  let catalogChanged = false,
-    sourcePipelineAttempted = false;
+  let catalogChanged = false;
   let wakeExports: (() => Promise<unknown>) | undefined;
   let db: Client | undefined;
   try {
@@ -246,6 +258,10 @@ export async function handle(
           "exit_asn",
           "last_exit_asn",
           "revision",
+          "asn",
+          "traffic_upload",
+          "traffic_download",
+          "traffic_total",
         ]) {
           if (
             typeof row[key] === "string" &&
@@ -258,14 +274,12 @@ export async function handle(
     wakeExports = async () => {
       const pending = (
         await rows(
-          "SELECT EXISTS(SELECT 1 FROM export_artifacts e CROSS JOIN catalog_state s WHERE s.id=1 AND e.revoked_at IS NULL AND (e.expires_at IS NULL OR e.expires_at>NOW()) AND (e.invalidated OR e.catalog_revision<>s.revision)) AS pending",
+          // Only links that stopped serving need an immediate rebuild; merely stale
+          // files keep serving until the next sync/test pipeline publishes them.
+          "SELECT EXISTS(SELECT 1 FROM export_artifacts e WHERE e.revoked_at IS NULL AND (e.expires_at IS NULL OR e.expires_at>NOW()) AND e.invalidated AND e.current_version>0) AS pending",
         )
       )[0];
       if (pending.pending) await queueExportBuild(env);
-    };
-    const queueSources = async () => {
-      sourcePipelineAttempted = true;
-      return queuePipeline(env);
     };
     if (path === "/api/readiness" && method === "GET") {
       let version: unknown;
@@ -333,6 +347,13 @@ export async function handle(
       headers: securityHeaders,
     });
     if (exported) return exported;
+    const managed = await handleManagement(request, path, method, {
+      rows,
+      body,
+      json,
+      dispatch: (workflow, inputs) => dispatch(env, workflow, inputs),
+    });
+    if (managed) return managed;
     if (path === "/api/usage" && method === "GET")
       return json(
         await usageSummary(rows, Number(url.searchParams.get("days") ?? 30)),
@@ -346,7 +367,7 @@ export async function handle(
       const latest =
         (
           await rows(
-            "SELECT id,scan_date::text AS scan_date,kind,status,node_count,shard_count,started_at,finished_at,error_summary,archived_at,archive_summary FROM scan_runs ORDER BY scan_date DESC,started_at DESC LIMIT 1",
+            "SELECT id,scan_date::text AS scan_date,kind,scope,status,node_count,shard_count,started_at,finished_at,error_summary,archived_at,archive_summary FROM scan_runs ORDER BY scan_date DESC,started_at DESC LIMIT 1",
           )
         )[0] ?? null;
       if (latest) {
@@ -368,7 +389,7 @@ export async function handle(
         latest_completed_scan:
           (
             await rows(
-              "SELECT id,scan_date::text AS scan_date,kind,status,node_count,shard_count,started_at,finished_at,error_summary,archived_at,archive_summary FROM scan_runs WHERE kind='DAILY' AND status='COMPLETED' ORDER BY finished_at DESC LIMIT 1",
+              "SELECT id,scan_date::text AS scan_date,kind,scope,status,node_count,shard_count,started_at,finished_at,error_summary,archived_at,archive_summary FROM scan_runs WHERE kind='DAILY' AND status='COMPLETED' ORDER BY finished_at DESC LIMIT 1",
             )
           )[0] ?? null,
       });
@@ -494,7 +515,12 @@ export async function handle(
     if (path === "/api/sources" && method === "GET")
       return json(
         await rows(
-          `SELECT ${sourceColumns} FROM sources WHERE deleted_at IS NULL ORDER BY created_at,id`,
+          `SELECT ${sourceColumns},nodema_source_kind(kind,detected_kind) AS effective_kind,
+            (SELECT count(*)::int FROM node_sources ns WHERE ns.source_id=sources.id) AS node_count,
+            (SELECT count(*)::int FROM node_sources ns WHERE ns.source_id=sources.id AND ns.is_present) AS present_count,
+            (SELECT count(*)::int FROM node_sources ns JOIN node_current_status c ON c.node_id=ns.node_id
+              WHERE ns.source_id=sources.id AND c.status IN ('UP','DEGRADED')) AS up_count
+           FROM sources WHERE deleted_at IS NULL ORDER BY created_at,id`,
         ),
       );
     const sourceInput = async (id: string, type: string, data: string) => {
@@ -522,7 +548,7 @@ export async function handle(
         [url, payload] = await sourceInput(id, type, text(data.payload));
       const saved = (
         await rows(
-          `INSERT INTO sources(id,name,type,format_hint,url_data,payload_data,sync_requested_at) VALUES($1,$2,$3,$4,$5,$6,NOW()) RETURNING ${sourceColumns}`,
+          `INSERT INTO sources(id,name,type,format_hint,url_data,payload_data,kind,user_agent,sync_requested_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,NOW()) RETURNING ${sourceColumns}`,
           [
             id,
             label(data.name),
@@ -530,17 +556,19 @@ export async function handle(
             formatHint(data.format_hint),
             url,
             payload,
+            sourceKind(data.kind),
+            userAgent(data.user_agent),
           ],
         )
       )[0];
-      return json({ ...saved, pipeline: await queueSources() }, 201);
+      return json({ ...saved, pipeline: MANUAL_PIPELINE }, 201);
     }
     if (path === "/api/sources/bulk" && method === "POST") {
       const result = await importLinks(rows, await body(request));
       return json({
         ...result,
         pipeline: result.created
-          ? await queueSources()
+          ? MANUAL_PIPELINE
           : { dispatched: false, reason: "NO_NEW_SOURCES" },
       });
     }
@@ -556,7 +584,7 @@ export async function handle(
           "UPDATE sources SET sync_requested_at=NOW(),updated_at=NOW(),revision=revision+1 WHERE id=$1 AND enabled AND deleted_at IS NULL",
           [id],
         );
-        return json(await queueSources(), 202);
+        return json({ status: "REQUESTED", ...MANUAL_PIPELINE }, 202);
       }
       if (method === "GET")
         return json({
@@ -599,6 +627,24 @@ export async function handle(
         }
         if ("format_hint" in data)
           set("format_hint", formatHint(data.format_hint));
+        if ("kind" in data) set("kind", sourceKind(data.kind));
+        if ("user_agent" in data) set("user_agent", userAgent(data.user_agent));
+        if ("provider_id" in data) {
+          if (data.provider_id === null) set("provider_id", null);
+          else if (typeof data.provider_name === "string") {
+            // Move this link to a new airport group in one step.
+            const created = await rows(
+              "INSERT INTO providers(id,name) VALUES($1,$2) RETURNING id",
+              [crypto.randomUUID(), providerName(data.provider_name)],
+            );
+            set("provider_id", created[0].id);
+          } else {
+            const target = uuid(String(data.provider_id));
+            if (!(await rows("SELECT id FROM providers WHERE id=$1", [target])).length)
+              throw new SafeError("PROVIDER_NOT_FOUND", 404);
+            set("provider_id", target);
+          }
+        }
         if ("payload" in data) {
           const [url, payload] = await sourceInput(
             id,
@@ -628,9 +674,7 @@ export async function handle(
         )[0];
         return json({
           ...saved,
-          ...(needsSync && saved.enabled
-            ? { pipeline: await queueSources() }
-            : {}),
+          ...(needsSync && saved.enabled ? { pipeline: MANUAL_PIPELINE } : {}),
         });
       }
     }
@@ -638,14 +682,10 @@ export async function handle(
       if (method === "GET")
         return json(
           await rows(
-            "SELECT id,scan_date::text AS scan_date,kind,status,node_count,shard_count,started_at,finished_at,error_summary,archived_at,archive_summary FROM scan_runs ORDER BY scan_date DESC,started_at DESC LIMIT 100",
+            "SELECT id,scan_date::text AS scan_date,kind,scope,status,node_count,shard_count,started_at,finished_at,error_summary,archived_at,archive_summary FROM scan_runs ORDER BY scan_date DESC,started_at DESC LIMIT 100",
           ),
         );
-      if (method === "POST")
-        return json(
-          await dispatch(env, "daily-check.yml", { run_id: "" }),
-          202,
-        );
+
     }
     const scanMatch = /^\/api\/scans\/([^/]+)(\/retry)?$/.exec(path);
     if (scanMatch) {
@@ -654,7 +694,7 @@ export async function handle(
       const id = uuid(scanMatch[1]),
         run = (
           await rows(
-            "SELECT id,scan_date::text AS scan_date,kind,status,node_count,shard_count,started_at,finished_at,error_summary,archived_at,archive_summary FROM scan_runs WHERE id=$1",
+            "SELECT id,scan_date::text AS scan_date,kind,scope,status,node_count,shard_count,started_at,finished_at,error_summary,archived_at,archive_summary FROM scan_runs WHERE id=$1",
             [id],
           )
         )[0];
@@ -665,7 +705,10 @@ export async function handle(
         return json(
           run.status === "COMPLETED"
             ? { dispatched: false, reason: "ALREADY_COMPLETED" }
-            : await dispatch(env, "daily-check.yml", { run_id: id }),
+            : await dispatch(env, "daily-check.yml", {
+                run_id: id,
+                scope: String(run.scope ?? "ALL"),
+              }),
         );
       if (method === "GET") {
         const items = await rows(
@@ -697,27 +740,25 @@ export async function handle(
     ) {
       const data = await body(request),
         tpl = text(data.template);
-      nameFor(tpl, {
-        ENTRY_COUNTRY: "UNK",
-        EXIT_COUNTRY: "UNK",
-        SHORT_ID: "N000001",
-        PROTOCOL: "VLESS",
-        TRANSPORT: "WS",
-        SECURITY: "TLS",
-      });
+      // PostgreSQL renders every production name; validate with the same function.
+      await rows(
+        "SELECT nodema_validate_template($1)",
+        [tpl],
+        "INVALID_NAME_TEMPLATE",
+      );
       if (path.endsWith("/preview"))
         return json(
-          (await page({}, "short_id:asc", 0, 20)).items.map((n) => ({
-            id: n.id,
-            name: nameFor(tpl, {
-              ENTRY_COUNTRY: String(n.entry_country ?? "UNK"),
-              EXIT_COUNTRY: String(n.exit_country ?? "UNK"),
-              SHORT_ID: n.short_id,
-              PROTOCOL: String(n.protocol).toUpperCase(),
-              TRANSPORT: String(n.transport ?? "UNK").toUpperCase(),
-              SECURITY: String(n.security ?? "UNK").toUpperCase(),
-            }),
-          })),
+          (
+            await catalogPage(
+              rows,
+              tpl,
+              number(env.FRESHNESS_HOURS, 36),
+              {},
+              "short_id:asc",
+              0,
+              20,
+            )
+          ).items.map((n) => ({ id: n.id, name: n.name })),
         );
       await db.query("BEGIN");
       try {
@@ -754,7 +795,7 @@ export async function handle(
         )
       : json({ error_code: "OPERATION_FAILED" }, 500);
   } finally {
-    if (catalogChanged && !sourcePipelineAttempted && wakeExports) {
+    if (catalogChanged && wakeExports) {
       try {
         await wakeExports();
       } catch {

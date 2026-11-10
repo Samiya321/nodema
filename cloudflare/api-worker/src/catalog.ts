@@ -8,6 +8,9 @@ export type Rows = (
 ) => Promise<Row[]>;
 export const filterKeys = new Set([
   "id",
+  "node_group",
+  "provider_id",
+  "asn_label",
   "q",
   "status",
   "protocol",

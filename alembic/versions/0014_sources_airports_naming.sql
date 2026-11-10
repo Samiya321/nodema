@@ -234,8 +234,10 @@ BEGIN
 END;
 $$;
 
-UPDATE naming_rules SET template='{FLAG}{ROUTE}|{ASN} {SEQ}',updated_at=now()
- WHERE template='{ENTRY_COUNTRY} → {EXIT_COUNTRY} | {PROTOCOL}-{TRANSPORT}-{SECURITY} | {SHORT_ID}';
+-- Both runtimes read this row, so the dashboard and subscriptions always agree.
+INSERT INTO naming_rules(id,template) VALUES (1,'{FLAG}{ROUTE}|{ASN} {SEQ}')
+ ON CONFLICT (id) DO UPDATE SET template=excluded.template,updated_at=now()
+ WHERE naming_rules.template='{ENTRY_COUNTRY} → {EXIT_COUNTRY} | {PROTOCOL}-{TRANSPORT}-{SECURITY} | {SHORT_ID}';
 
 -- Catalog: retained nodes stay eligible; airport scope and stable names are exposed.
 CREATE OR REPLACE VIEW nodema_catalog_base AS
