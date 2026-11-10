@@ -68,9 +68,7 @@ def test_bulk_limits_before_write(service, text, code):
     assert not service.list_sources()
 
 
-def test_bulk_api_never_dispatches_and_retains_requests(
-    service, monitor_settings, monkeypatch
-):
+def test_bulk_api_never_dispatches_and_retains_requests(service, monitor_settings, monkeypatch):
     import app.api as api
 
     client = TestClient(create_app(monitor_settings, assets=service))
