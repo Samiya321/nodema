@@ -30,6 +30,12 @@ def pg_environment(database_url):
             "sslmode", "prefer" if url.host in ("localhost", "127.0.0.1") else "require"
         ),
     )
+    for option, key in (("sslrootcert", "PGSSLROOTCERT"), ("channel_binding", "PGCHANNELBINDING")):
+        if option in url.query:
+            value = url.query[option]
+            if not isinstance(value, str):
+                raise AssetError("INVALID_DATABASE_URL")
+            env[key] = value
     return env
 
 
@@ -45,6 +51,8 @@ def command(tool, docker_client):
         "PGPASSWORD",
         "PGCONNECT_TIMEOUT",
         "PGSSLMODE",
+        "PGSSLROOTCERT",
+        "PGCHANNELBINDING",
     ):
         result.extend(["-e", key])
     return result + ["postgres:17-alpine", tool]

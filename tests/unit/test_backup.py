@@ -13,11 +13,17 @@ def test_backup_is_encrypted_and_password_never_in_argv(cipher, tmp_path, monkey
     def run(args, **kwargs):
         assert all("synthetic-password" not in arg for arg in args)
         assert kwargs["env"]["PGPASSWORD"] == "synthetic-password"
+        assert kwargs["env"]["PGSSLMODE"] == "verify-full"
+        assert kwargs["env"]["PGSSLROOTCERT"] == "system"
+        assert kwargs["env"]["PGCHANNELBINDING"] == "require"
         calls.append((args, kwargs))
         return subprocess.CompletedProcess(args, 0, stdout=raw)
 
     monkeypatch.setattr(subprocess, "run", run)
-    url = "postgresql+psycopg://user:synthetic-password@db.example/assets"
+    url = (
+        "postgresql+psycopg://user:synthetic-password@db.example/assets"
+        "?sslmode=verify-full&sslrootcert=system&channel_binding=require"
+    )
     path = tmp_path / "backup.nma"
     assert backup_database(url, cipher, path)["status"] == "BACKED_UP"
     assert raw not in path.read_bytes() and path.stat().st_mode & 0o777 == 0o600

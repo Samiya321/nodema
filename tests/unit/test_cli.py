@@ -1,5 +1,6 @@
 import os
 
+from click import unstyle
 from typer.testing import CliRunner
 
 from app.cli import app
@@ -38,7 +39,7 @@ def test_documented_required_option_names():
         (["naming", "apply"], "--template-file"),
     ):
         response = runner.invoke(app, [*command, "--help"])
-        assert response.exit_code == 0 and option in response.output
+        assert response.exit_code == 0 and option in unstyle(response.output)
 
 
 def test_daily_source_due_tolerates_schedule_jitter():

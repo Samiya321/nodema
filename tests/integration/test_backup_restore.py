@@ -96,10 +96,12 @@ def test_real_encrypted_database_restore(
             assert bytes(encrypted).startswith(b"{")
             assert (
                 conn.scalar(sa.text(f'SELECT version_num FROM "{schema}".alembic_version'))
-                == "0011_scan_archives"
+                == "0012_trigger_search_path"
             )
         # Clean restores are repeatable and perform real writes to the target.
         with target.begin() as conn:
+            # A restored schema must work even when the caller uses the default public path.
+            conn.execute(sa.text("SET LOCAL search_path TO public"))
             conn.execute(sa.text(f'UPDATE "{schema}".nodes SET enabled=false'))
         backup.restore_database(
             target_url.render_as_string(hide_password=False), cipher, path, confirmed=True

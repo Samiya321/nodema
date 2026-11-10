@@ -77,7 +77,7 @@ Pages Functions 将 `/api/*` 和 `/subscriptions/*` 转发给 Worker 服务绑�
 
 ## 5. GitHub Actions
 
-将源码推送到你自己的仓库；本次工作没有创建或推送 Git 仓库。配置：
+将源码推送到你自己的仓库。配置：
 
 | Secret | 用途 |
 | --- | --- |
@@ -103,7 +103,7 @@ Pages Functions 将 `/api/*` 和 `/subscriptions/*` 转发给 Worker 服务绑�
 
 ## 6. 部署后操作与升级
 
-1. 已有安装保持原 AES/HMAC 密钥不变，执行 `uv run alembic upgrade head` 到 `0011_scan_archives`（协议扩展为 `0004_password_protocols`，流程迁移为 `0003_import_pipeline`）；来源、节点、旧扫描历史均保留。先迁移数据库，再更新 Worker。
+1. 已有安装保持原 AES/HMAC 密钥不变，执行 `uv run alembic upgrade head` 到 `0012_trigger_search_path`（协议扩展为 `0004_password_protocols`，流程迁移为 `0003_import_pipeline`）；来源、节点、旧扫描历史均保留。先迁移数据库，再更新 Worker。
 2. 本地填好生产数据库和 Echo 配置后运行 `uv run nodema doctor --network`。只检查数据库/已有数据密钥、Mihomo 和直连 Echo，不连接代理节点，不输出任何凭据。
 3. `npm run deploy` 会拒绝全零 Hyperdrive ID 和空仓库配置；预检支持标准 JSONC 注释与尾逗号。Wrangler 检查所需 Secrets。Pages 登录后 `/api/readiness` 进一步检查数据库迁移与调度配置，缺失项显示在界面。
 4. 添加一个小批量来源，保存后自动排队；界面每 15 秒刷新，不刷新正在填写的表单或弹窗。查看来源结果和检测记录，UP 节点可生成订阅。提交失败时来源 ID 和 pending 请求仍保留，点击“同步”即可重试，无需重复添加。
@@ -124,7 +124,7 @@ readiness 检查配置存在，不会冒充 GitHub 授权测试或真实代理�
 
 部署代码须包含 `export-build.yml`。Worker 的调度 token 需要目标仓库 Actions write 权限，使用仓库受信任默认分支；无需额外 R2、Redis 或常驻服务。`FRESHNESS_HOURS` 在 Worker vars、GitHub repository vars 与本地配置保持一致，默认 36。
 
-已有安装先私下备份并保存原密钥，再迁移到 `0011_scan_archives`，更新工作流及 API/Pages。`0010` 保留旧链接 ID、token hash 和到期时间，将成品置为待生成；执行一次 `uv run nodema export build-pending` 或手动运行 Build private subscriptions。转换完成前旧链接会返回待更新。旧 token 不能从 hash 恢复；原链接仍可用，确需恢复地址时通过管理员“更换密钥”生成新地址。
+已有安装先私下备份并保存原密钥，再迁移到 `0012_trigger_search_path`，更新工作流及 API/Pages。`0010` 保留旧链接 ID、token hash 和到期时间，将成品置为待生成；执行一次 `uv run nodema export build-pending` 或手动运行 Build private subscriptions。转换完成前旧链接会返回待更新。旧 token 不能从 hash 恢复；原链接仍可用，确需恢复地址时通过管理员“更换密钥”生成新地址。
 
 检查创建返回 202、Actions 执行、列表变为就绪、固定链接下载、停用阻断、重建与撤销后，再开始批量导入。生成任务按 PostgreSQL 中的持久请求恢复，调度失败可在页面重试，也会由每日流水线补处理。没有每次下载触发一个 Job 的行为。
 

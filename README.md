@@ -139,7 +139,7 @@ uv run nodema export revoke <EXPORT_ID>
 
 大陆等级仅为理论候选优先级，附理由、置信度和规则版本。没有大陆探针时，大陆可达性与真实线路类型始终 UNKNOWN；不会把 Runner 延迟或节点名称当作专线证明。
 
-检测已加入共享 DNS/TCP 缓存、协议适配门控、抽样完整复查、失败退避、隔离核心复用和有界并发。仅完整代理 HTTPS 成功可为 UP，冷却跳过不延长成功有效期。详细规则、配置与 CLI 示例见 [QUALITY_AND_EXECUTION.md](docs/QUALITY_AND_EXECUTION.md)，本地基准见 [VALIDATION.md](docs/VALIDATION.md)。已有安装保持密钥不变，先迁移至 `0011_scan_archives`，再更新 API/前端/任务。
+检测已加入共享 DNS/TCP 缓存、协议适配门控、抽样完整复查、失败退避、隔离核心复用和有界并发。仅完整代理 HTTPS 成功可为 UP，冷却跳过不延长成功有效期。详细规则、配置与 CLI 示例见 [QUALITY_AND_EXECUTION.md](docs/QUALITY_AND_EXECUTION.md)，本地基准见 [VALIDATION.md](docs/VALIDATION.md)。已有安装保持密钥不变，先迁移至 `0012_trigger_search_path`，再更新 API/前端/任务。
 
 ## 测试、规模与备份
 

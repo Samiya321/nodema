@@ -1,6 +1,6 @@
 # 明文存储与节点收录、可用天数
 
-生效日期：2026-11-09。用户明确选择数据库明文存储；本页覆盖原规范及历史文档中的数据库 AES 要求。运行时已实现，明文转换迁移为 `0009_plaintext_lifetime`，当前 head 为 `0011_scan_archives`。Actions 异步生成与扫描归档已实现，见 [ASYNC_SUBSCRIPTIONS.md](ASYNC_SUBSCRIPTIONS.md)。
+生效日期：2026-11-09。用户明确选择数据库明文存储；本页覆盖原规范及历史文档中的数据库 AES 要求。运行时已实现，明文转换迁移为 `0009_plaintext_lifetime`，当前 head 为 `0012_trigger_search_path`。Actions 异步生成与扫描归档已实现，见 [ASYNC_SUBSCRIPTIONS.md](ASYNC_SUBSCRIPTIONS.md)。
 
 ## 日期与可用率
 

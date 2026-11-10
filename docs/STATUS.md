@@ -11,7 +11,7 @@
 | M5 性能与容量 | 本地验证 | 100/1000/5000 链路与异步生成测量；有限成品/成员/版本预算、明细保留期、用量与备份；免费云端额度未验收 |
 | 生产部署 | 未执行 | Cloudflare/Neon/GitHub、真实 Echo metadata、授权公网节点、MaxMind 与云库恢复需用户环境验证 |
 
-本轮通过 **277 Python + 30 Worker + 3 Echo = 310** 项测试。迁移 head 为 `0011_scan_archives`。新订阅默认长期有效，旧链接保留原 token hash 和到期时间；升级后需生成一次当前成品。运行步骤、预算及归档语义见 [ASYNC_SUBSCRIPTIONS.md](ASYNC_SUBSCRIPTIONS.md)。
+本轮通过 **277 Python + 30 Worker + 3 Echo = 310** 项测试。迁移 head 为 `0012_trigger_search_path`。新订阅默认长期有效，旧链接保留原 token hash 和到期时间；升级后需生成一次当前成品。运行步骤、预算及归档语义见 [ASYNC_SUBSCRIPTIONS.md](ASYNC_SUBSCRIPTIONS.md)。
 
 没有改为 Go，没有引入自有服务器、Redis 或 R2。正常数据库读写不依赖 AES，HMAC 与访问鉴权保留；旧密文一次性迁移、加密备份和 MMDB 包仍使用 AES。
 
