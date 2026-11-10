@@ -1191,6 +1191,7 @@ version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "alembic" },
+    { name = "certifi" },
     { name = "cryptography" },
     { name = "dnspython" },
     { name = "fastapi" },
@@ -1215,6 +1216,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "alembic", specifier = ">=1.16,<2" },
+    { name = "certifi", specifier = ">=2025" },
     { name = "cryptography", specifier = ">=46" },
     { name = "dnspython", specifier = ">=2.7,<3" },
     { name = "fastapi", specifier = ">=0.115,<1" },

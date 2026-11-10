@@ -5,7 +5,7 @@ description = "Private proxy asset management and daily health monitoring"
 requires-python = ">=3.12"
 dependencies = [
   "SQLAlchemy>=2.0,<3", "alembic>=1.16,<2", "psycopg[binary]>=3.2,<4",
-  "cryptography>=46", "PyYAML>=6,<7", "httpcore>=1,<2", "dnspython>=2.7,<3",
+  "cryptography>=46", "certifi>=2025", "PyYAML>=6,<7", "httpcore>=1,<2", "dnspython>=2.7,<3",
   "pydantic-settings>=2.10,<3", "typer>=0.16,<1",
   "fastapi>=0.115,<1", "uvicorn>=0.34,<1", "geoip2>=5,<6",
 ]

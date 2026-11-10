@@ -1,3 +1,6 @@
+import ssl
+
+import certifi
 import sqlalchemy as sa
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import sessionmaker
@@ -10,6 +13,12 @@ def make_engine(url: str):
         parsed = make_url(url)
         if parsed.drivername != "postgresql+psycopg":
             raise ValueError
+        connect_args = {"connect_timeout": 10}
+        if parsed.query.get("sslrootcert") == "system":
+            # Binary libpq may use different OpenSSL defaults from Python/the host.
+            # Resolve the host trust bundle explicitly, retaining verified TLS.
+            ca_file = ssl.get_default_verify_paths().cafile or certifi.where()
+            connect_args["sslrootcert"] = ca_file
         return sa.create_engine(
             parsed,
             echo=False,
@@ -17,7 +26,7 @@ def make_engine(url: str):
             pool_size=2,
             max_overflow=0,
             pool_pre_ping=True,
-            connect_args={"connect_timeout": 10},
+            connect_args=connect_args,
         )
     except (ValueError, sa.exc.ArgumentError):
         raise AssetError("INVALID_DATABASE_URL") from None
