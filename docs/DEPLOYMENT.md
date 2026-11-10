@@ -30,7 +30,7 @@ npm run deploy
 
 在 Cloudflare 控制台创建连接 Neon 的 Hyperdrive。**禁用查询结果缓存**，保留连接池能力；停用、撤销与新鲜度校验依赖即时读取数据库。不要把数据库密码作为 CLI 参数或提交到 wrangler 配置。
 
-将实际 Hyperdrive ID 写入 `cloudflare/api-worker/wrangler.jsonc`；仓库中的全零 ID 仅为占位符。配置非敏感 vars：
+将实际 Hyperdrive ID 写入 `cloudflare/api-worker/wrangler.jsonc`；本仓库当前配置已包含上线实例 ID；接管已有实例时保持它不变，新建独立实例时才替换为自己的 ID。配置非敏感 vars：
 
 | 变量 | 用途 |
 | --- | --- |

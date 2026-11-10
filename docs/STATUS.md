@@ -1,5 +1,7 @@
 # 实现与验收状态
 
+新会话/其他 agent 先读 [接管指南](HANDOFF.md)；生产操作和凭据读取边界见 [生产操作手册](PRODUCTION_OPERATIONS.md)。
+
 截至 2026-11-09，Actions 预生成订阅和长期扫描明细归档两项主要代码缺口已补齐，相关 API、Dashboard、迁移、工作流与回归均已接通。2026-11-11 已发布用户云端实例并完成基础链路验收，见 [云端部署记录](CLOUD_DEPLOYMENT.md)。逐项核对见 [交付审查](CONVERSATION_COMPLETENESS_REVIEW.md)。
 
 | 范围 | 代码状态 | 验证与边界 |
