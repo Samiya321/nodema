@@ -24,6 +24,7 @@ from app.database.models import (
     NodeCurrentStatus,
     NodeDailyStats,
     ScanItem,
+    ScanRequest,
     ScanRun,
     ScanShard,
     TestResult,
@@ -252,9 +253,45 @@ class ScanService:
                 result["items"] = run.archive_summary.get("items", {})
             return result
 
-    def plan(self, run_id=None, scan_date=None, *, scope="ALL", manual=False):
+    def request(self, scope="ALL"):
+        """Persist a test request; the next pipeline run consumes it."""
+        scope_clause(scope)
+        with self.sessions.begin() as session:
+            row = ScanRequest(id=uuid4(), scope=scope)
+            session.add(row)
+            session.flush()
+            return {"id": row.id, "scope": scope}
+
+    def consume_requests(self, scan_date=None):
+        """Create one MANUAL run per requested scope (ALL subsumes the others).
+
+        GitHub keeps one pending run per concurrency group, so a dispatch input can be
+        lost; persisted requests are never lost and each becomes exactly one run.
+        """
+        with self.sessions() as session:
+            pending = session.scalars(
+                sa.select(ScanRequest)
+                .where(ScanRequest.consumed_at.is_(None))
+                .order_by(ScanRequest.requested_at)
+            ).all()
+            scopes = {row.scope for row in pending}
+            ids = [row.id for row in pending]
+        if not ids:
+            return []
+        targets = ["ALL"] if "ALL" in scopes else sorted(scopes)
+        runs = {scope: self.create(scan_date, scope=scope, manual=True) for scope in targets}
+        with self.sessions.begin() as session:
+            for row in session.scalars(
+                sa.select(ScanRequest).where(ScanRequest.id.in_(ids)).with_for_update()
+            ):
+                row.consumed_at = now()
+                row.scan_run_id = runs["ALL" if "ALL" in runs else row.scope]["id"]
+        return list(runs.values())
+
+    def plan(self, run_id=None, scan_date=None, *, scope="ALL", manual=False, run=None):
         """Plan every unfinished run that the serialized Actions pipeline can resume."""
-        run = self.get(run_id) if run_id else self.create(scan_date, scope=scope, manual=manual)
+        if run is None:
+            run = self.get(run_id) if run_id else self.create(scan_date, scope=scope, manual=manual)
         if run.get("archived_at") is not None:
             raise AssetError("SCAN_ARCHIVED")
         with self.sessions() as session:
@@ -793,10 +830,9 @@ class ScanService:
                 "entry_country",
                 "entry_asn",
             ):
-                updates[key] = sa.case(
-                    (excluded.status.in_(("UP", "DEGRADED")), excluded[key]),
-                    else_=sa.func.coalesce(excluded[key], getattr(NodeCurrentStatus, key)),
-                )
+                # A missing GeoIP/Echo field never erases what was known: names (and
+                # their stable numbers) would otherwise flip between groups.
+                updates[key] = sa.func.coalesce(excluded[key], getattr(NodeCurrentStatus, key))
             session.execute(
                 statement.on_conflict_do_update(
                     index_elements=[NodeCurrentStatus.node_id],

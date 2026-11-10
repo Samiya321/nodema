@@ -376,13 +376,19 @@ def scan_prepare(
             day = date.fromisoformat(scan_date) if scan_date else None
         except ValueError:
             raise AssetError("INVALID_SCAN_DATE") from None
+        # Every dashboard click is persisted first; consume all of them.
+        runs = scans.consume_requests(day)
         if trigger == "schedule":
-            enabled, scope = scans.daily_settings()
-            if not enabled:
-                output({"status": "SCHEDULE_DISABLED"})
-                write_outputs({"has_tasks": "false", "workers": "[]", "run_ids": "[]"})
-                return
-        plan = scans.plan(scan_date=day, scope=scope, manual=trigger == "manual")
+            enabled, daily_scope = scans.daily_settings()
+            if enabled:
+                runs.append(scans.create(day, scope=daily_scope))
+        elif not runs:
+            runs.append(scans.create(day, scope=scope, manual=True))
+        if not runs:
+            output({"status": "SCHEDULE_DISABLED"})
+            write_outputs({"has_tasks": "false", "workers": "[]", "run_ids": "[]"})
+            return
+        plan = scans.plan(scan_date=day, run=runs[-1])
     result = {k: v for k, v in plan.items() if k not in ("runs", "workers")}
     result["run_ids"] = [r["id"] for r in plan["runs"]]
     detail = scans.get(result["id"])

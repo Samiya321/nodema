@@ -73,6 +73,12 @@ def test_selected_node_changes_block_old_file_immediately(
             session.execute(sa.text("UPDATE sources SET kind='AIRPORT', enabled=false"))
         else:
             session.execute(sa.update(Node).where(Node.id == node_id).values(config_data=b"{}"))
+    if change in ("source", "membership"):
+        # Self-hosted nodes outlive a paused source or an upstream removal: the link
+        # keeps serving and nothing has to start an Actions rebuild.
+        assert exports.get(identifier)["serving"]
+        assert exports.download(identifier, profile["token"])[0].startswith(b"vless://")
+        return
     assert not exports.get(identifier)["serving"]
     with pytest.raises(AssetError, match="EXPORT_PENDING"):
         exports.download(identifier, profile["token"])
@@ -80,10 +86,6 @@ def test_selected_node_changes_block_old_file_immediately(
     if change == "config":
         assert result["failed"] == 1
         assert not exports.get(identifier)["serving"]
-    elif change in ("source", "membership"):
-        # Self-hosted nodes outlive a paused source or an upstream removal.
-        assert result["ready"] == 1
-        assert exports.download(identifier, profile["token"])[0].startswith(b"vless://")
     else:
         assert result["ready"] == 1
         assert exports.download(identifier, profile["token"])[0] == b""

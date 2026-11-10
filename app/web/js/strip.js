@@ -1,7 +1,10 @@
 // The only place that starts GitHub Actions: sync sources, or test one node group.
 import { KIND, SCAN_KIND, api, busy, confirm, h, meter, toast } from "./core.js";
 
-let root, timer, last, listening = false;
+// Poll only while work is pending or just requested, so an idle tab lets the free
+// database suspend. Navigation, focus and actions refresh it otherwise.
+let root, timer, last, listening = false, wakeUntil = 0;
+const WAKE_MS = 10 * 60 * 1000;
 
 export function renderStrip(element) {
   root = element;
@@ -11,31 +14,34 @@ export function renderStrip(element) {
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden && root?.isConnected) refreshStrip();
   });
+  window.addEventListener("hashchange", () => refreshStrip());
 }
 
-function schedule(active) {
+function schedule(busy) {
   clearTimeout(timer);
+  if (!busy && Date.now() > wakeUntil) return;
   timer = setTimeout(() => {
     if (!document.hidden) refreshStrip();
-    else schedule(active);
-  }, active ? 15000 : 60000);
+    else schedule(busy);
+  }, 15000);
 }
 
 export async function refreshStrip() {
   try {
     last = await api("/pipeline");
   } catch {
-    schedule(false);
     return;
   }
   draw(last);
-  schedule(last.active_scans.length > 0);
+  schedule(last.active_scans.length > 0 || (last.requested_scans || []).length > 0);
 }
 
 async function startSync(button) {
   await busy(button, async () => {
     await api("/pipeline/sync", { method: "POST" });
     toast("已提交同步。GitHub Actions 通常在 1 分钟内开始，只拉取来源，不检测节点。", "ok");
+    wakeUntil = Date.now() + WAKE_MS;
+    setTimeout(refreshStrip, 4000);
   });
 }
 
@@ -50,8 +56,14 @@ async function startTest(button, scope) {
     "同一节点若已在未完成的批次中会被跳过。";
   if (!(await confirm("开始检测", message, { action: "开始检测" }))) return;
   await busy(button, async () => {
-    await api("/scans", { method: "POST", body: { scope } });
-    toast("检测已提交，进度会显示在顶部。", "ok");
+    const result = await api("/scans", { method: "POST", body: { scope } });
+    toast(
+      result.dispatched === false
+        ? "检测请求已保存，但提交到 GitHub 失败；下一次同步、检测或定时任务会执行它。"
+        : "检测已提交，进度会显示在顶部。",
+      result.dispatched === false ? "bad" : "ok",
+    );
+    wakeUntil = Date.now() + WAKE_MS;
     setTimeout(refreshStrip, 4000);
   });
 }
@@ -108,9 +120,14 @@ function draw(state) {
     h(
       "div",
       { class: "strip-group runs", "aria-live": "polite" },
+      (state.requested_scans || []).map((r) =>
+        h("p", { class: "strip-text", title: "等待 GitHub Actions 开始" }, `已请求：${KIND[r.scope]}`),
+      ),
       state.active_scans.length
         ? state.active_scans.slice(0, 3).map(progress)
-        : h("p", { class: "strip-text muted" }, "没有进行中的检测"),
+        : (state.requested_scans || []).length
+          ? null
+          : h("p", { class: "strip-text muted" }, "没有进行中的检测"),
     ),
   );
 }

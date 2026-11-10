@@ -1,15 +1,13 @@
 """Authenticated single-admin API; long-running detection remains a CLI/Actions job."""
 
 import hmac
-from pathlib import Path
 from typing import Annotated
 from uuid import UUID
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import JSONResponse, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 from app.catalog import Catalog, filters_from_params
@@ -385,11 +383,13 @@ def create_app(settings=None, *, assets=None):
             headers={"Content-Disposition": f'attachment; filename="nodes.{suffix}"', "ETag": etag},
         )
 
-    root = Path(__file__).parent / "web"
-    app.mount("/assets", StaticFiles(directory=root), name="assets")
-
     @app.get("/")
     def index():
-        return FileResponse(root / "index.html")
+        # The dashboard needs the Worker API (airports, Sub-Store, pipeline routes).
+        return Response(
+            "Nodema local API. The dashboard runs on Cloudflare Pages + Worker; "
+            "for local UI work use `npm run dev` in cloudflare/api-worker and web/dashboard.",
+            media_type="text/plain",
+        )
 
     return app

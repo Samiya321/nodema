@@ -308,6 +308,27 @@ class NodeCurrentStatus(Base):
     last_exit_asn_org: Mapped[str | None] = mapped_column(sa.Text)
 
 
+class ScanRequest(Base):
+    """A requested test scope; consumed by the next Actions run even if GitHub
+    replaced the dispatch that carried it."""
+
+    __tablename__ = "scan_requests"
+    __table_args__ = (
+        sa.Index(
+            "idx_scan_requests_pending",
+            "requested_at",
+            postgresql_where=sa.text("consumed_at IS NULL"),
+        ),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    scope: Mapped[str] = mapped_column(sa.Text)
+    requested_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), server_default=sa.func.now()
+    )
+    consumed_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    scan_run_id: Mapped[UUID | None] = mapped_column(sa.ForeignKey("scan_runs.id"))
+
+
 class AppSettings(Base):
     __tablename__ = "app_settings"
     id: Mapped[int] = mapped_column(primary_key=True)

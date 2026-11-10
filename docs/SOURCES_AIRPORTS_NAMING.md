@@ -15,6 +15,12 @@
 
 `source-sync.yml` 与 `export-build.yml` 都有并发组（最多 1 个运行 + 1 个排队），重复点击会合并。
 
+检测请求先写入 `scan_requests` 再 dispatch：GitHub 同一并发组只保留一个排队运行，新的会替换旧的，所以范围不能只靠 workflow 输入。每次 `scan prepare`（手动或定时）都会消费全部未处理请求，每个范围恰好建一个 MANUAL 批次（请求过 ALL 时只建 ALL）；dispatch 失败时请求仍保留，顶部显示“已请求”，由下一次运行执行。
+
+删除/暂停**自建**来源、上游移除节点（`is_present`）不再使订阅失效，也就不会触发订阅重建 Actions；只有机场来源暂停/删除或来源类别变化才会。顶部状态条只在有进行中/已请求的检测，或刚点过按钮的 10 分钟内轮询，空闲标签页不会阻止 Neon 休眠。
+
+本地 FastAPI 只提供 API，不再托管 Dashboard（新页面依赖 Worker 的机场、Sub-Store、流水线等接口）；本地界面开发使用 Worker + Pages dev。
+
 ## 2. 检测范围与手动批次
 
 - 节点类别 `node_group`：只要关联到任一“机场”类来源（含已删除的）即为 `AIRPORT`，否则 `SELF_HOSTED`。由视图 `nodema_node_scope` 统一定义，Python 扫描、Worker 目录和导出共用。
@@ -51,7 +57,7 @@
 
 - `FLAG` 落地国旗；`ROUTE` 入口与落地不同时 `HK->SG`，相同时只写一个；`ASN` 落地 ASN 简称；`SEQ` 两位序号。
 - ASN 组织名来自 Echo（Cloudflare `asOrganization`，需要部署新版 Echo）或 GeoLite ASN 库（同一 ASN 时）。简称顺序：用户覆盖 → 内置表（AWS、GCP、HKT、HKBN…）→ `nodema_org_short()` 启发式（去掉 Limited/Inc/地区名等，取首词）→ `AS号`。设置页可逐个修改。
-- 序号由 `node_names` 持久化：按（入口, 落地, ASN 简称）分组，新成员取组内最大号 + 1，节点失效不重排；节点落地变化时移到新组取新号。保证同组名称唯一（客户端要求代理名唯一）。
+- 序号由 `node_names` 持久化：按（入口, 落地, ASN 简称）分组（入口与落地相同或入口未知视为同一组，因为显示相同），新成员取组内最大号 + 1，节点失效不重排；节点落地变化时移到新组取新号。某天 GeoIP/Echo 缺字段时沿用旧值，名称不会因此跳组。导出时若仍出现同名（例如自定义模板去掉了 `{SEQ}`），自动追加节点编号，客户端不会因重名拒绝导入。
 - SQL `nodema_render_name()` 是唯一的生产渲染器；Worker 预览与校验都调用 SQL，Python `render_name` 只做本地镜像。迁移把仍是旧默认模板的 `naming_rules` 改为新默认。
 - 预留字段：之后可加入线路标注字段；仍不自动推断 IPLC/IEPL/CN2。
 
