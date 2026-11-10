@@ -1667,10 +1667,25 @@ $("logout").addEventListener("click", () => {
 });
 $("refresh").addEventListener("click", render);
 $("close-detail").addEventListener("click", () => $("detail").close());
-$("detail").addEventListener("close", () => {
-  const target = dialogTrigger?.isConnected ? dialogTrigger : $("main");
+$("detail").addEventListener("close", async () => {
+  const trigger = dialogTrigger,
+    refreshSources = $("detail").dataset.refreshSources === "true";
   dialogTrigger = null;
-  target.focus({ preventScroll: true });
+  delete $("detail").dataset.refreshSources;
+  if (refreshSources && page === "sources") {
+    pendingMutations += 1;
+    try {
+      await render({ silent: true });
+    } finally {
+      pendingMutations -= 1;
+    }
+  }
+  const target = trigger?.isConnected
+    ? trigger
+    : trigger?.dataset.action === "source-bulk"
+      ? content.querySelector('[data-action="source-bulk"]') || $("main")
+      : $("main");
+  if (!$("detail").open) target.focus({ preventScroll: true });
 });
 window.addEventListener("hashchange", () => {
   offset = 0;
@@ -1930,6 +1945,13 @@ document.addEventListener("submit", async (e) => {
         method: "POST",
         body: JSON.stringify(data),
       });
+      if (!form.isConnected) {
+        if (result.created) {
+          await render({ silent: true });
+          pipelineNotice(result);
+        }
+        return;
+      }
       const summary = el(
         "p",
         `新增 ${result.created} 个，重复 ${result.duplicates} 个，无效 ${result.invalid} 个。` +
@@ -1957,9 +1979,12 @@ document.addEventListener("submit", async (e) => {
         ),
       );
       if (result.invalid) input.setAttribute("aria-invalid", "true");
-      await render();
-      dialogTrigger = content.querySelector('[data-action="source-bulk"]');
-      summary.focus();
+      // Keep the dialog's trigger connected; refresh after close, including fast Escape.
+      if (result.created) {
+        if ($("detail").open) $("detail").dataset.refreshSources = "true";
+        else await render({ silent: true });
+      }
+      if ($("detail").open && form.isConnected) summary.focus();
     }
     if (form.id === "source-form") {
       delete data.upload;
