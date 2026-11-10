@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     mihomo_binary: str = "private/bin/mihomo"
     mihomo_reuse: bool = True
     mihomo_max_nodes_per_process: int = Field(default=250, ge=1, le=10000)
-    check_concurrency: int = Field(default=4, ge=1, le=16)
+    check_concurrency: int = Field(default=16, ge=1, le=64)
     check_batch_size: int = Field(default=16, ge=1, le=250)
     runner_probe_id: str = Field(default="auto", pattern=r"^[A-Za-z0-9_-]{1,64}$")
     dns_cache_max_ttl_seconds: float = Field(default=300, ge=0, le=3600)
@@ -45,10 +45,11 @@ class Settings(BaseSettings):
     dns_timeout_seconds: float = Field(default=3, gt=0, le=30)
     tcp_timeout_seconds: float = Field(default=5, gt=0, le=30)
     http_timeout_seconds: float = Field(default=10, gt=0, le=30)
-    retry_delay_seconds: float = Field(default=10, ge=0, le=30)
+    retry_delay_seconds: float = Field(default=5, ge=0, le=30)
+    environment_error_limit: int = Field(default=6, ge=2, le=100)
     degraded_http_ms: int = Field(default=8000, gt=0)
     freshness_hours: int = Field(default=36, gt=0)
-    shard_size: int = Field(default=250, gt=0, le=1000)
+    shard_size: int = Field(default=100, gt=0, le=1000)
     shard_lease_seconds: int = Field(default=300, ge=180, le=3600)
     geoip_city_path: str = ""
     geoip_asn_path: str = ""

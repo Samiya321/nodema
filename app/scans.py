@@ -15,7 +15,7 @@ from zoneinfo import ZoneInfo
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import insert
 
-from app.checker.health import HealthChecker
+from app.checker.health import GLOBAL_ENVIRONMENT_ERRORS, HealthChecker
 from app.checker.precheck import EndpointCache
 from app.database.models import (
     CatalogState,
@@ -391,6 +391,78 @@ class ScanService:
                 jobs.append((node.id, attempts[node.id], identity, node.short_id, context))
             return sorted(jobs, key=lambda job: str(job[0]))
 
+    def _classify(self, result, final, breaker):
+        """Return (terminal, abort_code) for one observation.
+
+        Runner-wide failures abort immediately; isolated per-node runtime/DNS errors are
+        retried once and then stored as UNKNOWN instead of discarding the whole shard.
+        """
+        if result.status == "ENVIRONMENT_ERROR":
+            code = result.error_code or "CHECK_ENVIRONMENT_ERROR"
+            breaker["streak"] += 1
+            if (
+                code in GLOBAL_ENVIRONMENT_ERRORS
+                or breaker["streak"] >= self.settings.environment_error_limit
+            ):
+                return False, code
+            if not final:
+                return False, None
+            result.status = "UNKNOWN"
+            return True, None
+        breaker["streak"] = 0
+        failed = result.status == "UNKNOWN" and result.measurement_kind != "SKIPPED"
+        if failed and final:
+            result.status = "DOWN"
+        return result.status in TERMINAL and not (failed and not final), None
+
+    def _pass(self, run_id, shard_no, owner, ids, executor, check, counts, usage, breaker, final):
+        """Keep every worker busy (no per-batch barrier); persist results in small chunks."""
+        window = max(1, executor._max_workers) * 2
+        queue, futures, records, pending = list(ids), set(), [], []
+        heartbeat = flushed = time.monotonic()
+
+        def flush():
+            nonlocal flushed, heartbeat
+            if records:
+                self._record_many(run_id, shard_no, owner, list(records), usage("RUNNING"))
+                records.clear()
+                heartbeat = time.monotonic()
+            flushed = time.monotonic()
+
+        abort = None
+        while (queue or futures) and abort is None:
+            while queue and len(futures) < window:
+                chunk = queue[: self.settings.check_batch_size]
+                del queue[: len(chunk)]
+                jobs = self._reserve(run_id, shard_no, owner, chunk)
+                futures |= {executor.submit(check, job) for job in jobs}
+            done, futures = wait(futures, timeout=5, return_when=FIRST_COMPLETED)
+            for future in done:
+                node_id, attempt, result = future.result()
+                counts["check_count"] += 1
+                counts["check_duration_ms"] += result.check_duration_ms
+                counts["timeout_checks"] += int(bool(result.timeout_stages))
+                terminal, code = self._classify(result, final, breaker)
+                abort = abort or code
+                records.append((node_id, attempt, result, terminal))
+                if not terminal:
+                    pending.append(node_id)
+            if len(records) >= self.settings.check_batch_size or time.monotonic() - flushed >= 5:
+                flush()
+            if time.monotonic() - heartbeat >= 10:
+                with self.sessions.begin() as session:
+                    self._owned(session, run_id, shard_no, owner)
+                heartbeat = time.monotonic()
+        if abort is not None:
+            # Let in-flight checks finish so their attempts are recorded consistently.
+            for future in futures:
+                node_id, attempt, result = future.result()
+                records.append((node_id, attempt, result, False))
+        flush()
+        if abort is not None:
+            raise AssetError(abort)
+        return pending
+
     def run_shard(self, run_id: UUID, shard_no: int):
         owner = uuid4()
         if not self.claim(run_id, shard_no, owner):
@@ -478,45 +550,25 @@ class ScanService:
             with ThreadPoolExecutor(
                 max_workers=concurrency, thread_name_prefix="nodema-check"
             ) as executor:
-                for offset in range(0, len(ids), self.settings.check_batch_size):
-                    pending_ids = ids[offset : offset + self.settings.check_batch_size]
-                    for retry in range(2):
-                        if not pending_ids:
-                            break
-                        jobs = self._reserve(run_id, shard_no, owner, pending_ids)
-                        futures = {executor.submit(check, job) for job in jobs}
-                        completed = []
-                        heartbeat = time.monotonic()
-                        while futures:
-                            done, futures = wait(futures, timeout=10, return_when=FIRST_COMPLETED)
-                            completed.extend(f.result() for f in done)
-                            if time.monotonic() - heartbeat >= 10:
-                                with self.sessions.begin() as session:
-                                    self._owned(session, run_id, shard_no, owner)
-                                heartbeat = time.monotonic()
-                        records, pending_ids, environment_error = [], [], None
-                        for node_id, attempt, result in completed:
-                            counts["check_count"] += 1
-                            counts["check_duration_ms"] += result.check_duration_ms
-                            counts["timeout_checks"] += int(bool(result.timeout_stages))
-                            skipped = result.measurement_kind == "SKIPPED"
-                            failed = result.status == "UNKNOWN" and not skipped
-                            if failed and retry == 1:
-                                result.status = "DOWN"
-                            terminal = result.status in TERMINAL and not (failed and retry == 0)
-                            records.append((node_id, attempt, result, terminal))
-                            if result.status == "ENVIRONMENT_ERROR":
-                                environment_error = result.error_code or "CHECK_ENVIRONMENT_ERROR"
-                            elif not terminal:
-                                pending_ids.append(node_id)
-                        if len(records) == 1:
-                            self._record(run_id, shard_no, owner, *records[0], usage("RUNNING"))
-                        else:
-                            self._record_many(run_id, shard_no, owner, records, usage("RUNNING"))
-                        if environment_error:
-                            raise AssetError(environment_error)
-                        if pending_ids:
-                            time.sleep(self.settings.retry_delay_seconds)
+                breaker = {"streak": 0}
+                pending_ids = self._pass(
+                    run_id, shard_no, owner, ids, executor, check, counts, usage, breaker, False
+                )
+                if pending_ids:
+                    # One retry pass at the end instead of a sleep after every batch.
+                    time.sleep(self.settings.retry_delay_seconds)
+                    self._pass(
+                        run_id,
+                        shard_no,
+                        owner,
+                        pending_ids,
+                        executor,
+                        check,
+                        counts,
+                        usage,
+                        breaker,
+                        True,
+                    )
             with self.sessions.begin() as session:
                 shard = self._owned(session, run_id, shard_no, owner)
                 pending = session.scalar(
@@ -563,28 +615,22 @@ class ScanService:
             shards = session.scalars(
                 sa.select(ScanShard).where(ScanShard.scan_run_id == run_id)
             ).all()
-            if any(s.status != "COMPLETED" for s in shards):
-                run.status = (
-                    "ENVIRONMENT_ERROR"
-                    if any(s.status == "ENVIRONMENT_ERROR" for s in shards)
-                    else "PARTIAL"
-                )
-                run.error_summary = {
-                    "incomplete_shards": [s.shard_no for s in shards if s.status != "COMPLETED"]
-                }
-                # Publish nothing from an incomplete/environment-failed batch.
-                return self._run_dto(run)
             pending = session.scalar(
                 sa.select(sa.func.count())
                 .select_from(ScanItem)
                 .where(ScanItem.scan_run_id == run_id, ScanItem.status != "DONE")
             )
-            if pending:
-                run.status, run.error_summary = "PARTIAL", {"pending_items": pending}
-                return self._run_dto(run)
+            incomplete = [s.shard_no for s in shards if s.status != "COMPLETED"]
             latest = (
                 sa.select(TestResult.node_id, sa.func.max(TestResult.attempt_no).label("attempt"))
-                .where(TestResult.scan_run_id == run_id)
+                .join(
+                    ScanItem,
+                    sa.and_(
+                        ScanItem.scan_run_id == TestResult.scan_run_id,
+                        ScanItem.node_id == TestResult.node_id,
+                    ),
+                )
+                .where(TestResult.scan_run_id == run_id, ScanItem.status == "DONE")
                 .group_by(TestResult.node_id)
                 .subquery()
             )
@@ -600,124 +646,142 @@ class ScanService:
                 .where(TestResult.scan_run_id == run_id)
                 .order_by(TestResult.node_id)
             ).all()
+            if incomplete or pending:
+                run.status = (
+                    "ENVIRONMENT_ERROR"
+                    if any(s.status == "ENVIRONMENT_ERROR" for s in shards)
+                    else "PARTIAL"
+                )
+                run.error_summary = (
+                    {"incomplete_shards": incomplete} if incomplete else {"pending_items": pending}
+                )
+                # Positive evidence is never caused by a broken Runner, so confirmed
+                # successes become visible now. Failures wait for a complete batch so an
+                # environment fault can never publish a batch of DOWN nodes.
+                self._publish(session, run, [r for r in results if r.status in ("UP", "DEGRADED")])
+                return self._run_dto(run)
             if len(results) != run.node_count:
                 raise AssetError("SCAN_RESULT_MISSING")
-            current_rows, stat_rows = [], []
-            for result in results:
-                if result.status not in TERMINAL:
-                    raise AssetError("SCAN_RESULT_MISSING")
-                success = result.status in ("UP", "DEGRADED")
-                current_rows.append(
-                    {
-                        "node_id": result.node_id,
-                        "status": result.status,
-                        "last_checked_at": result.checked_at,
-                        "last_success_at": result.checked_at if success else None,
-                        "last_error_code": result.error_code,
-                        "consecutive_failures": int(result.status == "DOWN"),
-                        "last_result_id": result.id,
-                        "last_exit_ip": result.exit_ip,
-                        "last_exit_country": result.exit_country,
-                        "last_exit_asn": result.exit_asn,
-                        "last_http_duration_ms": result.http_duration_ms,
-                        "entry_country": result.entry_country,
-                        "entry_asn": result.entry_asn,
-                        "probe_key": result.probe_key,
-                        "measurement_kind": result.measurement_kind,
-                        "next_full_check_at": None,
-                    }
-                )
-                success, failure = (
-                    int(result.status in ("UP", "DEGRADED")),
-                    int(result.status == "DOWN"),
-                )
-                stats = {
-                    "node_id": result.node_id,
-                    "stat_date": run.scan_date,
-                    "scheduled_count": 1,
-                    "successful_count": success,
-                    "failed_count": failure,
-                    "availability_ratio": success / (success + failure)
-                    if success + failure
-                    else None,
-                    "avg_http_duration_ms": result.http_duration_ms,
-                }
-                stat_rows.append(stats)
-            for offset in range(0, len(current_rows), 250):
-                statement = insert(NodeCurrentStatus).values(current_rows[offset : offset + 250])
-                excluded = statement.excluded
-                updates = {key: excluded[key] for key in current_rows[0] if key != "node_id"}
-                updates["last_success_at"] = sa.func.coalesce(
-                    excluded.last_success_at, NodeCurrentStatus.last_success_at
-                )
-                same_probe = excluded.probe_key == NodeCurrentStatus.probe_key
-                skipped = (excluded.measurement_kind == "SKIPPED") & same_probe
-                failures = sa.case(
-                    (skipped, NodeCurrentStatus.consecutive_failures),
-                    (
-                        excluded.status == "DOWN",
-                        sa.case((same_probe, NodeCurrentStatus.consecutive_failures + 1), else_=1),
-                    ),
-                    else_=0,
-                )
-                updates["consecutive_failures"] = failures
-                hours = sa.func.least(
-                    self.settings.failure_cooldown_max_hours,
-                    self.settings.failure_cooldown_base_hours
-                    * sa.func.power(
-                        2, sa.func.least(30, failures - self.settings.failure_cooldown_threshold)
-                    ),
-                )
-                updates["next_full_check_at"] = sa.case(
-                    (skipped, NodeCurrentStatus.next_full_check_at),
-                    (
-                        sa.and_(
-                            self.settings.failure_cooldown_enabled,
-                            excluded.status == "DOWN",
-                            failures >= self.settings.failure_cooldown_threshold,
-                        ),
-                        excluded.last_checked_at + hours * sa.text("INTERVAL '1 hour'"),
-                    ),
-                    else_=None,
-                )
-                for key in (
-                    "last_exit_ip",
-                    "last_exit_country",
-                    "last_exit_asn",
-                    "last_http_duration_ms",
-                    "entry_country",
-                    "entry_asn",
-                ):
-                    updates[key] = sa.case(
-                        (excluded.status.in_(("UP", "DEGRADED")), excluded[key]),
-                        else_=sa.func.coalesce(excluded[key], getattr(NodeCurrentStatus, key)),
-                    )
-                session.execute(
-                    statement.on_conflict_do_update(
-                        index_elements=[NodeCurrentStatus.node_id],
-                        set_=updates,
-                        where=NodeCurrentStatus.last_checked_at < excluded.last_checked_at,
-                    )
-                )
-                stats = insert(NodeDailyStats).values(stat_rows[offset : offset + 250])
-                session.execute(
-                    stats.on_conflict_do_update(
-                        index_elements=[NodeDailyStats.node_id, NodeDailyStats.stat_date],
-                        set_={
-                            key: stats.excluded[key]
-                            for key in stat_rows[0]
-                            if key not in ("node_id", "stat_date")
-                        },
-                    )
-                )
+            # Runner summaries only aggregate completed batches: mark it before publishing.
             run.status, run.error_summary = "COMPLETED", {}
             run.finished_at = run.finished_at or now()
-            session.flush()
-            session.execute(
-                sa.text("SELECT nodema_refresh_runner_summaries(CAST(:ids AS uuid[]))"),
-                {"ids": [r.node_id for r in results]},
-            )
+            self._publish(session, run, results)
             return self._run_dto(run)
+
+    def _publish(self, session, run, results):
+        if not results:
+            return
+        current_rows, stat_rows = [], []
+        for result in results:
+            if result.status not in TERMINAL:
+                raise AssetError("SCAN_RESULT_MISSING")
+            success = result.status in ("UP", "DEGRADED")
+            current_rows.append(
+                {
+                    "node_id": result.node_id,
+                    "status": result.status,
+                    "last_checked_at": result.checked_at,
+                    "last_success_at": result.checked_at if success else None,
+                    "last_error_code": result.error_code,
+                    "consecutive_failures": int(result.status == "DOWN"),
+                    "last_result_id": result.id,
+                    "last_exit_ip": result.exit_ip,
+                    "last_exit_country": result.exit_country,
+                    "last_exit_asn": result.exit_asn,
+                    "last_http_duration_ms": result.http_duration_ms,
+                    "entry_country": result.entry_country,
+                    "entry_asn": result.entry_asn,
+                    "probe_key": result.probe_key,
+                    "measurement_kind": result.measurement_kind,
+                    "next_full_check_at": None,
+                }
+            )
+            success, failure = (
+                int(result.status in ("UP", "DEGRADED")),
+                int(result.status == "DOWN"),
+            )
+            stats = {
+                "node_id": result.node_id,
+                "stat_date": run.scan_date,
+                "scheduled_count": 1,
+                "successful_count": success,
+                "failed_count": failure,
+                "availability_ratio": success / (success + failure) if success + failure else None,
+                "avg_http_duration_ms": result.http_duration_ms,
+            }
+            stat_rows.append(stats)
+        for offset in range(0, len(current_rows), 250):
+            statement = insert(NodeCurrentStatus).values(current_rows[offset : offset + 250])
+            excluded = statement.excluded
+            updates = {key: excluded[key] for key in current_rows[0] if key != "node_id"}
+            updates["last_success_at"] = sa.func.coalesce(
+                excluded.last_success_at, NodeCurrentStatus.last_success_at
+            )
+            same_probe = excluded.probe_key == NodeCurrentStatus.probe_key
+            skipped = (excluded.measurement_kind == "SKIPPED") & same_probe
+            failures = sa.case(
+                (skipped, NodeCurrentStatus.consecutive_failures),
+                (
+                    excluded.status == "DOWN",
+                    sa.case((same_probe, NodeCurrentStatus.consecutive_failures + 1), else_=1),
+                ),
+                else_=0,
+            )
+            updates["consecutive_failures"] = failures
+            hours = sa.func.least(
+                self.settings.failure_cooldown_max_hours,
+                self.settings.failure_cooldown_base_hours
+                * sa.func.power(
+                    2, sa.func.least(30, failures - self.settings.failure_cooldown_threshold)
+                ),
+            )
+            updates["next_full_check_at"] = sa.case(
+                (skipped, NodeCurrentStatus.next_full_check_at),
+                (
+                    sa.and_(
+                        self.settings.failure_cooldown_enabled,
+                        excluded.status == "DOWN",
+                        failures >= self.settings.failure_cooldown_threshold,
+                    ),
+                    excluded.last_checked_at + hours * sa.text("INTERVAL '1 hour'"),
+                ),
+                else_=None,
+            )
+            for key in (
+                "last_exit_ip",
+                "last_exit_country",
+                "last_exit_asn",
+                "last_http_duration_ms",
+                "entry_country",
+                "entry_asn",
+            ):
+                updates[key] = sa.case(
+                    (excluded.status.in_(("UP", "DEGRADED")), excluded[key]),
+                    else_=sa.func.coalesce(excluded[key], getattr(NodeCurrentStatus, key)),
+                )
+            session.execute(
+                statement.on_conflict_do_update(
+                    index_elements=[NodeCurrentStatus.node_id],
+                    set_=updates,
+                    where=NodeCurrentStatus.last_checked_at < excluded.last_checked_at,
+                )
+            )
+            stats = insert(NodeDailyStats).values(stat_rows[offset : offset + 250])
+            session.execute(
+                stats.on_conflict_do_update(
+                    index_elements=[NodeDailyStats.node_id, NodeDailyStats.stat_date],
+                    set_={
+                        key: stats.excluded[key]
+                        for key in stat_rows[0]
+                        if key not in ("node_id", "stat_date")
+                    },
+                )
+            )
+        session.flush()
+        session.execute(
+            sa.text("SELECT nodema_refresh_runner_summaries(CAST(:ids AS uuid[]))"),
+            {"ids": [r.node_id for r in results]},
+        )
 
     def cleanup(self):
         at = now()
