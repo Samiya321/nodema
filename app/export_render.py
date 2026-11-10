@@ -83,6 +83,7 @@ class Renderer:
         if format not in FORMATS:
             raise AssetError("INVALID_EXPORT_FORMAT")
         self.format, self.body, self.count = format, bytearray(), 0
+        self.names = set()
         if format in ("json", "singbox"):
             self.push("[" if format == "json" else '{"outbounds":[')
         elif format == "csv":
@@ -111,6 +112,10 @@ class Renderer:
         return stream.getvalue()
 
     def append(self, node, identity=None):
+        # Clients reject duplicate proxy names; never emit one even if a template lacks {SEQ}.
+        if node.get("name") in self.names:
+            node = {**node, "name": f"{node['name']} {node.get('short_id', self.count)}"}
+        self.names.add(node.get("name"))
         if self.format == "json":
             self.push(
                 ("," if self.count else "")

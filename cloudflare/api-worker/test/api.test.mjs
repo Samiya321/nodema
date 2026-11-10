@@ -239,9 +239,20 @@ print(json.dumps(s.sync_source(UUID('${sourceId}')),default=str))`),
             ["daily-check.yml", { run_id: "", scope: "AIRPORT" }],
           ],
         );
+        const queued = await (await request("/api/pipeline")).json();
+        assert.deepEqual(
+          queued.requested_scans.map((r) => [r.scope, r.count]),
+          [["AIRPORT", 1]],
+        );
         globalThis.fetch = async () => {
           throw new Error("synthetic-private-network-error");
         };
+        const kept = await request("/api/scans", {
+          method: "POST",
+          data: { scope: "SELF_HOSTED" },
+        });
+        assert.equal(kept.status, 202);
+        assert.equal((await kept.json()).status, "REQUESTED");
         const failed = await request("/api/pipeline/sync", { method: "POST" });
         assert.equal(failed.status, 502);
         assert.ok(

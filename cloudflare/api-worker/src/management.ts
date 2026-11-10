@@ -100,7 +100,10 @@ async function pipeline(rows: Rows) {
      FROM scan_runs r WHERE r.status<>'COMPLETED' AND r.archived_at IS NULL
      ORDER BY r.started_at DESC LIMIT 10`,
   );
-  return { ...state, active_scans: active } as Row;
+  const requested = await rows(
+    "SELECT scope,min(requested_at) AS requested_at,count(*)::int AS count FROM scan_requests WHERE consumed_at IS NULL GROUP BY scope ORDER BY scope",
+  );
+  return { ...state, active_scans: active, requested_scans: requested } as Row;
 }
 
 async function airports(rows: Rows) {
@@ -196,13 +199,24 @@ export async function handleManagement(
   }
   if (path === "/api/scans" && method === "POST") {
     const data = request.body ? await ctx.body(request) : {};
-    return json(
-      await ctx.dispatch("daily-check.yml", {
-        run_id: "",
-        scope: scope(data.scope),
-      }),
-      202,
-    );
+    const requested = scope(data.scope);
+    // Persist first: GitHub may replace a pending run, the request is never lost.
+    await rows("INSERT INTO scan_requests(id,scope) VALUES($1,$2)", [
+      crypto.randomUUID(),
+      requested,
+    ]);
+    try {
+      return json(
+        await ctx.dispatch("daily-check.yml", { run_id: "", scope: requested }),
+        202,
+      );
+    } catch (error) {
+      if (!(error instanceof SafeError)) throw error;
+      return json(
+        { status: "REQUESTED", dispatched: false, reason: error.code },
+        202,
+      );
+    }
   }
   if (path === "/api/airports" && method === "GET")
     return json(await airports(rows));

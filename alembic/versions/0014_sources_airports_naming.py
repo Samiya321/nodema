@@ -17,7 +17,11 @@ def execute(sql):
 
 def upgrade():
     execute(Path(__file__).with_suffix(".sql").read_text())
-    # New trigger lookups stay bound to this schema, like 0012.
+    bind_trigger_search_path()
+
+
+def bind_trigger_search_path():
+    # CREATE OR REPLACE drops SET clauses; keep trigger lookups schema-bound like 0012.
     connection = op.get_bind()
     schema = connection.scalar(sa.text("SELECT current_schema()"))
     quote = connection.dialect.identifier_preparer.quote
@@ -45,6 +49,21 @@ def downgrade():
         # Child sources, airports and manual batches cannot be reconstructed safely.
         raise RuntimeError("0014_REQUIRES_BACKUP_FOR_DOWNGRADE")
     execute("DROP TRIGGER nodema_exports_changed ON node_names")
+    op.drop_table("scan_requests")
+    execute("DROP TRIGGER nodema_exports_changed ON sources")
+    execute(
+        "CREATE TRIGGER nodema_exports_changed AFTER INSERT OR DELETE OR UPDATE OF "
+        "enabled,deleted_at,url_data,payload_data ON sources "
+        "FOR EACH ROW EXECUTE FUNCTION nodema_export_catalog_changed()"
+    )
+    execute(
+        _section(
+            "0010_async_exports.sql",
+            "CREATE FUNCTION nodema_export_catalog_changed()",
+            "CREATE TRIGGER nodema_exports_changed AFTER INSERT OR UPDATE OR DELETE ON nodes",
+        ).replace("CREATE FUNCTION", "CREATE OR REPLACE FUNCTION", 1)
+    )
+    bind_trigger_search_path()
     execute("DROP FUNCTION nodema_catalog(integer,text,text)")
     execute("DROP VIEW nodema_catalog_base")
     execute(

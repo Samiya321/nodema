@@ -131,11 +131,8 @@ BEGIN
    w := btrim(w,'.-');
    IF w<>'' AND NOT (lower(w) = ANY(drop_words)) AND lower(w) !~ '^(as|asn)[0-9]*$' THEN kept := kept || w; END IF;
  END LOOP;
- IF cardinality(kept)=0 THEN
-   words := regexp_split_to_array(btrim(regexp_replace(v,'[^A-Za-z0-9]+',' ','g')),'[ ]+');
-   IF cardinality(words)=0 OR words[1]='' THEN RETURN NULL; END IF;
-   kept := ARRAY[words[1]];
- END IF;
+ -- Only generic words (e.g. "Hong Kong Broadband Network Ltd."): let AS<number> name it.
+ IF cardinality(kept)=0 THEN RETURN NULL; END IF;
  w := kept[1];
  IF w ~ '^[A-Z0-9&+.-]+$' AND length(w)>4 THEN w := initcap(lower(w)); END IF;
  RETURN left(w,24);
@@ -166,7 +163,10 @@ BEGIN
  -- New numbers start above every row already in the target group (including rows of
  -- nodes that are moving away in this statement), so upserts never collide.
  WITH current_keys AS (
-   SELECT n.id AS node_id,n.short_id,c.entry_country,c.last_exit_country AS exit_country,
+   -- An entry equal to the exit renders like an unknown entry ("SG"), so they share a group.
+   SELECT n.id AS node_id,n.short_id,
+     CASE WHEN c.entry_country=c.last_exit_country THEN NULL ELSE c.entry_country END AS entry_country,
+     c.last_exit_country AS exit_country,
      CASE WHEN c.last_exit_country IS NULL AND c.last_exit_asn IS NULL THEN NULL
        ELSE nodema_asn_label(c.last_exit_asn,c.last_exit_asn_org) END AS asn_label
    FROM nodes n LEFT JOIN node_current_status c ON c.node_id=n.id
@@ -388,6 +388,65 @@ BEGIN
 END;
 $$;
 
+
+CREATE OR REPLACE FUNCTION nodema_export_catalog_changed() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE ids uuid[]; unsafe boolean := true;
+BEGIN
+ -- The catalog lock is always acquired before profile locks (also by publishers).
+ PERFORM nodema_bump_catalog();
+ IF TG_TABLE_NAME='sources' THEN
+   unsafe := TG_OP='DELETE';
+   -- Self-hosted nodes outlive paused/deleted sources; only airport state or a
+   -- kind change can remove nodes from subscriptions.
+   IF TG_OP='UPDATE' THEN unsafe :=
+      (((OLD.enabled AND NOT NEW.enabled) OR (OLD.deleted_at IS NULL AND NEW.deleted_at IS NOT NULL))
+       AND 'AIRPORT' IN (nodema_source_kind(OLD.kind,OLD.detected_kind),nodema_source_kind(NEW.kind,NEW.detected_kind)))
+      OR nodema_source_kind(OLD.kind,OLD.detected_kind) IS DISTINCT FROM nodema_source_kind(NEW.kind,NEW.detected_kind);
+   END IF;
+   IF unsafe THEN
+     SELECT array_agg(node_id) INTO ids FROM node_sources WHERE source_id=OLD.id AND is_present;
+   END IF;
+ ELSIF TG_TABLE_NAME='nodes' THEN
+   IF TG_OP='INSERT' THEN unsafe := false;
+   ELSIF TG_OP='UPDATE' THEN
+     unsafe := ROW(OLD.enabled,OLD.config_data,OLD.first_seen_at,OLD.checked_days,OLD.available_days,
+       OLD.server_host,OLD.server_port,OLD.protocol,OLD.transport,OLD.security)
+       IS DISTINCT FROM ROW(NEW.enabled,NEW.config_data,NEW.first_seen_at,NEW.checked_days,NEW.available_days,
+       NEW.server_host,NEW.server_port,NEW.protocol,NEW.transport,NEW.security);
+     ids := ARRAY[NEW.id];
+   ELSE ids := ARRAY[OLD.id]; END IF;
+ ELSIF TG_TABLE_NAME='node_sources' THEN
+   IF TG_OP='INSERT' THEN unsafe := false;
+   ELSE
+     ids := ARRAY[OLD.node_id];
+     IF TG_OP='UPDATE' THEN
+       -- is_present is informational now (retained nodes stay eligible).
+       unsafe := ROW(OLD.node_id,OLD.source_id) IS DISTINCT FROM ROW(NEW.node_id,NEW.source_id);
+     END IF;
+   END IF;
+ ELSIF TG_TABLE_NAME IN ('node_current_status','node_annotations','runner_node_summaries') THEN
+   IF TG_OP='DELETE' THEN ids := ARRAY[OLD.node_id]; ELSE ids := ARRAY[NEW.node_id]; END IF;
+ END IF;
+ IF unsafe AND (ids IS NOT NULL OR TG_TABLE_NAME IN ('naming_rules','quality_policies')) THEN
+   PERFORM nodema_invalidate_exports(ids);
+ END IF;
+ RETURN NULL;
+END;
+$$;
+
+DROP TRIGGER nodema_exports_changed ON sources;
+CREATE TRIGGER nodema_exports_changed AFTER INSERT OR DELETE OR UPDATE OF enabled,deleted_at,url_data,payload_data,kind,detected_kind ON sources
+ FOR EACH ROW EXECUTE FUNCTION nodema_export_catalog_changed();
+
+-- Test requests survive GitHub replacing a pending run in the same concurrency group.
+CREATE TABLE scan_requests (
+ id uuid CONSTRAINT pk_scan_requests PRIMARY KEY,
+ scope text NOT NULL CHECK (scope IN ('ALL','SELF_HOSTED','AIRPORT')),
+ requested_at timestamptz NOT NULL DEFAULT now(),
+ consumed_at timestamptz,
+ scan_run_id uuid CONSTRAINT fk_scan_requests_scan_run_id_scan_runs REFERENCES scan_runs(id)
+);
+CREATE INDEX idx_scan_requests_pending ON scan_requests(requested_at) WHERE consumed_at IS NULL;
 
 -- Name changes (e.g. a new ASN label) bump the catalog so subscriptions rebuild.
 CREATE TRIGGER nodema_exports_changed AFTER INSERT OR UPDATE OR DELETE ON node_names

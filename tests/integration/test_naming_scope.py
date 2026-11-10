@@ -18,7 +18,7 @@ pytestmark = pytest.mark.integration
         ("Amazon.com, Inc.", "Amazon.com"),
         ("HGC Global Communications Limited", "HGC"),
         ("The Constant Company, LLC", "Constant"),
-        ("Hong Kong Broadband Network Ltd.", "Hong"),
+        ("Hong Kong Broadband Network Ltd.", None),  # only generic words -> AS<number>
         ("", None),
     ],
 )
@@ -95,3 +95,68 @@ def test_names_are_grouped_numbered_and_stable(service, monitor_settings):
     # host-2 moved back and host-4 is new: both join the group above existing numbers.
     assert {third["host-2"], third["host-4"]}.isdisjoint({third["host-1"], third["host-3"]})
     assert len(set(third.values())) == 4  # names stay unique for subscription clients
+
+
+def test_missing_geoip_never_renumbers_and_same_country_shares_a_group(service, monitor_settings):
+    nodes(service, 2)
+    scan(service, monitor_settings)
+    before = names(service, monitor_settings)
+
+    class NoGeo(Checker):
+        def check(self, identity, short_id):
+            result = super().check(identity, short_id)
+            result.entry_country = result.exit_asn_org = None  # GeoIP/Echo field missing today
+            return result
+
+    scans = ScanService(service, monitor_settings, checker_factory=NoGeo)
+    run = scans.create(manual=True)
+    scans.run_shard(run["id"], 0)
+    scans.finalize(run["id"])
+    assert names(service, monitor_settings) == before
+    # Entry unknown and entry == exit both render "SG": they must not collide.
+    with service.sessions.begin() as session:
+        session.execute(
+            sa.text(
+                "UPDATE node_current_status SET entry_country=CASE WHEN entry_country IS NOT NULL "
+                "THEN NULL END, last_exit_country='SG'"
+            )
+        )
+        session.execute(
+            sa.text(
+                "UPDATE node_current_status SET entry_country='SG' WHERE node_id="
+                "(SELECT node_id FROM node_current_status ORDER BY node_id LIMIT 1)"
+            )
+        )
+        session.execute(sa.text("SELECT nodema_assign_names()"))
+    final = names(service, monitor_settings)
+    assert len(set(final.values())) == 2
+    assert all(name.startswith("🇸🇬SG|Webbing ") for name in final.values())
+
+
+def test_requests_survive_and_each_scope_gets_one_run(service, monitor_settings):
+    nodes(service, 2)
+    scans = ScanService(service, monitor_settings, checker_factory=Checker)
+    scans.request("SELF_HOSTED")
+    scans.request("AIRPORT")
+    scans.request("SELF_HOSTED")
+    runs = scans.consume_requests()
+    assert sorted(r["scope"] for r in runs) == ["AIRPORT", "SELF_HOSTED"]
+    assert all(r["kind"] == "MANUAL" for r in runs)
+    assert scans.consume_requests() == []
+    scans.request("AIRPORT")
+    scans.request("ALL")
+    assert [r["scope"] for r in scans.consume_requests()] == ["ALL"]
+
+
+def test_export_names_are_unique_even_without_sequence():
+    from app.export_render import Renderer
+
+    renderer = Renderer("json")
+    for short_id in ("N1", "N2"):
+        renderer.append({"name": "🇸🇬SG|Webbing", "short_id": short_id})
+    import json
+
+    assert [n["name"] for n in json.loads(renderer.finish())] == [
+        "🇸🇬SG|Webbing",
+        "🇸🇬SG|Webbing N2",
+    ]
