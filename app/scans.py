@@ -18,15 +18,14 @@ from sqlalchemy.dialects.postgresql import insert
 from app.checker.health import GLOBAL_ENVIRONMENT_ERRORS, HealthChecker
 from app.checker.precheck import EndpointCache
 from app.database.models import (
+    AppSettings,
     CatalogState,
     Node,
     NodeCurrentStatus,
     NodeDailyStats,
-    NodeSource,
     ScanItem,
     ScanRun,
     ScanShard,
-    Source,
     TestResult,
     UsageEvent,
 )
@@ -39,17 +38,25 @@ def now():
     return datetime.now(UTC)
 
 
-def eligible_clause():
-    return sa.exists(
-        sa.select(NodeSource.node_id)
-        .join(Source)
-        .where(
-            NodeSource.node_id == Node.id,
-            NodeSource.is_present.is_(True),
-            Source.enabled.is_(True),
-            Source.deleted_at.is_(None),
-        )
+SCOPES = ("ALL", "SELF_HOSTED", "AIRPORT")
+# Single definition shared with the dashboard/export catalog (nodema_catalog_base).
+node_scope = sa.table(
+    "nodema_node_scope",
+    sa.column("node_id"),
+    sa.column("eligible"),
+    sa.column("node_group"),
+)
+
+
+def scope_clause(scope="ALL"):
+    if scope not in SCOPES:
+        raise AssetError("INVALID_SCAN_SCOPE")
+    query = sa.select(node_scope.c.node_id).where(
+        node_scope.c.node_id == Node.id, node_scope.c.eligible.is_(True)
     )
+    if scope != "ALL":
+        query = query.where(node_scope.c.node_group == scope)
+    return sa.exists(query)
 
 
 class ScanService:
@@ -58,7 +65,12 @@ class ScanService:
         self.sessions = assets.sessions
         self.checker_factory = checker_factory
 
-    def create(self, scan_date: date | None = None):
+    def create(self, scan_date: date | None = None, *, scope="ALL", manual=False):
+        """Daily/supplemental runs test each node once per day; manual runs always retest.
+
+        Manual runs skip only nodes still pending in another unfinished batch.
+        """
+        scope_filter = scope_clause(scope)
         scan_date = scan_date or now().astimezone(ZoneInfo(self.settings.scan_timezone)).date()
         lock = int.from_bytes(
             hashlib.sha256(f"nodema-scan:{scan_date}".encode()).digest()[:8], "big", signed=True
@@ -67,7 +79,7 @@ class ScanService:
             session.execute(sa.select(sa.func.pg_advisory_xact_lock(lock)))
             existing = session.scalars(
                 sa.select(ScanRun)
-                .where(ScanRun.scan_date == scan_date)
+                .where(ScanRun.scan_date == scan_date, ScanRun.kind != "MANUAL")
                 .order_by(ScanRun.started_at, ScanRun.id)
             ).all()
             cutoff = session.scalar(
@@ -81,19 +93,31 @@ class ScanService:
                 raise AssetError("SCAN_DATE_ARCHIVED")
             # Never change a running snapshot. Reserve each node once per calendar day,
             # including nodes in failed/unfinished runs, which will be resumed separately.
-            reserved = sa.exists(
-                sa.select(ScanItem.node_id)
-                .join(ScanRun)
-                .where(ScanItem.node_id == Node.id, ScanRun.scan_date == scan_date)
-            )
+            if manual:
+                reserved = sa.exists(
+                    sa.select(ScanItem.node_id)
+                    .join(ScanRun)
+                    .where(
+                        ScanItem.node_id == Node.id,
+                        ScanItem.status != "DONE",
+                        ScanRun.status != "COMPLETED",
+                        ScanRun.archived_at.is_(None),
+                    )
+                )
+            else:
+                reserved = sa.exists(
+                    sa.select(ScanItem.node_id)
+                    .join(ScanRun)
+                    .where(ScanItem.node_id == Node.id, ScanRun.scan_date == scan_date)
+                )
             rows = session.execute(
                 sa.select(
                     Node.id, Node.fingerprint, Node.server_host, Node.server_port, Node.protocol
                 )
-                .where(Node.enabled.is_(True), eligible_clause(), ~reserved)
+                .where(Node.enabled.is_(True), scope_filter, ~reserved)
                 .order_by(Node.fingerprint)
             ).all()
-            if existing and not rows:
+            if existing and not rows and not manual:
                 return self._run_dto(
                     next((r for r in existing if r.status != "COMPLETED"), existing[-1])
                 )
@@ -101,7 +125,8 @@ class ScanService:
             run = ScanRun(
                 id=uuid4(),
                 scan_date=scan_date,
-                kind="SUPPLEMENTAL" if existing else "DAILY",
+                kind="MANUAL" if manual else "SUPPLEMENTAL" if existing else "DAILY",
+                scope=scope,
                 status="PENDING" if rows else "COMPLETED",
                 node_count=len(rows),
                 shard_count=count,
@@ -151,6 +176,13 @@ class ScanService:
                     session.execute(insert(ScanItem), items[offset : offset + 500])
             return self._run_dto(run)
 
+    def daily_settings(self):
+        with self.sessions() as session:
+            row = session.get(AppSettings, 1)
+            if row is None:
+                return True, "SELF_HOSTED"
+            return row.daily_scan_enabled, row.daily_scan_scope
+
     @staticmethod
     def _run_dto(run):
         return {
@@ -167,6 +199,7 @@ class ScanService:
                 "error_summary",
                 "archived_at",
                 "archive_summary",
+                "scope",
             )
         }
 
@@ -219,9 +252,9 @@ class ScanService:
                 result["items"] = run.archive_summary.get("items", {})
             return result
 
-    def plan(self, run_id=None, scan_date=None):
+    def plan(self, run_id=None, scan_date=None, *, scope="ALL", manual=False):
         """Plan every unfinished run that the serialized Actions pipeline can resume."""
-        run = self.get(run_id) if run_id else self.create(scan_date)
+        run = self.get(run_id) if run_id else self.create(scan_date, scope=scope, manual=manual)
         if run.get("archived_at") is not None:
             raise AssetError("SCAN_ARCHIVED")
         with self.sessions() as session:
@@ -436,7 +469,7 @@ class ScanService:
                 del queue[: len(chunk)]
                 jobs = self._reserve(run_id, shard_no, owner, chunk)
                 futures |= {executor.submit(check, job) for job in jobs}
-            done, futures = wait(futures, timeout=5, return_when=FIRST_COMPLETED)
+            done, futures = wait(futures, timeout=2, return_when=FIRST_COMPLETED)
             for future in done:
                 node_id, attempt, result = future.result()
                 counts["check_count"] += 1
@@ -447,7 +480,10 @@ class ScanService:
                 records.append((node_id, attempt, result, terminal))
                 if not terminal:
                     pending.append(node_id)
-            if len(records) >= self.settings.check_batch_size or time.monotonic() - flushed >= 5:
+            # Commit promptly (at most ~1 s late) so a killed Runner loses little work.
+            if records and (
+                len(records) >= self.settings.check_batch_size or time.monotonic() - flushed >= 1
+            ):
                 flush()
             if time.monotonic() - heartbeat >= 10:
                 with self.sessions.begin() as session:
@@ -688,6 +724,7 @@ class ScanService:
                     "last_exit_ip": result.exit_ip,
                     "last_exit_country": result.exit_country,
                     "last_exit_asn": result.exit_asn,
+                    "last_exit_asn_org": result.exit_asn_org,
                     "last_http_duration_ms": result.http_duration_ms,
                     "entry_country": result.entry_country,
                     "entry_asn": result.entry_asn,
@@ -751,6 +788,7 @@ class ScanService:
                 "last_exit_ip",
                 "last_exit_country",
                 "last_exit_asn",
+                "last_exit_asn_org",
                 "last_http_duration_ms",
                 "entry_country",
                 "entry_asn",
@@ -767,14 +805,23 @@ class ScanService:
                 )
             )
             stats = insert(NodeDailyStats).values(stat_rows[offset : offset + 250])
+            # Several runs (or a partial then complete publication) can touch one day.
+            # GREATEST keeps it idempotent and a day with any success stays available.
+            merged = {
+                key: sa.func.greatest(getattr(NodeDailyStats, key), stats.excluded[key])
+                for key in ("scheduled_count", "successful_count", "failed_count")
+            }
+            ok, bad = merged["successful_count"], merged["failed_count"]
+            merged["availability_ratio"] = sa.case(
+                (ok + bad > 0, sa.cast(ok, sa.Numeric) / (ok + bad)), else_=None
+            )
+            merged["avg_http_duration_ms"] = sa.func.coalesce(
+                stats.excluded.avg_http_duration_ms, NodeDailyStats.avg_http_duration_ms
+            )
             session.execute(
                 stats.on_conflict_do_update(
                     index_elements=[NodeDailyStats.node_id, NodeDailyStats.stat_date],
-                    set_={
-                        key: stats.excluded[key]
-                        for key in stat_rows[0]
-                        if key not in ("node_id", "stat_date")
-                    },
+                    set_=merged,
                 )
             )
         session.flush()
@@ -782,6 +829,7 @@ class ScanService:
             sa.text("SELECT nodema_refresh_runner_summaries(CAST(:ids AS uuid[]))"),
             {"ids": [r.node_id for r in results]},
         )
+        session.execute(sa.text("SELECT nodema_assign_names()"))
 
     def cleanup(self):
         at = now()

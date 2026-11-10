@@ -1,11 +1,43 @@
+"""Display-name templates. SQL nodema_render_name() is the production renderer;
+this mirror validates templates and serves the optional local API."""
+
 import string
 
 from app.domain import AssetError
 
-DEFAULT_TEMPLATE = (
+DEFAULT_TEMPLATE = "{FLAG}{ROUTE}|{ASN} {SEQ}"
+LEGACY_TEMPLATE = (
     "{ENTRY_COUNTRY} → {EXIT_COUNTRY} | {PROTOCOL}-{TRANSPORT}-{SECURITY} | {SHORT_ID}"
 )
-FIELDS = {"ENTRY_COUNTRY", "EXIT_COUNTRY", "PROTOCOL", "TRANSPORT", "SECURITY", "SHORT_ID"}
+FIELDS = {
+    "ENTRY_COUNTRY",
+    "EXIT_COUNTRY",
+    "PROTOCOL",
+    "TRANSPORT",
+    "SECURITY",
+    "SHORT_ID",
+    "FLAG",
+    "ENTRY_FLAG",
+    "ROUTE",
+    "ASN",
+    "SEQ",
+}
+UNKNOWN_FLAG = "🏳"
+
+
+def flag(country: str | None) -> str:
+    if not country or len(country) != 2 or not country.isascii() or not country.isalpha():
+        return UNKNOWN_FLAG
+    return "".join(chr(127397 + ord(c)) for c in country.upper())
+
+
+def route(entry: str | None, exit_country: str | None) -> str:
+    """HK->SG when entry and exit differ, a single code when they match."""
+    if exit_country is None:
+        return "?" if entry is None else f"{entry}->?"
+    if entry is None or entry == exit_country:
+        return exit_country
+    return f"{entry}->{exit_country}"
 
 
 def render_name(
@@ -17,6 +49,8 @@ def render_name(
     *,
     entry_country: str | None = None,
     exit_country: str | None = None,
+    asn_label: str | None = None,
+    seq: int | None = None,
 ) -> str:
     try:
         if len(template) > 200 or any(ord(c) < 32 for c in template):
@@ -31,6 +65,11 @@ def render_name(
             PROTOCOL=protocol.upper(),
             TRANSPORT=(transport or "UNK").upper(),
             SECURITY=(security or "UNK").upper(),
+            FLAG=flag(exit_country),
+            ENTRY_FLAG=flag(entry_country),
+            ROUTE=route(entry_country, exit_country),
+            ASN=asn_label or "Unknown",
+            SEQ=short_id if seq is None else f"{seq:02d}",
         )
         if len(result) > 500:
             raise ValueError

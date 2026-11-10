@@ -237,7 +237,8 @@ def test_api_auth_redaction_management_and_export(service, monitor_settings, fix
 def test_catalog_geography_naming_and_retention(service, monitor_settings, fixture_bytes):
     scans, run, _ = complete(service, monitor_settings, fixture_bytes)
     catalog = Catalog(service, monitor_settings)
-    assert "SG → JP" in catalog.nodes()["items"][0]["name"]
+    # Default: exit flag, entry->exit route, ASN label (number when no organization), number.
+    assert catalog.nodes()["items"][0]["name"] == "🇯🇵SG->JP|AS64501 01"
     assert catalog.nodes(exit_country="US")["total"] == 0
     catalog.set_template("{SHORT_ID} | {EXIT_COUNTRY}")
     assert catalog.nodes()["items"][0]["name"].endswith("| JP")

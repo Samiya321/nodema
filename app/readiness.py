@@ -5,7 +5,7 @@ import sqlalchemy as sa
 from app.checker.health import HealthChecker
 from app.domain import AssetError
 
-SCHEMA_REVISION = "0013_export_usage"
+SCHEMA_REVISION = "0014_sources_airports_naming"
 
 
 def readiness(assets, settings, *, network=False, checker_factory=None):

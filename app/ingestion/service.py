@@ -2,6 +2,7 @@ import hashlib
 import hmac
 import json
 from datetime import UTC, datetime
+from urllib.parse import urlsplit
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
@@ -10,11 +11,15 @@ from sqlalchemy.dialects.postgresql import insert
 
 from app.database.models import Node, NodeSource, Source, short_id_sequence
 from app.domain import AssetError, InputFormat, NormalizedNode, SourceType
+from app.ingestion.airport import is_info_node, parse_airport_headers
+from app.ingestion.children import apply_airport, materialize
 from app.ingestion.fetcher import Fetcher, validate_url
-from app.ingestion.subscriptions import SubscriptionResolver
 from app.naming import DEFAULT_TEMPLATE, render_name
 from app.parsers import PARSER_VERSION, parse_document
+from app.parsers.substore import parse_substore_index
 from app.security.crypto import FINGERPRINT_VERSION, canonical_json, fingerprint
+
+SOURCE_KINDS = ("AUTO", "AIRPORT", "SELF_HOSTED")
 
 
 def utcnow():
@@ -81,6 +86,20 @@ class AssetService:
                 "last_parse_summary",
                 "revision",
                 "deleted_at",
+                "kind",
+                "detected_kind",
+                "parent_source_id",
+                "origin_label",
+                "user_agent",
+                "provider_id",
+                "traffic_upload",
+                "traffic_download",
+                "traffic_total",
+                "expires_at",
+                "userinfo_at",
+                "profile_title",
+                "profile_url",
+                "last_success_at",
             )
         }
 
@@ -124,8 +143,33 @@ class AssetService:
             "payload_data": bytes(payload),
         }
 
+    @staticmethod
+    def _kind(value):
+        if value not in SOURCE_KINDS:
+            raise AssetError("INVALID_SOURCE_KIND")
+        return value
+
+    @staticmethod
+    def _user_agent(value):
+        if value is None or value == "":
+            return None
+        if (
+            not isinstance(value, str)
+            or len(value) > 512
+            or any(ord(c) < 32 or ord(c) > 126 for c in value)
+        ):
+            raise AssetError("INVALID_SUBSCRIPTION_USER_AGENT")
+        return value
+
     def create_source(
-        self, *, name: str, source_type: SourceType, payload: bytes, format_hint=InputFormat.AUTO
+        self,
+        *,
+        name: str,
+        source_type: SourceType,
+        payload: bytes,
+        format_hint=InputFormat.AUTO,
+        kind="AUTO",
+        user_agent=None,
     ):
         try:
             source_type, format_hint = SourceType(source_type), InputFormat(format_hint)
@@ -142,6 +186,8 @@ class AssetService:
                 format_hint=format_hint.value,
                 sync_interval_seconds=self.sync_interval,
                 sync_requested_at=utcnow(),
+                kind=self._kind(kind),
+                user_agent=self._user_agent(user_agent),
                 **values,
             )
             session.add(source)
@@ -239,9 +285,15 @@ class AssetService:
         payload=None,
         format_hint=None,
         sync_interval_seconds=None,
+        kind=None,
+        user_agent=...,
     ):
         with self.sessions.begin() as session:
             source = self._source(session, source_id, lock=True)
+            if kind is not None:
+                source.kind = self._kind(kind)
+            if user_agent is not ...:
+                source.user_agent = self._user_agent(user_agent)
             if name is not None:
                 source.name = self._label(name)
             if enabled is not None:
@@ -326,6 +378,17 @@ class AssetService:
                 **{k: metrics.get(k, 0) for k in ("source_requests", "source_response_bytes")},
             )
 
+    def _fetch(self, url, user_agent):
+        meta = getattr(self.fetcher, "fetch_meta", None)
+        if meta is not None:
+            return meta(url, user_agent=user_agent)
+        body = (
+            self.fetcher.fetch(url, user_agent=user_agent)
+            if user_agent
+            else self.fetcher.fetch(url)
+        )
+        return body, {}
+
     def _sync_source(self, source_id: UUID, *, force=False):
         with self.sessions() as session:
             source = self._source(session, source_id)
@@ -334,31 +397,35 @@ class AssetService:
             self._verify_keys(session)
             revision, source_type, hint = source.revision, source.type, source.format_hint
             old_hash, old_parser = source.applied_hash, source.parser_version
+            user_agent = source.user_agent
             stored_data = (
                 source.url_data
                 if source_type == SourceType.SUBSCRIPTION_URL
                 else source.payload_data
             )
         payload, report, error, digest = None, None, None, None
+        airport, index, url_host = None, None, None
         try:
-            purpose = "url" if source_type == SourceType.SUBSCRIPTION_URL else "payload"
             raw = bytes(stored_data)
-            if purpose == "url":
-                resolved = SubscriptionResolver(
-                    self.fetcher,
-                    max_bytes=self.max_bytes,
-                    max_items=self.max_items,
-                    **self.substore_limits,
-                ).resolve(raw.decode(), InputFormat(hint))
-                payload, report = resolved.snapshot, resolved.report
+            if source_type == SourceType.SUBSCRIPTION_URL:
+                url = raw.decode()
+                url_host = urlsplit(url).hostname
+                payload, headers = self._fetch(url, user_agent)
+                airport = parse_airport_headers(headers)
+                if InputFormat(hint) == InputFormat.AUTO:
+                    index = parse_substore_index(
+                        payload,
+                        required=urlsplit(url).path.rstrip("/").endswith("/api/subs"),
+                        max_items=self.max_items,
+                    )
             else:
                 payload = raw
-            if report is None and len(payload) > self.max_bytes:
+            if len(payload) > self.max_bytes:
                 raise AssetError("INPUT_TOO_LARGE")
             digest = hashlib.sha256(payload).hexdigest()
             unchanged = not force and digest == old_hash and old_parser == PARSER_VERSION
-            if not unchanged:
-                report = report or parse_document(
+            if not unchanged and index is None:
+                report = parse_document(
                     payload, InputFormat(hint), max_bytes=self.max_bytes, max_items=self.max_items
                 )
                 if source_type == SourceType.SINGLE_URI and (
@@ -376,14 +443,23 @@ class AssetService:
             source.last_checked_at = source.updated_at = now
             source.sync_requested_at = None
             source.revision += 1
+            # Usage headers are refreshed even when the body is unchanged or unparsable.
+            if airport is not None:
+                apply_airport(session, source, airport, url_host, now)
+            elif source.detected_kind == "UNKNOWN" and error is None:
+                source.detected_kind = "SELF_HOSTED"
             if payload is not None and digest is not None:
                 source.content_hash = digest
                 # Latest fetched snapshot, including failed/partial input, is stored as plaintext.
                 source.payload_data = bytes(payload)
             if error:
+                # A failing link never removes or hides what it produced before.
                 source.last_sync_status, source.last_error_code = "FAILED", error
                 source.last_parse_summary = {"issue_count": 1, "issues": [{"code": error}]}
                 return {"source_id": source_id, "status": "FAILED", "error_code": error}
+            source.last_success_at = now
+            if index is not None:
+                return self._apply_index(session, source, index, digest, now)
             if unchanged:
                 present_ids = sa.select(NodeSource.node_id).where(
                     NodeSource.source_id == source_id, NodeSource.is_present.is_(True)
@@ -401,6 +477,11 @@ class AssetService:
                 source.last_sync_status, source.last_error_code = "SUCCESS", None
                 source.last_parse_summary = {
                     **(report.summary() if report else {}),
+                    **{
+                        k: v
+                        for k, v in (source.last_parse_summary or {}).items()
+                        if k == "info_nodes"
+                    },
                     "issue_count": 0,
                     "issues": [],
                     "parsed": False,
@@ -408,9 +489,36 @@ class AssetService:
                 return {"source_id": source_id, "status": "UNCHANGED", "parsed": False}
             return self._apply(session, source, report, digest, now)
 
+    def _apply_index(self, session, source, index, digest, now):
+        source.detected_kind = "SUBSTORE"
+        summary = materialize(session, source, index, now, source.sync_interval_seconds)
+        issues = [{"code": issue.code, "ordinal": issue.ordinal} for issue in index.issues]
+        source.applied_hash, source.parser_version = digest, PARSER_VERSION
+        source.last_synced_at = now
+        source.last_sync_status = "PARTIAL" if issues else "SUCCESS"
+        source.last_error_code = "PARTIAL_PARSE" if issues else None
+        source.last_parse_summary = {
+            "kind": "substore",
+            "children": summary,
+            "issue_count": len(issues),
+            "issues": issues[:50],
+        }
+        return {
+            "source_id": source.id,
+            "status": source.last_sync_status,
+            "parsed": True,
+            "children": summary,
+        }
+
     def _apply(self, session, source, report, digest, now):
-        grouped = {}
+        grouped, info_nodes = {}, 0
+        airport = source.kind == "AIRPORT" or (
+            source.kind == "AUTO" and source.detected_kind == "AIRPORT"
+        )
         for parsed in report.nodes:
+            if airport and is_info_node(parsed.original_name):
+                info_nodes += 1  # account notices (traffic/expiry/website), not servers
+                continue
             fp = fingerprint(parsed, self.fingerprint_key)
             if fp not in grouped:
                 grouped[fp] = (parsed, set())
@@ -492,6 +600,7 @@ class AssetService:
                     },
                 )
             )
+        session.execute(sa.text("SELECT nodema_assign_names()"))
         if report.complete:
             session.execute(
                 sa.update(NodeSource)
@@ -502,7 +611,7 @@ class AssetService:
             source.last_synced_at = now
         source.last_sync_status = "SUCCESS" if report.complete else "PARTIAL"
         source.last_error_code = None if report.complete else "PARTIAL_PARSE"
-        source.last_parse_summary = report.summary()
+        source.last_parse_summary = {**report.summary(), "info_nodes": info_nodes}
         return {
             "source_id": source.id,
             "status": source.last_sync_status,
@@ -510,21 +619,17 @@ class AssetService:
             "unique_nodes": len(observed),
             "created_nodes": created,
             "reused_nodes": len(observed) - created,
+            "info_nodes": info_nodes,
             **report.summary(),
         }
 
     def list_nodes(self, *, node_id: UUID | None = None):
         with self.sessions() as session:
-            effective = sa.exists(
-                sa.select(NodeSource.node_id)
-                .join(Source)
-                .where(
-                    NodeSource.node_id == Node.id,
-                    NodeSource.is_present.is_(True),
-                    Source.enabled.is_(True),
-                    Source.deleted_at.is_(None),
-                )
-            )
+            from app.scans import scope_clause
+
+            # Same rule as scans and the catalog: retained nodes stay eligible; airport
+            # nodes follow their subscription's state (paused/expired/out of traffic).
+            effective = scope_clause("ALL")
             count = (
                 sa.select(sa.func.count())
                 .select_from(NodeSource)

@@ -41,6 +41,19 @@ class Source(Base):
         sa.CheckConstraint(
             "last_sync_status IN ('NEVER','SUCCESS','PARTIAL','FAILED')", name="status"
         ),
+        sa.CheckConstraint("kind IN ('AUTO','AIRPORT','SELF_HOSTED')", name="kind"),
+        sa.CheckConstraint(
+            "detected_kind IN ('UNKNOWN','AIRPORT','SELF_HOSTED','SUBSTORE')", name="detected_kind"
+        ),
+        sa.Index("idx_sources_parent", "parent_source_id"),
+        sa.Index("idx_sources_provider", "provider_id"),
+        sa.Index(
+            "uq_sources_origin",
+            "parent_source_id",
+            "origin_key",
+            unique=True,
+            postgresql_where=sa.text("parent_source_id IS NOT NULL AND deleted_at IS NULL"),
+        ),
     )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     name: Mapped[str] = mapped_column(sa.Text)
@@ -67,6 +80,42 @@ class Source(Base):
         sa.DateTime(timezone=True), server_default=sa.func.now()
     )
     deleted_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    # AUTO follows detection; users can force AIRPORT/SELF_HOSTED.
+    kind: Mapped[str] = mapped_column(sa.Text, server_default="AUTO")
+    detected_kind: Mapped[str] = mapped_column(sa.Text, server_default="UNKNOWN")
+    parent_source_id: Mapped[UUID | None] = mapped_column(
+        sa.ForeignKey("sources.id", ondelete="RESTRICT")
+    )
+    origin_key: Mapped[str | None] = mapped_column(sa.Text)
+    origin_label: Mapped[str | None] = mapped_column(sa.Text)
+    user_agent: Mapped[str | None] = mapped_column(sa.Text)
+    provider_id: Mapped[UUID | None] = mapped_column(
+        sa.ForeignKey("providers.id", ondelete="SET NULL")
+    )
+    traffic_upload: Mapped[int | None] = mapped_column(sa.BigInteger)
+    traffic_download: Mapped[int | None] = mapped_column(sa.BigInteger)
+    traffic_total: Mapped[int | None] = mapped_column(sa.BigInteger)
+    expires_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    userinfo_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    profile_title: Mapped[str | None] = mapped_column(sa.Text)
+    profile_url: Mapped[str | None] = mapped_column(sa.Text)
+    last_success_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+
+
+class Provider(Base):
+    """An airport; several subscription links can belong to one provider."""
+
+    __tablename__ = "providers"
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    name: Mapped[str] = mapped_column(sa.Text)
+    match_key: Mapped[str | None] = mapped_column(sa.Text, unique=True)
+    website: Mapped[str | None] = mapped_column(sa.Text)
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), server_default=sa.func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), server_default=sa.func.now()
+    )
 
 
 class Node(Base):
@@ -128,7 +177,8 @@ class NodeSource(Base):
 class ScanRun(Base):
     __tablename__ = "scan_runs"
     __table_args__ = (
-        sa.CheckConstraint("kind IN ('DAILY','SUPPLEMENTAL')", name="kind"),
+        sa.CheckConstraint("kind IN ('DAILY','SUPPLEMENTAL','MANUAL')", name="kind"),
+        sa.CheckConstraint("scope IN ('ALL','SELF_HOSTED','AIRPORT')", name="scope"),
         sa.Index(
             "uq_scan_runs_daily",
             "scan_date",
@@ -150,6 +200,7 @@ class ScanRun(Base):
     error_summary: Mapped[dict] = mapped_column(JSONB, server_default=sa.text("'{}'::jsonb"))
     archived_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
     archive_summary: Mapped[dict] = mapped_column(JSONB, server_default=sa.text("'{}'::jsonb"))
+    scope: Mapped[str] = mapped_column(sa.Text, server_default="ALL")
 
 
 class ScanShard(Base):
@@ -226,6 +277,7 @@ class TestResult(Base):
     probe_metadata: Mapped[dict] = mapped_column(JSONB, server_default=sa.text("'{}'::jsonb"))
     measurement_kind: Mapped[str] = mapped_column(sa.Text, server_default="FULL")
     precheck_metadata: Mapped[dict] = mapped_column(JSONB, server_default=sa.text("'{}'::jsonb"))
+    exit_asn_org: Mapped[str | None] = mapped_column(sa.Text)
 
 
 class NodeCurrentStatus(Base):
@@ -253,6 +305,53 @@ class NodeCurrentStatus(Base):
     probe_key: Mapped[str] = mapped_column(sa.Text, server_default="legacy")
     next_full_check_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
     measurement_kind: Mapped[str] = mapped_column(sa.Text, server_default="FULL")
+    last_exit_asn_org: Mapped[str | None] = mapped_column(sa.Text)
+
+
+class AppSettings(Base):
+    __tablename__ = "app_settings"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    daily_scan_enabled: Mapped[bool] = mapped_column(server_default=sa.true())
+    daily_scan_scope: Mapped[str] = mapped_column(sa.Text, server_default="SELF_HOSTED")
+    updated_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), server_default=sa.func.now()
+    )
+
+
+class AsnLabel(Base):
+    __tablename__ = "asn_labels"
+    asn: Mapped[int] = mapped_column(sa.BigInteger, primary_key=True, autoincrement=False)
+    label: Mapped[str] = mapped_column(sa.Text)
+    origin: Mapped[str] = mapped_column(sa.Text, server_default="USER")
+    updated_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), server_default=sa.func.now()
+    )
+
+
+class NodeName(Base):
+    """Stable per-(entry, exit, ASN label) sequence numbers; maintained in SQL."""
+
+    __tablename__ = "node_names"
+    __table_args__ = (
+        sa.Index(
+            "uq_node_names_group",
+            sa.text("coalesce(entry_country, '')"),
+            sa.text("coalesce(exit_country, '')"),
+            sa.text("coalesce(asn_label, '')"),
+            "seq",
+            unique=True,
+        ),
+    )
+    node_id: Mapped[UUID] = mapped_column(
+        sa.ForeignKey("nodes.id", ondelete="CASCADE"), primary_key=True
+    )
+    entry_country: Mapped[str | None] = mapped_column(sa.Text)
+    exit_country: Mapped[str | None] = mapped_column(sa.Text)
+    asn_label: Mapped[str | None] = mapped_column(sa.Text)
+    seq: Mapped[int]
+    assigned_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), server_default=sa.func.now()
+    )
 
 
 class NodeAnnotation(Base):

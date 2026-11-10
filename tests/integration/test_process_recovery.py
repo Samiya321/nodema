@@ -94,6 +94,14 @@ ScanService(assets,settings,checker_factory=Checker).run_shard(UUID(os.environ["
         while not marker.exists() and child.poll() is None and time.monotonic() < deadline:
             time.sleep(0.05)
         assert marker.exists(), "Synthetic checker did not reach the recovery checkpoint"
+        # Checks run in a sliding window, so completed results are committed shortly after
+        # the next check starts; wait for exactly the unblocked ones to be durable.
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            with service.sessions() as session:
+                if session.scalar(sa.select(sa.func.count()).select_from(HealthResult)) >= batch:
+                    break
+            time.sleep(0.1)
         child.kill()
         assert child.wait(timeout=5) != 0
         with service.sessions.begin() as session:

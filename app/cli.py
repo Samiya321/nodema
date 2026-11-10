@@ -245,28 +245,36 @@ def source_sync(source_id: str, force: bool = False):
 @safe_command
 def source_sync_all(due_only: bool = False):
     assets = service()
-    results = []
-    for source in assets.list_sources():
-        if not source["enabled"]:
-            continue
-        if (
-            due_only
-            and not source_due(
-                source["last_checked_at"],
-                source["sync_interval_seconds"],
-                now(),
-                Settings().scan_timezone,
-            )
-            and source["sync_requested_at"] is None
-            and source["last_sync_status"] != "NEVER"
-        ):
-            continue
-        try:
-            results.append(assets.sync_source(source["id"]))
-        except AssetError as error:
-            results.append(
-                {"source_id": source["id"], "status": "FAILED", "error_code": error.code}
-            )
+    results, seen = [], set()
+    # Sub-Store indexes create child sources during a sync; follow them for a few rounds.
+    for _round in range(4):
+        batch = []
+        for source in assets.list_sources():
+            if not source["enabled"] or source["id"] in seen:
+                continue
+            if (
+                due_only
+                and not source_due(
+                    source["last_checked_at"],
+                    source["sync_interval_seconds"],
+                    now(),
+                    Settings().scan_timezone,
+                )
+                and source["sync_requested_at"] is None
+                and source["last_sync_status"] != "NEVER"
+            ):
+                continue
+            batch.append(source["id"])
+        if not batch:
+            break
+        for source_id in batch:
+            seen.add(source_id)
+            try:
+                results.append(assets.sync_source(source_id))
+            except AssetError as error:
+                results.append(
+                    {"source_id": source_id, "status": "FAILED", "error_code": error.code}
+                )
     output(results)
     if any(result["status"] in ("FAILED", "PARTIAL") for result in results):
         raise typer.Exit(2)
@@ -351,7 +359,15 @@ def naming_apply(template_file: str = typer.Option(...)):
 
 @scan_app.command("prepare")
 @safe_command
-def scan_prepare(run_id: str | None = None, scan_date: str | None = None):
+def scan_prepare(
+    run_id: str | None = None,
+    scan_date: str | None = None,
+    scope: str = "ALL",
+    trigger: str = "manual",
+):
+    """trigger=schedule follows the dashboard's daily setting; manual always retests."""
+    if trigger not in ("manual", "schedule"):
+        raise AssetError("INVALID_SCAN_TRIGGER")
     scans = ScanService(service(), Settings())
     if run_id:
         plan = scans.plan(identifier(run_id))
@@ -360,21 +376,37 @@ def scan_prepare(run_id: str | None = None, scan_date: str | None = None):
             day = date.fromisoformat(scan_date) if scan_date else None
         except ValueError:
             raise AssetError("INVALID_SCAN_DATE") from None
-        plan = scans.plan(scan_date=day)
+        if trigger == "schedule":
+            enabled, scope = scans.daily_settings()
+            if not enabled:
+                output({"status": "SCHEDULE_DISABLED"})
+                write_outputs({"has_tasks": "false", "workers": "[]", "run_ids": "[]"})
+                return
+        plan = scans.plan(scan_date=day, scope=scope, manual=trigger == "manual")
     result = {k: v for k, v in plan.items() if k not in ("runs", "workers")}
     result["run_ids"] = [r["id"] for r in plan["runs"]]
     detail = scans.get(result["id"])
     shards = [s["shard_no"] for s in detail["shards"] if s["status"] != "COMPLETED"]
     result["shards"] = shards
     output(result)
+    workers = [{"tasks_json": json.dumps(tasks)} for tasks in plan["workers"]]
+    write_outputs(
+        {
+            "run_id": str(result["id"]),
+            "shards": json.dumps(shards),
+            "has_work": "true" if shards else "false",
+            "workers": json.dumps(workers),
+            "run_ids": json.dumps([str(r["id"]) for r in plan["runs"]]),
+            "has_tasks": "true" if plan["workers"] else "false",
+        }
+    )
+
+
+def write_outputs(values):
     if os.environ.get("GITHUB_OUTPUT"):
         with open(os.environ["GITHUB_OUTPUT"], "a") as stream:
-            stream.write(f"run_id={result['id']}\nshards={json.dumps(shards)}\n")
-            stream.write(f"has_work={'true' if shards else 'false'}\n")
-            workers = [{"tasks_json": json.dumps(tasks)} for tasks in plan["workers"]]
-            stream.write(f"workers={json.dumps(workers)}\n")
-            stream.write(f"run_ids={json.dumps([str(r['id']) for r in plan['runs']])}\n")
-            stream.write(f"has_tasks={'true' if plan['workers'] else 'false'}\n")
+            for key, value in values.items():
+                stream.write(f"{key}={value}\n")
 
 
 def json_list(value):

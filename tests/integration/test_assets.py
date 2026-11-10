@@ -109,7 +109,8 @@ def test_partial_keeps_old_links_and_full_snapshot_reconciles(service, fixture_b
     service.sync_source(source)
     assert all(n["eligible"] for n in service.list_nodes())  # second source still holds b
     service.delete_source(other)
-    assert sum(n["eligible"] for n in service.list_nodes()) == 1
+    # Deleting a self-hosted source keeps its nodes (retained library semantics).
+    assert sum(n["eligible"] for n in service.list_nodes()) == 2
     assert len(service.list_nodes()) == 2
     assert len(service.list_sources(include_deleted=True)) == 2
     with service.sessions() as session:
@@ -182,7 +183,9 @@ def test_explicit_empty_list_and_blank_response(service, fixture_bytes):
     assert service.sync_source(remote)["error_code"] == "EMPTY_INPUT"
     service.update_source(source, payload=b"proxies: []")
     assert service.sync_source(source)["status"] == "SUCCESS"
-    assert not service.list_nodes()[0]["eligible"]
+    # An explicit empty list records the removal but keeps the node testable.
+    node = service.list_nodes()[0]
+    assert node["eligible"] and node["present_source_count"] == 0
 
 
 def test_concurrent_sources_single_node_and_correct_ciphertext(service, fixture_bytes):
@@ -283,7 +286,11 @@ def test_pause_update_and_synthetic_100(service, fixture_bytes):
     assert service.sync_source(source)["unique_nodes"] == 100
     assert len(service.list_nodes()) == 100
     service.update_source(source, name="renamed label", enabled=False)
+    # Pausing a self-hosted source stops syncing only; an airport pause hides its nodes.
+    assert all(n["eligible"] for n in service.list_nodes())
+    service.update_source(source, kind="AIRPORT")
     assert not any(n["eligible"] for n in service.list_nodes())
+    service.update_source(source, kind="AUTO")
     with pytest.raises(AssetError, match="SOURCE_DISABLED"):
         service.sync_source(source)
     service.update_source(source, enabled=True)
