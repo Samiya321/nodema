@@ -4,7 +4,7 @@
 
 云端实例已于 2026-11-11 发布，地址、验证结果和当前边界见 [云端部署记录](docs/CLOUD_DEPLOYMENT.md)。
 
-已包含 M1–M4 功能、六协议、Sub-Store 导入、累计可用率、Actions 预生成订阅和扫描明细归档，以及 M5 的本地规模测试、备份和验证文档。当前交付为代码与本地验证，未部署生产资源；见 [交付审查](docs/CONVERSATION_COMPLETENESS_REVIEW.md)。用户云端调度、额度与授权公网节点仍需上线验收。
+已包含 M1–M4 功能、六协议、Sub-Store 导入、累计可用率、Actions 预生成订阅和扫描明细归档，以及 M5 的本地规模测试、备份和验证文档。代码、本地回归与云端基础链路均已有验证；此前功能核对见 [交付审查](docs/CONVERSATION_COMPLETENESS_REVIEW.md)，最新上线结果见 [云端部署记录](docs/CLOUD_DEPLOYMENT.md)。用户真实公网节点与长期额度仍需实际使用验证。
 
 最新存储与日期统计说明见 [明文存储与节点可用天数](docs/DATA_STORAGE_AND_LIFETIME.md)。原 AES 数据库要求已被用户的新选择覆盖；旧密文升级时仍需原密钥一次性转换。
 
