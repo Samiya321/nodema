@@ -1,0 +1,200 @@
+import {
+  KIND,
+  ago,
+  api,
+  badge,
+  busy,
+  confirm,
+  dialog,
+  empty,
+  errorText,
+  field,
+  h,
+  select,
+  selection,
+  table,
+  toast,
+} from "../core.js";
+
+const TYPES = { SUBSCRIPTION_URL: "订阅链接", RAW_TEXT: "节点文本", UPLOADED_FILE: "上传文件", SINGLE_URI: "单个节点" };
+const VIEWS = [
+  ["", "全部"],
+  ["SELF_HOSTED", "自建"],
+  ["AIRPORT", "机场"],
+  ["SUBSTORE", "Sub-Store"],
+  ["CHILD", "来自 Sub-Store"],
+];
+
+function importPanel(refresh) {
+  const result = h("div", { "aria-live": "polite" });
+  const links = h(
+    "form",
+    { class: "stack" },
+    field(
+      "订阅链接或 Sub-Store API（每行一个，最多 100 个）",
+      h("textarea", { name: "urls", rows: 5, required: true, placeholder: "https://example.com/sub?token=…\nhttps://substore.example.com/api/subs" }),
+      "保存后不会立即拉取；准备好后点击顶部“同步来源”。带流量信息的订阅会自动识别为机场。",
+    ),
+    h("div", { class: "row" }, field("名称前缀", h("input", { name: "name_prefix", value: "订阅", maxlength: 60 })), h("button", { class: "primary", type: "submit" }, "保存链接")),
+  );
+  links.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    await busy(e.submitter, async () => {
+      const r = await api("/sources/bulk", { method: "POST", body: Object.fromEntries(new FormData(links)) });
+      result.replaceChildren(
+        h("p", { class: "callout" }, `新增 ${r.created} 个，已存在 ${r.duplicates} 个，无效 ${r.invalid} 个。`, r.created ? "点击顶部“同步来源”开始拉取。" : ""),
+        r.invalid
+          ? h("ul", { class: "plain" }, r.items.filter((i) => i.status === "INVALID").map((i) => h("li", {}, `第 ${i.line} 行：${errorText(i.error_code)}`)))
+          : null,
+      );
+      if (r.created) {
+        links.reset();
+        refresh();
+      }
+    });
+  });
+  const text = h(
+    "form",
+    { class: "stack" },
+    field("名称", h("input", { name: "name", required: true, maxlength: 80 })),
+    field(
+      "节点内容",
+      h("textarea", { name: "payload", rows: 6, required: true, placeholder: "vless://…、trojan://… 每行一个，或粘贴 Clash / sing-box 配置" }),
+      "适合自建节点。内容以明文保存在你的数据库中。",
+    ),
+    h("div", { class: "row" }, field("类别", select("kind", [["SELF_HOSTED", "自建"], ["AUTO", "自动识别"], ["AIRPORT", "机场"]], "SELF_HOSTED")), h("button", { class: "primary", type: "submit" }, "保存节点")),
+  );
+  text.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    await busy(e.submitter, async () => {
+      await api("/sources", { method: "POST", body: { ...Object.fromEntries(new FormData(text)), type: "RAW_TEXT" } });
+      result.replaceChildren(h("p", { class: "callout" }, "已保存。点击顶部“同步来源”解析节点。"));
+      text.reset();
+      refresh();
+    });
+  });
+  return h(
+    "details",
+    { class: "panel import" },
+    h("summary", {}, "添加来源"),
+    h("div", { class: "grid-2" }, h("section", {}, h("h3", {}, "链接"), links), h("section", {}, h("h3", {}, "节点文本"), text)),
+    result,
+  );
+}
+
+export function editSource(source, done) {
+  const form = h(
+    "form",
+    { class: "form-grid" },
+    field("名称", h("input", { name: "name", value: source.name, required: true, maxlength: 80 })),
+    field("类别", select("kind", [["AUTO", `自动识别（当前：${KIND[source.detected_kind] || "未识别"}）`], ["SELF_HOSTED", "自建"], ["AIRPORT", "机场"]], source.kind), "机场节点只在你选择检测机场时参与；过期或流量用完会自动停测。"),
+    source.type === "SUBSCRIPTION_URL"
+      ? field("User-Agent", h("input", { name: "user_agent", value: source.user_agent || "", placeholder: "默认 clash.meta" }), "部分机场只对特定客户端返回流量信息。")
+      : null,
+    field("启用同步", select("enabled", [["true", "启用"], ["false", "暂停"]], String(source.enabled)), "暂停只停止拉取；自建节点继续保留和检测。"),
+    field(
+      source.type === "SUBSCRIPTION_URL" ? "更换链接（留空不变）" : "替换内容（留空不变）",
+      h("textarea", { name: "payload", rows: 3 }),
+    ),
+    h("div", { class: "row end wide" }, h("button", { class: "primary", type: "submit" }, "保存")),
+  );
+  const box = dialog("编辑来源", form);
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const data = Object.fromEntries(new FormData(form));
+    const body = { name: data.name, kind: data.kind, enabled: data.enabled === "true" };
+    if ("user_agent" in data) body.user_agent = data.user_agent || null;
+    if (data.payload) body.payload = data.payload;
+    await busy(e.submitter, async () => {
+      await api("/sources/" + source.id, { method: "PATCH", body });
+      toast(data.payload ? "已保存，同步后生效。" : "已保存。", "ok");
+      box.close();
+      done();
+    });
+  });
+}
+
+export async function render(root, { params, go, refresh, refreshStrip }) {
+  const all = await api("/sources");
+  const view = params.get("view") || "";
+  const status = params.get("status") || "";
+  const q = (params.get("q") || "").toLowerCase();
+  const names = Object.fromEntries(all.map((s) => [s.id, s.name]));
+  const list = all.filter((s) => {
+    if (view === "CHILD" ? !s.parent_source_id : view && s.effective_kind !== view) return false;
+    if (status && s.last_sync_status !== status) return false;
+    return !q || s.name.toLowerCase().includes(q) || (s.url_host || "").includes(q);
+  });
+  const reload = () => {
+    refresh();
+    refreshStrip();
+  };
+  const set = (key, value) => {
+    value ? params.set(key, value) : params.delete(key);
+    go("sources", params);
+  };
+  const bar = h("div", { class: "bulkbar", hidden: true });
+  const picked = selection((ids) => {
+    bar.hidden = !ids.size;
+    bar.firstChild.textContent = `已选 ${ids.size} 个`;
+  });
+  const batch = (action, done) => async (e) => {
+    const ids = [...picked.ids];
+    let include = false;
+    if (action === "delete") {
+      const hasParents = all.some((s) => ids.includes(s.id) && s.effective_kind === "SUBSTORE");
+      const box = hasParents ? h("label", { class: "check" }, h("input", { type: "checkbox" }), "同时删除这些 Sub-Store 生成的子来源") : null;
+      if (!(await confirm("删除来源", `删除 ${ids.length} 个来源？自建节点会保留并继续检测；机场节点随订阅停止检测。`, { action: "删除", danger: true, extra: box }))) return;
+      include = Boolean(box?.querySelector("input").checked);
+    }
+    await busy(e.target, async () => {
+      const r = await api("/sources/batch", { method: "POST", body: { ids, action, include_children: include } });
+      toast(done(r.changed), "ok");
+      picked.clear();
+      reload();
+    });
+  };
+  bar.append(
+    h("span", {}),
+    h("button", { type: "button", onclick: batch("request_sync", (n) => `${n} 个来源待同步。`) }, "标记待同步"),
+    h("button", { type: "button", onclick: batch("enable", (n) => `已启用 ${n} 个。`) }, "启用"),
+    h("button", { type: "button", onclick: batch("disable", (n) => `已暂停 ${n} 个。`) }, "暂停"),
+    h("button", { type: "button", class: "danger", onclick: batch("delete", (n) => `已删除 ${n} 个。`) }, "删除"),
+  );
+  const ids = list.map((s) => s.id);
+  root.append(
+    h("h1", { class: "page-title" }, "来源"),
+    importPanel(reload),
+    h(
+      "div",
+      { class: "toolbar" },
+      h("input", { type: "search", placeholder: "搜索名称或域名", value: params.get("q") || "", "aria-label": "搜索来源", onchange: (e) => set("q", e.target.value) }),
+      h("div", { class: "segmented", role: "group", "aria-label": "来源类别" }, VIEWS.map(([key, text]) => h("button", { type: "button", class: "seg", "aria-pressed": String(view === key), onclick: () => set("view", key) }, text))),
+      select("status", [["", "全部状态"], ["SUCCESS", "成功"], ["PARTIAL", "部分成功"], ["FAILED", "失败"], ["NEVER", "未同步"]], status),
+    ),
+    bar,
+    table(
+      [
+        { label: picked.all(ids), class: "pick", render: (s) => picked.box(s.id) },
+        {
+          label: "来源",
+          render: (s) =>
+            h(
+              "div",
+              { class: "name-cell" },
+              h("span", { class: "node-name" }, s.name, s.enabled ? "" : h("span", { class: "muted" }, "（已暂停）")),
+              h("span", { class: "muted small" }, [TYPES[s.type], s.url_host, s.parent_source_id ? `来自 ${names[s.parent_source_id] || "已删除的 Sub-Store"}` : ""].filter(Boolean).join(" · ")),
+            ),
+        },
+        { label: "类别", render: (s) => h("span", { class: "tag " + ({ AIRPORT: "air", SUBSTORE: "store" }[s.effective_kind] || "own") }, KIND[s.effective_kind]) },
+        { label: "同步", render: (s) => h("div", { class: "name-cell" }, badge(s.last_sync_status), s.last_error_code ? h("span", { class: "small bad-text" }, errorText(s.last_error_code)) : null, s.sync_requested_at ? h("span", { class: "small muted" }, "待同步") : null) },
+        { label: "节点", class: "num", render: (s) => (s.effective_kind === "SUBSTORE" ? h("a", { href: "#/substore" }, "见子来源") : h("a", { href: `#/nodes?source_id=${s.id}` }, `${s.up_count} 可用 / ${s.node_count}`)) },
+        { label: "最近成功", render: (s) => ago(s.last_success_at) },
+        { label: "", render: (s) => h("button", { type: "button", class: "quiet", onclick: () => editSource(s, reload) }, "编辑") },
+      ],
+      list,
+      { empty: all.length ? empty("没有符合条件的来源") : empty("还没有来源", "展开上方“添加来源”，粘贴订阅链接、Sub-Store API 或节点。"), rowClass: (s) => (s.enabled ? "" : "dim") },
+    ),
+  );
+  root.querySelector("select[name=status]").addEventListener("change", (e) => set("status", e.target.value));
+}

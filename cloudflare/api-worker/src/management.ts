@@ -108,7 +108,7 @@ async function airports(rows: Rows) {
     "SELECT id,name,website,created_at,updated_at FROM providers ORDER BY name,id",
   );
   const sources = await rows(
-    `SELECT s.id,s.name,s.enabled,s.kind,s.detected_kind,s.provider_id,s.parent_source_id,
+    `SELECT s.id,s.name,s.type,s.user_agent,s.enabled,s.kind,s.detected_kind,s.provider_id,s.parent_source_id,
       s.traffic_upload,s.traffic_download,s.traffic_total,s.expires_at,s.userinfo_at,
       s.profile_title,s.profile_url,s.last_sync_status,s.last_error_code,s.last_checked_at,
       s.last_success_at,s.created_at,${urlHost} AS url_host,

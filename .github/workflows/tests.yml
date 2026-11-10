@@ -37,7 +37,8 @@ jobs:
           uv run python scripts/smoke_protocols.py
       - name: Verify 100-node real local pipeline
         run: uv run python scripts/benchmark_pipeline.py --sizes 100
-      - run: node --check app/web/app.js
+      - name: Dashboard module syntax
+        run: for f in $(find app/web -name '*.js'); do node --check "$f"; done
       - name: TypeScript Worker and Python interoperability
         working-directory: cloudflare/api-worker
         run: npm ci && npm run types && npm run check && npm test
