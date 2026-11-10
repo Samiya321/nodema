@@ -1151,3 +1151,126 @@ test("archived scans expose their summary and cannot dispatch retries", async ()
     await db.end();
   }
 });
+
+test("bulk subscription import is atomic, deduplicated and dispatches once", async () => {
+  const original = globalThis.fetch;
+  env.GITHUB_REPOSITORY = "synthetic-owner/synthetic-repo";
+  env.GITHUB_DISPATCH_TOKEN = "synthetic-actions-token";
+  const ids = new Set();
+  const calls = [];
+  const data = {
+    urls: "\nhttps://bulk.example/sub?token=synthetic-bulk-secret\nhttp://store.example:3000/api/subs\nhttps://BULK.example:443/sub?token=synthetic-bulk-secret\nhttp://169.254.169.254/private\nnot-a-url",
+  };
+  try {
+    globalThis.fetch = async (url, options) => {
+      calls.push({ url: String(url), body: JSON.parse(options.body) });
+      return new Response(null, { status: 204 });
+    };
+    assert.equal(
+      (
+        await request("/api/sources/bulk", {
+          method: "POST",
+          data,
+          authenticated: false,
+        })
+      ).status,
+      401,
+    );
+    const response = await request("/api/sources/bulk", {
+      method: "POST",
+      data,
+    });
+    assert.equal(response.status, 200);
+    const result = await response.json();
+    result.items.filter((i) => i.id).forEach((i) => ids.add(i.id));
+    assert.deepEqual(
+      [result.created, result.duplicates, result.invalid],
+      [2, 1, 2],
+    );
+    assert.deepEqual(
+      result.items.map((i) => i.line),
+      [2, 3, 4, 5, 6],
+    );
+    assert.equal(result.items[0].id, result.items[2].id);
+    assert.ok(!JSON.stringify(result).includes("synthetic-bulk-secret"));
+    assert.equal(calls.length, 1);
+    assert.match(calls[0].url, /source-sync.yml\/dispatches$/);
+    assert.deepEqual(calls[0].body.inputs, {});
+    for (const id of ids)
+      assert.ok(
+        (await (await request(`/api/sources/${id}`)).json()).sync_requested_at,
+      );
+    const repeat = await (
+      await request("/api/sources/bulk", { method: "POST", data })
+    ).json();
+    assert.equal(repeat.created, 0);
+    assert.equal(repeat.duplicates, 3);
+    assert.equal(calls.length, 1);
+    for (const urls of [
+      "https://limits.example/\n".repeat(101),
+      "x".repeat(131073),
+      " ",
+    ]) {
+      assert.ok(
+        (await request("/api/sources/bulk", { method: "POST", data: { urls } }))
+          .status >= 400,
+      );
+    }
+    globalThis.fetch = async () => {
+      throw new Error("synthetic-private-failure");
+    };
+    const failed = await (
+      await request("/api/sources/bulk", {
+        method: "POST",
+        data: { urls: "https://bulk-retry.example/api/subs" },
+      })
+    ).json();
+    assert.equal(failed.created, 1);
+    ids.add(failed.items[0].id);
+    assert.equal(failed.pipeline.reason, "DISPATCH_FAILED");
+    assert.ok(
+      (await (await request(`/api/sources/${failed.items[0].id}`)).json())
+        .sync_requested_at,
+    );
+  } finally {
+    env.GITHUB_REPOSITORY = "";
+    env.GITHUB_DISPATCH_TOKEN = "";
+    globalThis.fetch = original;
+    for (const id of ids)
+      await request(`/api/sources/${id}`, { method: "DELETE" });
+  }
+});
+
+test("concurrent bulk imports share one source", async () => {
+  const data = { urls: "https://bulk-concurrent.example/api/subs" };
+  const results = await Promise.all(
+    [1, 2].map(async () =>
+      (await request("/api/sources/bulk", { method: "POST", data })).json(),
+    ),
+  );
+  try {
+    assert.equal(
+      results.reduce((n, r) => n + r.created, 0),
+      1,
+    );
+    assert.equal(
+      results.reduce((n, r) => n + r.duplicates, 0),
+      1,
+    );
+    assert.equal(results[0].items[0].id, results[1].items[0].id);
+  } finally {
+    for (const id of new Set(results.flatMap((r) => r.items.map((i) => i.id))))
+      await request(`/api/sources/${id}`, { method: "DELETE" });
+  }
+});
+
+test("bulk URL validation matches shared Python fixtures", async () => {
+  const { subscriptionURL } = await import("../dist/source-bulk.js");
+  const cases = JSON.parse(
+    readFileSync(root + "tests/fixtures/bulk_links.json", "utf8"),
+  );
+  for (const c of cases) {
+    if (c.url) assert.equal(subscriptionURL(c.value), c.url);
+    else assert.throws(() => subscriptionURL(c.value));
+  }
+});

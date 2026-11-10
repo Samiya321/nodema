@@ -36,6 +36,14 @@ def dispatch_scan(settings, run_id: UUID):
 
 
 def dispatch_export_build(settings):
+    return _dispatch_workflow(settings, "export-build.yml")
+
+
+def dispatch_source_sync(settings):
+    return _dispatch_workflow(settings, "source-sync.yml")
+
+
+def _dispatch_workflow(settings, workflow):
     """A persisted request survives a missing token or temporary dispatch failure."""
     token = settings.github_dispatch_token.get_secret_value()
     if not settings.github_repository or not token:
@@ -46,7 +54,9 @@ def dispatch_export_build(settings):
                 "POST",
                 "https://api.github.com/repos/"
                 + settings.github_repository
-                + "/actions/workflows/export-build.yml/dispatches",
+                + "/actions/workflows/"
+                + workflow
+                + "/dispatches",
                 headers={
                     "Authorization": f"Bearer {token}",
                     "Accept": "application/vnd.github+json",

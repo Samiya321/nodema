@@ -1,7 +1,10 @@
-"""Official GeoLite downloads with header authentication and bounded archive handling."""
+"""Bounded official and GitHub GeoLite downloads; only validated MMDB data is installed."""
 
 import base64
+import hashlib
+import hmac
 import io
+import json
 import os
 import tarfile
 import tempfile
@@ -19,6 +22,146 @@ from app.ingestion.fetcher import SafeBackend, read_body, validate_url
 EDITIONS = ("GeoLite2-City", "GeoLite2-ASN")
 BUNDLE_CONTEXT = "geoip-bundle:v1"
 MAX_BUNDLE_BYTES = 268435456
+GITHUB_REPOSITORY = "P3TERX/GeoLite.mmdb"
+GITHUB_HOSTS = {
+    "api.github.com",
+    "github.com",
+    "release-assets.githubusercontent.com",
+    "objects.githubusercontent.com",
+}
+
+
+def download_provider(settings):
+    provider = settings.geoip_download_provider
+    if provider == "auto":
+        provider = (
+            "maxmind"
+            if (
+                settings.maxmind_account_id.get_secret_value()
+                or settings.maxmind_license_key.get_secret_value()
+            )
+            else "github"
+        )
+    return provider
+
+
+def download_databases(settings, directory):
+    provider = download_provider(settings)
+    if provider == "disabled":
+        return []
+    if provider == "github":
+        return download_github_databases(
+            directory, token=settings.geoip_github_token.get_secret_value()
+        )
+    return [
+        download_mmdb(
+            settings.maxmind_account_id.get_secret_value(),
+            settings.maxmind_license_key.get_secret_value(),
+            edition,
+            directory,
+        )
+        for edition in EDITIONS
+    ]
+
+
+def download_github_databases(directory, *, token="", pool_factory=None, verify=verify_mmdb):
+    """Pin both assets to one release; verify GitHub SHA-256 plus MMDB type and age.
+
+    Checksums detect corrupt/mismatched assets, not a compromised upstream publisher.
+    No upstream workflow or executable code is downloaded or run.
+    """
+    deadline = time.monotonic() + 180
+    factory = pool_factory or (
+        lambda: httpcore.ConnectionPool(network_backend=SafeBackend(deadline))
+    )
+
+    def get(url, limit):
+        for _ in range(5):
+            url = validate_url(url)
+            host = urlsplit(url).hostname
+            if host not in GITHUB_HOSTS:
+                raise AssetError("GEOIP_DOWNLOAD_ORIGIN_INVALID")
+            headers = {"User-Agent": "nodema-geolite-updater", "Accept-Encoding": "identity"}
+            if host == "api.github.com":
+                headers["Accept"] = "application/vnd.github+json"
+                if token:
+                    headers["Authorization"] = "Bearer " + token
+            with (
+                factory() as pool,
+                pool.stream(
+                    "GET",
+                    url,
+                    headers=headers,
+                    extensions={"timeout": {"connect": 5, "read": 30, "write": 5, "pool": 5}},
+                ) as response,
+            ):
+                if response.status in (301, 302, 303, 307, 308):
+                    values = {k.lower(): v for k, v in response.headers}
+                    url = urljoin(url, values[b"location"].decode("ascii"))
+                    continue
+                if response.status != 200:
+                    raise AssetError("GEOIP_DOWNLOAD_FAILED")
+                return read_body(response.iter_stream(), b"", limit)
+        raise AssetError("GEOIP_DOWNLOAD_FAILED")
+
+    try:
+        release = json.loads(
+            get(f"https://api.github.com/repos/{GITHUB_REPOSITORY}/releases/latest", 1048576)
+        )
+        if release.get("draft") or release.get("prerelease"):
+            raise AssetError("GEOIP_RELEASE_INVALID")
+        target = Path(directory)
+        target.mkdir(parents=True, exist_ok=True, mode=0o700)
+        results = []
+        with tempfile.TemporaryDirectory(dir=target) as staging:
+            for edition in EDITIONS:
+                name = edition + ".mmdb"
+                assets = [a for a in release["assets"] if a["name"] == name]
+                if len(assets) != 1:
+                    raise AssetError("GEOIP_RELEASE_INVALID")
+                asset = assets[0]
+                digest = asset.get("digest", "")
+                if (
+                    not isinstance(digest, str)
+                    or len(digest) != 71
+                    or not digest.startswith("sha256:")
+                ):
+                    raise AssetError("GEOIP_CHECKSUM_REQUIRED")
+                if not 0 < asset["size"] <= MAX_BUNDLE_BYTES // 2:
+                    raise AssetError("GEOIP_ARCHIVE_TOO_LARGE")
+                url = asset["browser_download_url"]
+                prefix = f"https://github.com/{GITHUB_REPOSITORY}/releases/download/"
+                if not url.startswith(prefix) or not url.endswith("/" + name):
+                    raise AssetError("GEOIP_DOWNLOAD_ORIGIN_INVALID")
+                data = get(url, MAX_BUNDLE_BYTES // 2)
+                if len(data) != asset["size"] or not hmac.compare_digest(
+                    hashlib.sha256(data).hexdigest(), digest[7:]
+                ):
+                    raise AssetError("GEOIP_CHECKSUM_MISMATCH")
+                path = Path(staging) / name
+                write_private(path, data)
+                metadata = verify(path)
+                if metadata["type"] != edition:
+                    raise AssetError("GEOIP_DATABASE_TYPE_INVALID")
+                if not time.time() - 30 * 86400 <= metadata["build_epoch"] <= time.time() + 86400:
+                    raise AssetError("GEOIP_DATABASE_STALE")
+                results.append(
+                    {
+                        "edition": edition,
+                        "provider": "github",
+                        "repository": GITHUB_REPOSITORY,
+                        "release": release["tag_name"],
+                        "sha256": digest[7:],
+                        **metadata,
+                    }
+                )
+            for edition in EDITIONS:
+                os.replace(Path(staging) / (edition + ".mmdb"), target / (edition + ".mmdb"))
+        return results
+    except AssetError:
+        raise
+    except Exception:
+        raise AssetError("GEOIP_UPDATE_FAILED") from None
 
 
 def write_private(path, data):

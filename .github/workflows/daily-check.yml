@@ -94,6 +94,8 @@ jobs:
         env:
           MAXMIND_ACCOUNT_ID: ${{ secrets.MAXMIND_ACCOUNT_ID }}
           MAXMIND_LICENSE_KEY: ${{ secrets.MAXMIND_LICENSE_KEY }}
+          GEOIP_DOWNLOAD_PROVIDER: ${{ vars.GEOIP_DOWNLOAD_PROVIDER || 'auto' }}
+          GEOIP_GITHUB_TOKEN: ${{ github.token }}
         run: uv run nodema geoip-pack --output-file private/geoip.nma
       - name: Share encrypted GeoLite bundle
         if: steps.geoip.outputs.geoip_ready == 'true'

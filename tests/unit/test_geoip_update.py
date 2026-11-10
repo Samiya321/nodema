@@ -83,3 +83,152 @@ def test_geoip_bundle_rejects_extra_and_traversal_entries(tmp_path, cipher):
     with pytest.raises(AssetError, match="GEOIP_ARCHIVE_INVALID"):
         install_databases(bundle, tmp_path / "installed", cipher)
     assert not (tmp_path / "escape.mmdb").exists()
+
+
+def github_fixture(*, change=None, redirect=False):
+    import hashlib
+    import json
+    import time
+
+    from app.geoip_update import EDITIONS
+
+    assets = []
+    content = {}
+    for edition in EDITIONS:
+        name = edition + ".mmdb"
+        data = b"synthetic-" + edition.encode()
+        url = "https://github.com/P3TERX/GeoLite.mmdb/releases/download/2026.11.10/" + name
+        assets.append(
+            {
+                "name": name,
+                "size": len(data),
+                "digest": "sha256:" + hashlib.sha256(data).hexdigest(),
+                "browser_download_url": url,
+            }
+        )
+        content[url] = data
+    release = {"tag_name": "2026.11.10", "draft": False, "prerelease": False, "assets": assets}
+    if change:
+        change(release)
+    calls = []
+
+    class Pool:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        @contextmanager
+        def stream(self, method, url, **kwargs):
+            calls.append((url, kwargs["headers"]))
+            if url.startswith("https://api.github.com/"):
+                yield httpcore.Response(200, content=json.dumps(release).encode())
+            elif redirect and url.startswith("https://github.com/"):
+                yield httpcore.Response(
+                    302,
+                    headers={
+                        "Location": "https://release-assets.githubusercontent.com/test/"
+                        + url.rsplit("/", 1)[-1]
+                    },
+                )
+            else:
+                name = url.rsplit("/", 1)[-1]
+                yield httpcore.Response(
+                    200, content=b"synthetic-" + name.removesuffix(".mmdb").encode()
+                )
+
+    def verify(path):
+        return {"type": path.stem, "build_epoch": int(time.time())}
+
+    return Pool, verify, calls
+
+
+def test_github_both_assets_verified_and_token_not_forwarded(tmp_path):
+    from app.geoip_update import download_github_databases
+
+    pool, verify, calls = github_fixture(redirect=True)
+    result = download_github_databases(
+        tmp_path, token="synthetic-github-token", pool_factory=pool, verify=verify
+    )
+    assert len(result) == 2
+    assert all(r["release"] == "2026.11.10" and len(r["sha256"]) == 64 for r in result)
+    assert "Authorization" in calls[0][1]
+    assert all("Authorization" not in headers for _, headers in calls[1:])
+    assert all("synthetic-github-token" not in url for url, _ in calls)
+    assert (tmp_path / "GeoLite2-ASN.mmdb").stat().st_mode & 0o777 == 0o600
+
+
+@pytest.mark.parametrize(
+    "failure,expected",
+    [
+        ("digest", "GEOIP_CHECKSUM_MISMATCH"),
+        ("missing", "GEOIP_CHECKSUM_REQUIRED"),
+        ("origin", "GEOIP_DOWNLOAD_ORIGIN_INVALID"),
+        ("large", "GEOIP_ARCHIVE_TOO_LARGE"),
+        ("type", "GEOIP_DATABASE_TYPE_INVALID"),
+        ("stale", "GEOIP_DATABASE_STALE"),
+    ],
+)
+def test_github_rejects_bad_second_asset_without_replacing_first(tmp_path, failure, expected):
+    from app.geoip_update import download_github_databases
+
+    def change(release):
+        asset = release["assets"][1]
+        if failure == "digest":
+            asset["digest"] = "sha256:" + "0" * 64
+        if failure == "missing":
+            asset.pop("digest")
+        if failure == "origin":
+            asset["browser_download_url"] = "https://untrusted.example/GeoLite2-ASN.mmdb"
+        if failure == "large":
+            asset["size"] = 268435456
+
+    pool, verify, calls = github_fixture(change=change)
+
+    def custom_verify(path):
+        result = verify(path)
+        if path.stem.endswith("ASN"):
+            if failure == "type":
+                result["type"] = "GeoLite2-City"
+            if failure == "stale":
+                result["build_epoch"] = 0
+        return result
+
+    first = tmp_path / "GeoLite2-City.mmdb"
+    first.write_bytes(b"previous-good-city")
+    with pytest.raises(AssetError, match=expected):
+        download_github_databases(tmp_path, pool_factory=pool, verify=custom_verify)
+    assert first.read_bytes() == b"previous-good-city"
+    assert not (tmp_path / "GeoLite2-ASN.mmdb").exists()
+
+
+def test_geoip_provider_and_optional_failure_keeps_scan_running(
+    tmp_path, monitor_settings, monkeypatch
+):
+    import json
+
+    from pydantic import SecretStr
+    from typer.testing import CliRunner
+
+    import app.cli as cli
+    import app.geoip_update as geo
+
+    assert geo.download_provider(monitor_settings) == "github"
+    official = monitor_settings.model_copy(update={"maxmind_account_id": SecretStr("synthetic")})
+    assert geo.download_provider(official) == "maxmind"
+    monkeypatch.setattr(cli, "Settings", lambda: monitor_settings)
+
+    def fail(*args):
+        raise AssetError("GEOIP_DOWNLOAD_FAILED")
+
+    monkeypatch.setattr(geo, "download_databases", fail)
+    output = tmp_path / "github_output"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+    result = CliRunner().invoke(
+        cli.app, ["geoip-pack", "--output-file", str(tmp_path / "geoip.nma")]
+    )
+    assert result.exit_code == 0
+    assert json.loads(result.stdout)["status"] == "UNAVAILABLE"
+    assert output.read_text() == "geoip_ready=false\n"
+    assert not (tmp_path / "geoip.nma").exists()

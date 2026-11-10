@@ -178,6 +178,25 @@ def source_list(include_deleted: bool = False):
     output(service().list_sources(include_deleted=include_deleted))
 
 
+@source_app.command("import-links")
+@safe_command
+def source_import_links(input_file: str = typer.Option(...), name_prefix: str = "批量订阅"):
+    """Save one subscription/Sub-Store URL per line without fetching in the CLI request."""
+    from app.dispatch import dispatch_source_sync
+
+    try:
+        urls = read_input(input_file).decode("utf-8-sig")
+    except UnicodeError:
+        raise AssetError("INVALID_TEXT_ENCODING") from None
+    result = service().create_sources_bulk(urls, name_prefix=name_prefix)
+    result["pipeline"] = (
+        dispatch_source_sync(Settings())
+        if result["created"]
+        else {"dispatched": False, "reason": "NO_NEW_SOURCES"}
+    )
+    output(result)
+
+
 @source_app.command("show")
 @safe_command
 def source_show(source_id: str):
@@ -660,42 +679,39 @@ def restore(
 @app.command("geoip-update")
 @safe_command
 def geoip_update(directory: str = "private/geoip"):
-    from app.geoip_update import download_mmdb
+    from app.geoip_update import download_databases
 
-    settings = Settings()
-    output(
-        [
-            download_mmdb(
-                settings.maxmind_account_id.get_secret_value(),
-                settings.maxmind_license_key.get_secret_value(),
-                edition,
-                directory,
-            )
-            for edition in ("GeoLite2-City", "GeoLite2-ASN")
-        ]
-    )
+    output(download_databases(Settings(), directory))
 
 
 @app.command("geoip-pack")
 @safe_command
 def geoip_pack(output_file: str = typer.Option(...), directory: str = "private/geoip"):
-    from app.geoip_update import EDITIONS, download_mmdb, pack_databases
+    from app.geoip_update import download_databases, download_provider, pack_databases
 
     settings = Settings()
-    account, license_key = (
-        settings.maxmind_account_id.get_secret_value(),
-        settings.maxmind_license_key.get_secret_value(),
-    )
     ready = False
-    if account or license_key:
-        if not account or not license_key:
-            raise AssetError("MAXMIND_CONFIGURATION_REQUIRED")
-        aes, _ = settings.keys()
-        for edition in EDITIONS:
-            download_mmdb(account, license_key, edition, directory)
-        pack_databases(directory, output_file, Cipher(aes, settings.encryption_key_id))
-        ready = True
-    output({"status": "PACKED" if ready else "DISABLED", "geoip_ready": ready})
+    result = {"provider": download_provider(settings)}
+    if result["provider"] != "disabled":
+        try:
+            aes, _ = settings.keys()
+            result["databases"] = download_databases(settings, directory)
+            pack_databases(directory, output_file, Cipher(aes, settings.encryption_key_id))
+            ready = True
+        except AssetError as error:
+            # GeoIP enrichment is optional: an upstream outage must not stop health checks.
+            result["error_code"] = error.code
+    output(
+        {
+            **result,
+            "status": "PACKED"
+            if ready
+            else "UNAVAILABLE"
+            if "error_code" in result
+            else "DISABLED",
+            "geoip_ready": ready,
+        }
+    )
     if os.environ.get("GITHUB_OUTPUT"):
         with open(os.environ["GITHUB_OUTPUT"], "a") as stream:
             stream.write(f"geoip_ready={'true' if ready else 'false'}\n")

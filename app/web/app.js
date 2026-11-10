@@ -57,6 +57,13 @@ const labels = {
 const errors = {
   AUTHENTICATION_REQUIRED: "管理员密钥不正确，请重新输入。",
   INPUT_TOO_LARGE: "内容超过大小上限，请缩小后重试。",
+  TOO_MANY_SUBSCRIPTION_LINKS: "每批最多导入 100 个地址，请分批导入。",
+  SUBSCRIPTION_URL_TOO_LONG: "地址超过 8 KiB，请检查该行。",
+  UNSAFE_SUBSCRIPTION_URL:
+    "请使用公开 HTTP/HTTPS 地址，不支持本地地址、用户名密码或片段。",
+  EMPTY_INPUT: "请输入至少一个地址。",
+  INVALID_SOURCE_LABEL:
+    "来源名称不能为空、不能包含链接或控制字符；批量前缀最多 60 字。",
   PARTIAL_PARSE: "部分配置无法解析；有效节点已保留。",
   DISPATCH_NOT_CONFIGURED:
     "尚未配置 GitHub 任务，请按部署说明配置仓库和调度密钥。",
@@ -686,7 +693,10 @@ async function nodeDetail(id) {
 async function sources() {
   const data = await api("/sources"),
     actions = el("div", undefined, "actions");
-  actions.append(button("添加来源", "source-add", {}, "primary"));
+  actions.append(
+    button("批量导入链接", "source-bulk", {}, "primary"),
+    button("添加来源", "source-add"),
+  );
   content.append(actions);
   if (!data.length) {
     content.append(
@@ -843,7 +853,7 @@ async function sourceForm(id) {
   form.append(file);
   const payloadHelp = el(
     "p",
-    "原始内容加密保存。Sub-Store /api/subs 链接请选择自动识别，会提取本地、远程与混合订阅的原始节点。保存后自动同步并检测新增节点。",
+    "原始内容按你的设置明文保存。Sub-Store /api/subs 链接请选择自动识别，会提取本地、远程与混合订阅的原始节点。保存后自动同步并检测新增节点。",
     "help wide",
   );
   payloadHelp.id = "source-payload-help";
@@ -862,6 +872,50 @@ async function sourceForm(id) {
   submit.type = "submit";
   form.append(submit);
   dialog(current ? "编辑来源" : "添加来源", form);
+}
+function sourceBulkForm() {
+  const form = el("form", undefined, "form-grid");
+  form.id = "source-bulk-form";
+  const prefix = field(
+    "来源名称前缀（请勿填写凭据）",
+    "name_prefix",
+    "text",
+    "批量订阅",
+  );
+  prefix.querySelector("input").required = true;
+  prefix.querySelector("input").maxLength = 60;
+  prefix
+    .querySelector("input")
+    .setAttribute("aria-describedby", "source-bulk-error");
+  const urls = field(
+    "订阅 URL / Sub-Store API（一行一个）",
+    "urls",
+    "textarea",
+  );
+  urls.className = "wide";
+  const input = urls.querySelector("textarea");
+  input.required = true;
+  input.rows = 10;
+  input.spellcheck = false;
+  input.setAttribute(
+    "aria-describedby",
+    "source-bulk-help source-bulk-error source-bulk-results",
+  );
+  const help = el(
+    "p",
+    "每批最多 100 个地址、合计 128 KiB。普通订阅和 Sub-Store /api/subs 可以混合粘贴；空行忽略，重复地址跳过。有效来源统一提交一次同步任务，随后自动补测新增节点。",
+    "help wide",
+  );
+  help.id = "source-bulk-help";
+  const error = el("p", "", "error wide form-error");
+  error.id = "source-bulk-error";
+  error.setAttribute("role", "alert");
+  const submit = el("button", "批量保存并同步", "primary");
+  submit.type = "submit";
+  const results = el("div", undefined, "wide");
+  results.id = "source-bulk-results";
+  form.append(prefix, urls, help, error, submit, results);
+  dialog("批量导入订阅链接", form);
 }
 async function scans() {
   const data = await api("/scans");
@@ -1664,6 +1718,7 @@ document.addEventListener("click", async (e) => {
       "node-annotate",
       "source-detail",
       "source-add",
+      "source-bulk",
       "source-edit",
       "scan-detail",
       "export-versions",
@@ -1706,6 +1761,7 @@ document.addEventListener("click", async (e) => {
     }
     if (action === "source-detail") await sourceDetail(id);
     if (action === "source-add") await sourceForm();
+    if (action === "source-bulk") sourceBulkForm();
     if (action === "source-edit") await sourceForm(id);
     if (action === "source-sync") {
       const r = await api(`/sources/${id}/sync`, { method: "POST" });
@@ -1848,6 +1904,7 @@ document.addEventListener("submit", async (e) => {
   if (
     ![
       "source-form",
+      "source-bulk-form",
       "node-filters",
       "naming-form",
       "export-form",
@@ -1864,6 +1921,46 @@ document.addEventListener("submit", async (e) => {
   pendingMutations += 1;
   try {
     const data = Object.fromEntries(new FormData(form));
+    if (form.id === "source-bulk-form") {
+      form.querySelector(".form-error").textContent = "";
+      form.elements.name_prefix.removeAttribute("aria-invalid");
+      const input = form.elements.urls;
+      input.removeAttribute("aria-invalid");
+      const result = await api("/sources/bulk", {
+        method: "POST",
+        body: JSON.stringify(data),
+      });
+      const summary = el(
+        "p",
+        `新增 ${result.created} 个，重复 ${result.duplicates} 个，无效 ${result.invalid} 个。` +
+          (result.created
+            ? result.pipeline.dispatched
+              ? "同步任务已提交。"
+              : "来源已保存，待处理请求已保留；可在来源列表点击同步重试。"
+            : "未提交新的同步任务。"),
+      );
+      summary.setAttribute("role", "status");
+      summary.tabIndex = -1;
+      $("source-bulk-results").replaceChildren(
+        summary,
+        table(
+          ["行号", "结果", "来源 / 原因"],
+          result.items.map((item) => [
+            item.line,
+            { CREATED: "已新增", DUPLICATE: "重复，已跳过", INVALID: "无效" }[
+              item.status
+            ],
+            item.status === "INVALID"
+              ? errors[item.error_code] || "地址无效，请检查该行。"
+              : item.name,
+          ]),
+        ),
+      );
+      if (result.invalid) input.setAttribute("aria-invalid", "true");
+      await render();
+      dialogTrigger = content.querySelector('[data-action="source-bulk"]');
+      summary.focus();
+    }
     if (form.id === "source-form") {
       delete data.upload;
       if (form.dataset.id && !data.payload) delete data.payload;
@@ -1993,6 +2090,13 @@ document.addEventListener("submit", async (e) => {
     const message = errors[error.message] || "保存失败，请检查输入后重试。";
     const inline = form.querySelector(".form-error");
     if (inline) inline.textContent = message;
+    if (form.id === "source-bulk-form") {
+      const invalid =
+        error.message === "INVALID_SOURCE_LABEL"
+          ? form.elements.name_prefix
+          : form.elements.urls;
+      invalid.setAttribute("aria-invalid", "true");
+    }
     notice(message, true);
   } finally {
     if (submit) submit.disabled = false;

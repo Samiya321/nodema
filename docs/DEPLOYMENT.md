@@ -88,7 +88,7 @@ Pages Functions 将 `/api/*` 和 `/subscriptions/*` 转发给 Worker 服务绑�
 | `ECHO_TOKEN` | 仅用于另行保护的 Echo，可留空 |
 | `BACKUP_DATABASE_URL` | 可选备份直连地址，缺省使用 DATABASE_URL |
 
-仓库 vars：`ENCRYPTION_KEY_ID`（缺省 local-v1）、`ECHO_URL`。可选 Secrets `MAXMIND_ACCOUNT_ID` 和 `MAXMIND_LICENSE_KEY` 必须同时配置，才能启用自动入口 GeoIP/ASN；不配置时该部分保持未知。
+仓库 vars：`ENCRYPTION_KEY_ID`（缺省 local-v1）、`ECHO_URL`。入口 GeoIP/ASN 默认使用 GitHub 的 P3TERX/GeoLite.mmdb Release，无需 MaxMind 账号。可选 Secrets `MAXMIND_ACCOUNT_ID` 和 `MAXMIND_LICENSE_KEY` 同时配置后，auto 模式优先使用官方源；仓库变量 `GEOIP_DOWNLOAD_PROVIDER` 可显式选择 auto/github/maxmind/disabled。
 
 - `export-build.yml`：保存、编辑或重试订阅方案时调用；Actions 生成并发布当前成品，独立于长时间健康检测任务。
 - `source-sync.yml`：保存、修改输入、重新启用来源或点击同步时自动调用，复用完整 daily-check 工作流；一次处理所有已排队或到期来源，再检测并发布。
@@ -99,7 +99,7 @@ Pages Functions 将 `/api/*` 和 `/subscriptions/*` 转发给 Worker 服务绑�
 
 生产工作流只接受默认分支；Actions SHA 已固定。GitHub schedule 可能延迟，必须保留手动入口。Runner 异常、Echo 异常和未完成分片不会发布整批 DOWN。Source 的 sync_requested_at 在调度前写库，一次同步尝试完成后清除；并发修改以 revision 检查保护。导入与检测流水线串行调度，订阅构建使用独立并发组；即便连续点击导致旧的 pending 工作流被替换，后一个仍会处理全部数据库待同步请求。同步失败显示 FAILED，可重试；部分解析的有效节点仍会检测。
 
-启用自动 GeoIP 时，除了两个 MaxMind Secrets，还必须配置 `ENCRYPTION_KEY_B64`，供临时 MMDB 包加密传递使用；这不改变数据库明文存储。准备任务每次有待检测工作时自动下载并验证两个 MMDB，只下载一次。以现有 AES 密钥加密打包，artifact 保留 1 天；各分片下载密文并解密安装。明文只存在临时 Runner，未上传或缓存。两个 Secrets 均为空时明确跳过，只配置一个、授权失败或损坏数据库会中止准备；修复后可点击同步继续。出口信息优先来自 Echo。遵守 MaxMind 许可并控制账户下载次数。
+自动 GeoIP 使用 `ENCRYPTION_KEY_B64` 加密临时 MMDB 包传递，不改变数据库明文存储。准备任务在有待检测工作时下载一次 City/ASN；GitHub 源固定到同一 Release，校验 SHA-256、类型和数据日期，再加密为保留 1 天的 artifact。分片解密安装，明文不上传、缓存或提交 Git。下载、校验或临时加密失败会输出脱敏错误码和 geoip_ready=false，健康检测继续，对应入口资料保持未知；出口信息优先来自 Echo。更多配置及 MaxMind 数据署名见 [批量导入与 GeoIP](BULK_IMPORT_AND_GEOIP.md)。
 
 ## 6. 部署后操作与升级
 

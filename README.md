@@ -10,7 +10,7 @@
 
 ## 功能
 
-- Source CRUD、文件/URI/Base64/Clash/sing-box 导入、HMAC 去重、数据库明文存储。
+- Source CRUD、批量订阅 URL / Sub-Store API、文件/URI/Base64/Clash/sing-box 导入、HMAC 去重、数据库明文存储。
 - 首次加入、已收录天数、累计可用/已检测天数与日可用率，支持组合筛选、排序和导出。
 - 隔离的 Mihomo 单节点检测、入口 DNS/TCP、轻量 HTTPS Echo、入口/出口地区和 ASN。
 - 保存来源后自动同步并检测；每日完整快照、同日新增补测、稳定分片、租约与断点恢复。
@@ -46,6 +46,8 @@ uv run nodema source sync <SOURCE_ID>
 uv run nodema node list
 uv run nodema node show <NODE_ID>
 ```
+
+Dashboard 的「订阅与来源 → 批量导入链接」支持一行一个地址，普通订阅与 Sub-Store API 可以混合粘贴；每批 100 个，重复跳过，无效行单独报告。命令行可用 `uv run nodema source import-links --input-file private/subscriptions.txt`，接口为 `POST /api/sources/bulk`。保存后统一调度一次 Actions。
 
 真实输入放入 `private/` 或 `local-inputs/`；URI 和订阅 URL 通过 `--input-file` 或标准输入 `-` 提交，不放在命令行参数中。Source 类型支持 SUBSCRIPTION_URL、SINGLE_URI、UPLOADED_FILE、RAW_TEXT；`--format-hint` 支持 AUTO、URI、BASE64、CLASH、SINGBOX。AUTO 还可识别 Loon、Surge 和 Quantumult X 节点列表，本地与远程内容共用解析入口；兼容边界与上游参考见 [解析说明](docs/PARSER_REFERENCES.md)。
 
@@ -113,13 +115,13 @@ uv run nodema cleanup
 
 ## GeoIP、命名与导出
 
-入口地区/ASN 使用本地 GeoLite2，出口优先采用 Echo 元数据。注册 MaxMind 后填写 `MAXMIND_ACCOUNT_ID` 和 `MAXMIND_LICENSE_KEY`：
+入口地区/ASN 使用 GeoLite2，出口优先采用 Echo 元数据。默认从 [P3TERX/GeoLite.mmdb](https://github.com/P3TERX/GeoLite.mmdb) 的 GitHub Release 自动获取 City/ASN，无需填写下载账号；如填写 `MAXMIND_ACCOUNT_ID` 和 `MAXMIND_LICENSE_KEY` 则自动优先官方源：
 
 ```bash
 uv run nodema geoip-update
 ```
 
-本地设置 `GEOIP_CITY_PATH=private/geoip/GeoLite2-City.mmdb`、`GEOIP_ASN_PATH=private/geoip/GeoLite2-ASN.mmdb`。Actions 只需配置同名 MaxMind Secrets：准备任务自动下载一次、验证数据库并生成 AES-GCM 加密包，各检测任务解密安装并自动设置路径；artifact 仅含密文，保留 1 天。两项均未配置时跳过 GeoIP，对应字段保持未知；只配一项或下载失败会明确报错。按 MaxMind 许可保管和使用数据库，禁止把 MMDB 提交到 Git。
+本地设置 `GEOIP_CITY_PATH=private/geoip/GeoLite2-City.mmdb`、`GEOIP_ASN_PATH=private/geoip/GeoLite2-ASN.mmdb`。Actions 准备任务下载一次，再通过 AES-GCM 临时包交给检测分片；需要现有 `ENCRYPTION_KEY_B64`，artifact 保留 1 天。GitHub 源校验 Release 的 SHA-256、MMDB 类型和最近 30 天的数据日期。上游不可用时不阻断测活，入口资料保持未知。通过 `GEOIP_DOWNLOAD_PROVIDER=auto|github|maxmind|disabled` 选择来源。数据库不提交 Git；许可与实现说明见 [批量导入与 GeoIP](docs/BULK_IMPORT_AND_GEOIP.md)。
 
 命名模板可在 Dashboard 应用并保留历史；地区来自观测，未知值为 UNK。没有已保存模板时使用 `.env` 的 `NAME_TEMPLATE`。
 

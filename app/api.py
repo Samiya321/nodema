@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr
 from app.catalog import Catalog, filters_from_params
 from app.config import Settings
 from app.database.session import make_engine, session_factory
-from app.dispatch import dispatch_export_build, dispatch_scan
+from app.dispatch import dispatch_export_build, dispatch_scan, dispatch_source_sync
 from app.domain import AssetError, InputFormat, SourceType
 from app.exports import ExportService
 from app.ingestion.fetcher import Fetcher
@@ -39,6 +39,12 @@ class SourceUpdate(BaseModel):
     payload: SecretStr | None = None
     format_hint: InputFormat | None = None
     sync_interval_seconds: int | None = Field(default=None, gt=0)
+
+
+class SourceBulkCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+    urls: SecretStr
+    name_prefix: str = "批量订阅"
 
 
 class EnableUpdate(BaseModel):
@@ -216,6 +222,18 @@ def create_app(settings=None, *, assets=None):
             payload=body.payload.get_secret_value().encode(),
             format_hint=body.format_hint,
         )
+
+    @app.post("/api/sources/bulk", dependencies=auth)
+    def add_sources_bulk(body: SourceBulkCreate):
+        result = assets.create_sources_bulk(
+            body.urls.get_secret_value(), name_prefix=body.name_prefix
+        )
+        result["pipeline"] = (
+            dispatch_source_sync(settings)
+            if result["created"]
+            else {"dispatched": False, "reason": "NO_NEW_SOURCES"}
+        )
+        return result
 
     @app.get("/api/sources/{source_id}", dependencies=auth)
     def source(source_id: UUID):

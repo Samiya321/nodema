@@ -1,0 +1,21 @@
+[
+  {"value":"https://SUBS.example:443/sub?token=synthetic-demo","url":"https://subs.example/sub?token=synthetic-demo"},
+  {"value":"http://store.example:3000/api/subs","url":"http://store.example:3000/api/subs"},
+  {"value":"https://subs.example","url":"https://subs.example/"},
+  {"value":"https://subs.example/a%2Fb?token=synthetic%2Bdemo","url":"https://subs.example/a%2Fb?token=synthetic%2Bdemo"},
+  {"value":"http://localhost/api/subs"},
+  {"value":"http://127.0.0.1/api/subs"},
+  {"value":"http://10.1.2.3/sub"},
+  {"value":"http://169.254.169.254/latest/meta-data"},
+  {"value":"http://192.168.1.2/sub"},
+  {"value":"http://[::1]/sub"},
+  {"value":"http://[::ffff:7f00:1]/sub"},
+  {"value":"http://machine.local/api/subs"},
+  {"value":"https://subs.example:0/sub"},
+  {"value":"https://synthetic:password@subs.example/sub"},
+  {"value":"https://subs.example/sub#synthetic-fragment"},
+  {"value":"https://subs.example/sub\u007f"},
+  {"value":"file:///etc/passwd"},
+  {"value":"https:subs.example/sub"},
+  {"value":"vless://synthetic@edge.example:443"}
+]

@@ -52,6 +52,10 @@ class Settings(BaseSettings):
     shard_lease_seconds: int = Field(default=300, ge=180, le=3600)
     geoip_city_path: str = ""
     geoip_asn_path: str = ""
+    geoip_download_provider: str = Field(
+        default="auto", pattern=r"^(auto|github|maxmind|disabled)$"
+    )
+    geoip_github_token: SecretStr = SecretStr("")
     admin_username: str = "admin"
     admin_password: SecretStr = SecretStr("")
     detail_retention_days: int = Field(default=60, ge=1, le=365)

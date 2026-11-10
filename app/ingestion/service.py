@@ -155,6 +155,58 @@ class AssetService:
                 query = query.where(Source.deleted_at.is_(None))
             return [self._source_dto(s) for s in session.scalars(query)]
 
+    def create_sources_bulk(self, urls, *, name_prefix="批量订阅"):
+        from app.ingestion.bulk import bulk_result, prepare_links
+
+        items = prepare_links(urls, name_prefix)
+        candidates = {item["url"].encode() for item in items if "url" in item}
+        if not candidates:
+            return bulk_result(items)
+        with self.sessions.begin() as session:
+            # Serialize concurrent bulk imports in this schema, including empty catalogs.
+            session.execute(
+                sa.text(
+                    "SELECT pg_advisory_xact_lock(hashtextextended("
+                    "current_schema() || ':nodema:source-bulk', 0))"
+                )
+            )
+            self._verify_keys(session)
+            existing = {
+                bytes(source.url_data): source
+                for source in session.scalars(
+                    sa.select(Source)
+                    .where(
+                        Source.deleted_at.is_(None),
+                        Source.type == SourceType.SUBSCRIPTION_URL.value,
+                        Source.url_data.in_(candidates),
+                    )
+                    .order_by(Source.created_at.desc(), Source.id.desc())
+                )
+            }
+            for item in items:
+                if "url" not in item:
+                    continue
+                value = item["url"].encode()
+                source = existing.get(value)
+                if source is not None:
+                    item["status"] = "DUPLICATE"
+                else:
+                    source = Source(
+                        id=uuid4(),
+                        name=item["name"],
+                        type=SourceType.SUBSCRIPTION_URL.value,
+                        format_hint=InputFormat.AUTO.value,
+                        url_data=value,
+                        sync_interval_seconds=self.sync_interval,
+                        sync_requested_at=utcnow(),
+                    )
+                    session.add(source)
+                    existing[value] = source
+                    item["status"] = "CREATED"
+                item.update(id=str(source.id), name=source.name)
+            session.flush()
+        return bulk_result(items)
+
     def get_source(self, source_id: UUID):
         with self.sessions() as session:
             value = self._source_dto(self._source(session, source_id))

@@ -2,6 +2,7 @@ import { Client } from "pg";
 import { SafeError, digest, equal, token } from "./crypto.js";
 import { handleExports } from "./export-api.js";
 import { usageSummary } from "./usage.js";
+import { importLinks, subscriptionURL } from "./source-bulk.js";
 import { catalogPage, catalogOverview, filtersFromParams } from "./catalog.js";
 import {
   annotation,
@@ -501,22 +502,7 @@ export async function handle(
       if (new TextEncoder().encode(data).length > 10485760)
         throw new SafeError("INPUT_TOO_LARGE", 413);
       if (type === "SUBSCRIPTION_URL") {
-        let u: URL;
-        try {
-          u = new URL(data.trim());
-        } catch {
-          throw new SafeError("UNSAFE_SUBSCRIPTION_URL");
-        }
-        if (
-          !["https:", "http:"].includes(u.protocol) ||
-          u.username ||
-          u.password ||
-          u.hash ||
-          /[\x00-\x20\\]/.test(data) ||
-          ["localhost", "127.0.0.1", "[::1]"].includes(u.hostname)
-        )
-          throw new SafeError("UNSAFE_SUBSCRIPTION_URL");
-        return [Buffer.from(u.href, "utf8"), null];
+        return [Buffer.from(subscriptionURL(data), "utf8"), null];
       }
       return [null, Buffer.from(data, "utf8")];
     };
@@ -548,6 +534,15 @@ export async function handle(
         )
       )[0];
       return json({ ...saved, pipeline: await queueSources() }, 201);
+    }
+    if (path === "/api/sources/bulk" && method === "POST") {
+      const result = await importLinks(rows, await body(request));
+      return json({
+        ...result,
+        pipeline: result.created
+          ? await queueSources()
+          : { dispatched: false, reason: "NO_NEW_SOURCES" },
+      });
     }
     const sourceMatch = /^\/api\/sources\/([^/]+)(\/sync)?$/.exec(path);
     if (sourceMatch) {
