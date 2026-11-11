@@ -1,5 +1,5 @@
 import { api, badge, busy, bytes, confirm, date, daysUntil, dialog, empty, errorText, field, h, meter, select, toast } from "../core.js";
-import { editSource } from "./sources.js";
+import { editSource, showSourceLink } from "./sources.js";
 
 const STATES = {
   ok: ["可用", "ok"],
@@ -33,7 +33,12 @@ function describe(s) {
 }
 
 function gauge(s) {
-  if (!s.total) return h("span", { class: "muted small" }, s.userinfo_at ? "不限量或未提供" : "未获取流量信息");
+  if (!s.total)
+    return h(
+      "span",
+      { class: "muted small", title: "订阅返回的总流量为 0 或缺失，按不限量处理，不会因流量停测" },
+      s.userinfo_at ? (s.used ? `已用 ${bytes(s.used)} · 未提供总量` : "未提供总量（按不限量）") : "未获取流量信息",
+    );
   const ratio = s.used / s.total;
   const tone = ratio >= 1 ? "bad" : ratio >= 0.9 ? "warn" : "ok";
   return h(
@@ -113,8 +118,13 @@ function row(s, providers, reload) {
     h(
       "div",
       { class: "name-cell" },
-      h("span", { class: "node-name" }, s.name),
-      h("span", { class: "muted small" }, [s.url_host, s.profile_title].filter(Boolean).join(" · ")),
+      // The airport's own name first; where the link came from underneath.
+      h("span", { class: "node-name", title: s.name }, s.profile_title || s.origin_label || s.name),
+      h(
+        "span",
+        { class: "muted small" },
+        [s.parent_source_id ? `来自「${s.parent_name || "已删除的 Sub-Store"}」` : "直接导入", s.url_host].filter(Boolean).join(" · "),
+      ),
     ),
     h("span", { class: "badge " + tone }, label),
     gauge(s),
@@ -124,6 +134,7 @@ function row(s, providers, reload) {
     h(
       "div",
       { class: "row tight" },
+      h("button", { type: "button", class: "quiet", onclick: (e) => showSourceLink(s, e.target) }, "订阅链接"),
       h("button", { type: "button", class: "quiet", onclick: () => moveDialog(s, providers, reload) }, "移动"),
       h("button", { type: "button", class: "quiet", onclick: () => editSource(s, reload) }, "编辑"),
       h("button", { type: "button", class: "quiet", onclick: toggle }, s.enabled ? "暂停" : "启用"),
@@ -146,14 +157,14 @@ export async function render(root, { params, go, refresh, refreshStrip }) {
     (s) =>
       (!state || (state === "usable" ? s.usable : s.state === state)) &&
       (!providerId || (providerId === "none" ? !s.provider_id : s.provider_id === providerId)) &&
-      (!q || `${s.name} ${s.url_host || ""} ${s.profile_title || ""}`.toLowerCase().includes(q)),
+      (!q || `${s.name} ${s.origin_label || ""} ${s.parent_name || ""} ${s.url_host || ""} ${s.profile_title || ""}`.toLowerCase().includes(q)),
   );
   const [key, direction] = sort.split(":");
   const value = {
     remaining: (s) => s.remaining ?? Infinity,
     expiry: (s) => (s.expires_at ? new Date(s.expires_at).getTime() : Infinity),
     up: (s) => s.up_count,
-    name: (s) => s.name,
+    name: (s) => s.profile_title || s.origin_label || s.name,
   }[key];
   items.sort((a, b) => {
     const x = value(a),

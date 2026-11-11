@@ -92,6 +92,10 @@ async function pipeline(rows: Rows) {
       (SELECT count(*)::int FROM sources WHERE deleted_at IS NULL AND enabled
         AND (sync_requested_at IS NOT NULL OR last_sync_status='NEVER')) AS pending_sources,
       (SELECT count(*)::int FROM sources WHERE deleted_at IS NULL AND last_sync_status='FAILED') AS failed_sources,
+      -- Worked before and failed on the latest sync: the ones worth attention. Links that
+      -- never worked (dead upstreams) are counted separately and shown quietly.
+      (SELECT count(*)::int FROM sources WHERE deleted_at IS NULL AND enabled AND last_sync_status='FAILED'
+        AND last_success_at IS NOT NULL) AS broken_sources,
       (SELECT count(*)::int FROM sources WHERE deleted_at IS NULL AND enabled) AS sources_total,
       (SELECT max(last_checked_at) FROM sources WHERE deleted_at IS NULL) AS last_synced_at,
       (SELECT jsonb_build_object('daily_scan_enabled',daily_scan_enabled,'daily_scan_scope',daily_scan_scope)
@@ -119,6 +123,7 @@ async function airports(rows: Rows) {
   );
   const sources = await rows(
     `SELECT s.id,s.name,s.type,s.user_agent,s.enabled,s.kind,s.detected_kind,s.provider_id,s.parent_source_id,
+      s.origin_label,(SELECT p.name FROM sources p WHERE p.id=s.parent_source_id) AS parent_name,
       s.traffic_upload,s.traffic_download,s.traffic_total,s.expires_at,s.userinfo_at,
       s.profile_title,s.profile_url,s.last_sync_status,s.last_error_code,s.last_checked_at,
       s.last_success_at,s.created_at,${urlHost} AS url_host,
@@ -257,6 +262,18 @@ export async function handleManagement(
   }
   if (path === "/api/airports" && method === "GET")
     return json(await airports(rows));
+  const linkMatch = /^\/api\/sources\/([^/]+)\/link$/.exec(path);
+  if (linkMatch && method === "GET") {
+    // The subscription URL carries its token: only on an explicit click, never cached.
+    const link = (
+      await rows(
+        "SELECT convert_from(url_data,'UTF8') AS url FROM sources WHERE id=$1 AND deleted_at IS NULL AND type='SUBSCRIPTION_URL'",
+        [uuid(linkMatch[1])],
+      )
+    )[0];
+    if (!link) throw new SafeError("SOURCE_NOT_FOUND", 404);
+    return json({ url: link.url });
+  }
   if (path === "/api/providers" && method === "POST") {
     const data = await ctx.body(request);
     const saved = await rows(

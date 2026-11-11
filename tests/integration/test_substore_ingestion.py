@@ -240,3 +240,58 @@ def test_index_listing_a_subscription_twice_or_reusing_a_local_name(service):
     assert labels == ["home #2 · 本地", "home · 本地", "remote-a"]
     again = service.sync_source(parent)  # stable keys: nothing new on the next sync
     assert again["children"]["created"] == 0 and again["children"]["unchanged"] == 3
+
+
+def test_airports_served_by_the_substore_host_group_by_entry_name(service):
+    links = {
+        "http://store.example:3000/download/alpha": b"trojan://a@alpha.example:443#A",
+        "http://store.example:3000/download/beta": b"trojan://b@beta.example:443#B",
+    }
+    usage = {"subscription-userinfo": f"upload=1; download=2; total=0; expire={FUTURE}"}
+
+    class StoreFetcher:
+        def fetch_meta(self, url, *, user_agent=None):
+            if url == API:
+                return body(
+                    [
+                        {"name": name, "url": link}
+                        for name, link in zip(("Alpha Air", "Beta Air"), links, strict=True)
+                    ]
+                ), {}
+            return links[url], dict(usage)
+
+    parent = api_source(service, StoreFetcher())
+    sync_all(service)
+    with service.sessions() as session:
+        groups = sorted(
+            session.execute(
+                sa.text(
+                    "SELECT p.name, p.match_key FROM sources s "
+                    "JOIN providers p ON p.id=s.provider_id WHERE s.parent_source_id=:parent"
+                ),
+                {"parent": parent},
+            ).all()
+        )
+    assert groups == [("Alpha Air", "label:alpha air"), ("Beta Air", "label:beta air")]
+
+    # Links an earlier version lumped together by host are regrouped on the next sync.
+    with service.sessions.begin() as session:
+        session.execute(sa.text("DELETE FROM providers"))
+        session.execute(
+            sa.text(
+                "INSERT INTO providers(id,name,match_key) VALUES "
+                "('00000000-0000-4000-8000-0000000000aa','store.example','host:store.example')"
+            )
+        )
+        session.execute(
+            sa.text(
+                "UPDATE sources SET provider_id='00000000-0000-4000-8000-0000000000aa' "
+                "WHERE parent_source_id=:parent"
+            ),
+            {"parent": parent},
+        )
+    for child in children(service, parent):
+        service.sync_source(child["id"], force=True)
+    with service.sessions() as session:
+        keys = sorted(session.scalars(sa.text("SELECT match_key FROM providers")).all())
+    assert keys == ["label:alpha air", "label:beta air"]  # the lumped group is gone

@@ -1,4 +1,4 @@
-import { KIND, ago, api, badge, busy, confirm, debounce, dialog, empty, errorText, field, h, pager, table, toast } from "../core.js";
+import { KIND, ago, api, badge, busy, confirm, debounce, dialog, empty, errorText, field, h, pager, select, table, toast } from "../core.js";
 import { syncSources } from "../strip.js";
 
 function validity(s) {
@@ -59,8 +59,47 @@ async function children(store) {
   );
 }
 
-export async function render(root, { refresh, refreshStrip }) {
-  const stores = await api("/substores");
+const STATES = [
+  ["", "全部状态"],
+  ["ok", "有效"],
+  ["failed", "失效"],
+  ["never", "未同步"],
+  ["child_failed", "有子来源失败"],
+];
+const SORTS = [
+  ["name", "按名称"],
+  ["problems", "问题优先"],
+  ["children", "子来源多→少"],
+  ["nodes", "节点多→少"],
+  ["recent", "最近有效"],
+];
+const collator = new Intl.Collator("zh-CN", { numeric: true });
+const RANK = { failed: 0, never: 1, ok: 2 };
+const stateOf = (s) => (s.last_sync_status === "NEVER" || !s.last_checked_at ? "never" : s.last_sync_status === "FAILED" ? "failed" : "ok");
+const ORDER = {
+  name: (a, b) => collator.compare(a.name, b.name),
+  problems: (a, b) => RANK[stateOf(a)] - RANK[stateOf(b)] || b.failed_children - a.failed_children || collator.compare(a.name, b.name),
+  children: (a, b) => b.children - a.children || collator.compare(a.name, b.name),
+  nodes: (a, b) => b.node_count - a.node_count || collator.compare(a.name, b.name),
+  recent: (a, b) => String(b.last_success_at || "").localeCompare(String(a.last_success_at || "")) || collator.compare(a.name, b.name),
+};
+
+export async function render(root, { params, go, refresh, refreshStrip }) {
+  const all = await api("/substores");
+  const q = (params.get("q") || "").toLowerCase();
+  const state = params.get("state") || "";
+  const sort = ORDER[params.get("sort")] ? params.get("sort") : "name";
+  const stores = all
+    .filter(
+      (s) =>
+        (!q || `${s.name} ${s.url_host || ""}`.toLowerCase().includes(q)) &&
+        (!state || (state === "child_failed" ? s.failed_children > 0 : stateOf(s) === state)),
+    )
+    .sort(ORDER[sort]);
+  const set = (key, value) => {
+    value ? params.set(key, value) : params.delete(key);
+    go("substore", params);
+  };
   const reload = () => {
     refresh();
     refreshStrip();
@@ -93,6 +132,21 @@ export async function render(root, { refresh, refreshStrip }) {
     h("h1", { class: "page-title" }, "Sub-Store"),
     h("p", { class: "hint" }, "Nodema 只读取 Sub-Store 的订阅列表（/api/subs），把其中的远程订阅和本地节点拆成独立的子来源，不执行 Sub-Store 脚本。"),
     h("section", { class: "panel" }, form),
+    h(
+      "dl",
+      { class: "stats" },
+      h("div", {}, h("dt", {}, "Sub-Store"), h("dd", {}, all.length)),
+      h("div", {}, h("dt", {}, "失效"), h("dd", {}, all.filter((s) => stateOf(s) === "failed").length)),
+      h("div", {}, h("dt", {}, "子来源"), h("dd", {}, all.reduce((n, s) => n + s.children, 0))),
+      h("div", {}, h("dt", {}, "子来源失败"), h("dd", {}, all.reduce((n, s) => n + s.failed_children, 0))),
+    ),
+    h(
+      "div",
+      { class: "toolbar" },
+      h("input", { type: "search", placeholder: "搜索名称或域名", value: params.get("q") || "", "aria-label": "搜索 Sub-Store", onchange: (e) => set("q", e.target.value) }),
+      select("state", STATES, state),
+      select("sort", SORTS, sort),
+    ),
     table(
       [
         { label: "Sub-Store", render: (s) => h("div", { class: "name-cell" }, h("span", { class: "node-name" }, s.name), h("span", { class: "muted small" }, s.url_host)) },
@@ -118,7 +172,9 @@ export async function render(root, { refresh, refreshStrip }) {
         },
       ],
       stores,
-      { empty: empty("还没有 Sub-Store", "在上方填入 Sub-Store 后端的 /api/subs 地址。") },
+      { empty: all.length ? empty("没有符合条件的 Sub-Store", "调整搜索或筛选。") : empty("还没有 Sub-Store", "在上方填入 Sub-Store 后端的 /api/subs 地址。") },
     ),
   );
+  root.querySelector("select[name=state]").addEventListener("change", (e) => set("state", e.target.value));
+  root.querySelector("select[name=sort]").addEventListener("change", (e) => set("sort", e.target.value === "name" ? "" : e.target.value));
 }

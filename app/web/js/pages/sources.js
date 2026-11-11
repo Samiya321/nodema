@@ -127,6 +127,43 @@ function importPanel(refresh, open = false) {
   );
 }
 
+// The subscription URL carries its token: fetched only on click, never kept in the page.
+export async function showSourceLink(source, button) {
+  await busy(button, async () => {
+    const { url } = await api(`/sources/${source.id}/link`);
+    const input = h("input", { class: "wide-input", value: url, readonly: true, spellcheck: "false", "aria-label": "订阅链接" });
+    const copy = h(
+      "button",
+      {
+        type: "button",
+        class: "primary",
+        onclick: async (e) => {
+          try {
+            await navigator.clipboard.writeText(url);
+            e.target.textContent = "已复制";
+          } catch {
+            input.select();
+          }
+        },
+      },
+      "复制链接",
+    );
+    dialog(
+      `「${source.origin_label || source.name}」的订阅链接`,
+      h(
+        "div",
+        { class: "stack" },
+        source.parent_source_id
+          ? h("p", { class: "hint" }, `由 Sub-Store「${source.parent_name || "已删除"}」解析得到。`)
+          : null,
+        input,
+        h("p", { class: "hint" }, "链接里包含订阅令牌，不要公开分享。"),
+        h("div", { class: "row" }, copy),
+      ),
+    );
+  });
+}
+
 export function editSource(source, done) {
   const form = h(
     "form",
@@ -307,7 +344,18 @@ export async function render(root, { params, go, refresh, refreshStrip }) {
       render: (s) => (s.effective_kind === "SUBSTORE" ? (nested ? childSummary(s) : h("a", { href: "#/substore" }, "见子来源")) : h("a", { href: `#/nodes?source_id=${s.id}` }, `${s.up_count} 可用 / ${s.node_count}`)),
     },
     { label: "最近成功", render: (s) => ago(s.last_success_at) },
-    { label: "", render: (s) => h("button", { type: "button", class: "quiet", onclick: () => editSource(s, reload) }, "编辑") },
+    {
+      label: "",
+      render: (s) =>
+        h(
+          "div",
+          { class: "row tight" },
+          s.type === "SUBSCRIPTION_URL"
+            ? h("button", { type: "button", class: "quiet", onclick: (e) => showSourceLink({ ...s, parent_name: names[s.parent_source_id] }, e.target) }, "链接")
+            : null,
+          h("button", { type: "button", class: "quiet", onclick: () => editSource(s, reload) }, "编辑"),
+        ),
+    },
   ];
   const holder = h("div");
   const draw = () => {

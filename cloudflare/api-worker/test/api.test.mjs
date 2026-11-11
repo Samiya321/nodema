@@ -1377,6 +1377,22 @@ test("airports, providers, ASN labels, settings and batch actions", async () => 
       },
     })
   ).json();
+  // The subscription link is revealed only on request, never cached.
+  const link = await request(`/api/sources/${created.id}/link`);
+  assert.equal(link.headers.get("cache-control"), "no-store");
+  assert.equal(
+    (await link.json()).url,
+    "https://air.example/sub?token=synthetic-air-secret",
+  );
+  assert.equal(
+    (await request(`/api/sources/${created.id}/link`, { authenticated: false }))
+      .status,
+    401,
+  );
+  assert.equal(
+    (await request(`/api/sources/${crypto.randomUUID()}/link`)).status,
+    404,
+  );
   const synced = JSON.parse(
     py(`import json,os,base64
 from uuid import UUID
