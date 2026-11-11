@@ -111,8 +111,13 @@ export function nameFor(
   if (result.length > 500) throw new SafeError("INVALID_NAME_TEMPLATE");
   return result;
 }
-async function body(request: Request): Promise<Row> {
-  if (!request.body) throw new SafeError("INVALID_REQUEST", 422);
+// optional: a missing or empty body reads as {}. A body-less POST forwarded through
+// the Pages service binding arrives as an empty stream, not a null body.
+async function body(request: Request, optional = false): Promise<Row> {
+  if (!request.body) {
+    if (optional) return {};
+    throw new SafeError("INVALID_REQUEST", 422);
+  }
   const reader = request.body.getReader(),
     chunks: Uint8Array[] = [];
   let size = 0;
@@ -133,6 +138,7 @@ async function body(request: Request): Promise<Row> {
       bytes.set(chunk, offset);
       offset += chunk.length;
     }
+    if (optional && !size) return {};
     return object(
       JSON.parse(
         new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(
