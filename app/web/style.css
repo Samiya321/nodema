@@ -339,3 +339,5 @@ tr.subhead:hover { background: none; }
 .share canvas.qr { width: min(280px, 100%); height: auto; image-rendering: pixelated; border-radius: var(--radius-s); background: #fff; }
 .share .share-uri { width: 100%; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; word-break: break-all; resize: vertical; }
 dd .tag { margin-left: 6px; }
+.share .notice { text-align: left; width: 100%; padding: 8px 12px; border-radius: var(--radius-s); background: var(--sunken); box-shadow: inset 3px 0 0 var(--warn); font-size: 13px; }
+.share .notice ul { margin: 4px 0 0; padding-left: 18px; }

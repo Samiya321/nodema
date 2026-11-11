@@ -470,7 +470,7 @@ export async function handle(
       if (!node) throw new SafeError("NODE_NOT_FOUND", 404);
       const link = (
         await rows(
-          "SELECT uri,error_code FROM node_share_links WHERE node_id=$1",
+          "SELECT uri,error_code,omitted FROM node_share_links WHERE node_id=$1",
           [id],
         )
       )[0];
@@ -480,6 +480,7 @@ export async function handle(
         name,
         uri: link.uri ? withName(String(link.uri), name) : null,
         error_code: link.uri ? null : link.error_code,
+        omitted: link.omitted ? String(link.omitted).split(",") : [],
       });
     }
     const aliasMatch = /^\/api\/nodes\/([^/]+)\/aliases$/.exec(path);

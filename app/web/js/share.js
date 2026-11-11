@@ -2,6 +2,12 @@ import { api, busy, dialog, errorText, h } from "./core.js";
 import qrcode from "./vendor/qrcode.js";
 
 const MODULE_PX = 6;
+// Settings the share link could not carry; set them by hand on the phone.
+const OMITTED = {
+  SKIP_CERT_VERIFY: "跳过证书验证：导入后在 Shadowrocket 编辑节点，打开“允许不安全”",
+  CLIENT_OPTIONS: "客户端附加参数（如 UDP 开关）",
+  BANDWIDTH: "Hysteria2 带宽设置",
+};
 const QUIET = 4; // quiet-zone modules around the code, as scanners expect
 
 // Draw on a canvas: no inline styles or data: images, so the strict CSP stays intact.
@@ -66,6 +72,9 @@ export async function showShare(node, button) {
         h("p", { class: "hint" }, "用 Shadowrocket 扫码添加（首页右上角扫码图标）。二维码包含节点密码，不要截图外传。"),
         code,
         h("p", { class: "node-name" }, link.name),
+        link.omitted?.length
+          ? h("div", { class: "notice warn" }, h("strong", {}, "分享链接没有包含："), h("ul", {}, link.omitted.map((code) => h("li", {}, OMITTED[code] || code))))
+          : null,
         text,
         h("div", { class: "row" }, copy),
       ),

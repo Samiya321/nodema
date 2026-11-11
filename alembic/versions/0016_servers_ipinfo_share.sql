@@ -23,6 +23,8 @@ CREATE TABLE node_share_links (
    CONSTRAINT fk_node_share_links_node_id_nodes REFERENCES nodes(id) ON DELETE CASCADE,
  uri text CHECK (length(uri) <= 8192),
  error_code text CHECK (length(error_code) <= 64),
+ -- Settings a share link cannot carry and that were left out (comma-separated codes).
+ omitted text CHECK (length(omitted) <= 200),
  created_at timestamptz NOT NULL DEFAULT now(),
  CONSTRAINT ck_node_share_links_value CHECK ((uri IS NULL) <> (error_code IS NULL))
 );
