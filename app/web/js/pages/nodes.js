@@ -1,72 +1,41 @@
-import { KIND, ago, api, badge, busy, debounce, empty, field, flag, h, pct, route, select, toast } from "../core.js";
+import { api, busy, debounce, empty, field, h, pager, select, toast } from "../core.js";
 import { ADVANCED, PROTOCOLS, SORTS, advancedFields, readFilters } from "../filters.js";
 import { testNodes } from "../strip.js";
-import { nodeDetail } from "./node-detail.js";
+import { CHUNK, collator, groupKey, groupTitle, headRow, lazyBody, memberOrder, nodeRow } from "./node-rows.js";
 
 const QUICK = ["q", "node_group", "status", "exit_country", "protocol", "provider_id", "eligible", "enabled", "source_id"];
 const KEYS = [...QUICK, ...ADVANCED.map(([key]) => key)];
 const PERCENT = ["min_success_rate", "max_timeout_rate", "min_lifetime_availability"];
 const VIEWS = [["country", "按落地国家"], ["asn", "按落地 ASN"], ["server", "按落地服务器"], ["list", "列表"]];
-const regionNames = new Intl.DisplayNames(["zh-CN"], { type: "region" });
-const collator = new Intl.Collator("zh-CN", { numeric: true });
+const MAX_NODES = 20000;
+const MAX_TEST = 5000; // one test request holds at most this many nodes
+const OPEN_ALL_BELOW = 300; // small libraries open every group; large ones start collapsed
+const CACHE_MS = 30_000;
 
-function countryName(code) {
-  try {
-    return regionNames.of(code) || code;
-  } catch {
-    return code;
-  }
+// One request returns every matching node with only the list fields, so grouping,
+// paging and "select all" cover the whole filtered set. Switching the view or page
+// reuses the result for a minute instead of asking the database again.
+let cache = null;
+async function load(filters, sort) {
+  const key = JSON.stringify([filters, sort]);
+  if (cache && cache.key === key && Date.now() - cache.at < CACHE_MS) return cache.data;
+  const data = await api("/nodes?" + new URLSearchParams({ ...filters, sort, view: "compact", limit: String(MAX_NODES) }));
+  cache = { key, at: Date.now(), data };
+  return data;
 }
-
-// Load every node matching the filters (500 per request) so grouping and
-// "select all" cover the whole result, not just one page.
-async function loadAll(filters, sort) {
-  const items = [];
-  let total = 0;
-  for (let offset = 0; offset < 20000; offset += 500) {
-    const page = await api("/nodes?" + new URLSearchParams({ ...filters, sort, offset: String(offset), limit: "500" }));
-    total = page.total;
-    items.push(...page.items);
-    if (items.length >= total || !page.items.length) break;
-  }
-  return { items, total };
-}
-
-// Names end with the server number, optionally followed by a protocol suffix ("01 VMess").
-const seqOf = (node) => Number((/ (\d+)(?: \S+)?$/.exec(node.name) || [])[1] || 0);
-// "Greencloud|xTom" when the netblock holder differs from the ASN, else the ASN label.
-const operatorOf = (n) => (n.org_label ? `${n.org_label}|${n.asn_label || "Unknown"}` : n.asn_label || "");
-// Inside a group: by operator, then by server number.
-const byAsnThenSeq = (a, b) =>
-  collator.compare(operatorOf(a) || "~", operatorOf(b) || "~") || seqOf(a) - seqOf(b) || collator.compare(a.name, b.name);
-
-function groupKey(node, view) {
-  if (view === "country") return node.exit_country || "";
-  if (view === "asn") return node.exit_asn ? String(node.exit_asn) : "";
-  if (view === "server") return node.exit_ip || "";
-  return "all";
-}
-
-function groupTitle(view, key, sample) {
-  if (!key) return [h("span", { class: "group-flag" }, "🏳"), "未检测或无落地信息"];
-  if (view === "country") return [h("span", { class: "group-flag" }, flag(key)), `${countryName(key)} `, h("span", { class: "muted" }, key)];
-  if (view === "server")
-    return [
-      h("span", { class: "group-flag" }, flag(sample.exit_country)),
-      `${operatorOf(sample) || "未知运营商"} ${String(seqOf(sample)).padStart(2, "0")} `,
-      h("span", { class: "muted" }, [key, sample.exit_org, sample.exit_region].filter(Boolean).join(" · ")),
-    ];
-  return [sample.asn_label || "AS" + key, h("span", { class: "muted" }, ` AS${key}${sample.exit_asn_org ? " · " + sample.exit_asn_org : ""}`)];
-}
+export const invalidateNodes = () => (cache = null);
+// Node edits elsewhere (detail dialog, tests finishing) announce themselves.
+window.addEventListener("nodema:nodes-changed", invalidateNodes);
 
 export async function render(root, { params, go }) {
   const view = params.get("view") || "country";
   const sort = params.get("sort") || "name:asc";
+  const page = Math.max(0, Number(params.get("page") || 0) || 0);
   const filters = {};
   for (const key of KEYS) if (params.get(key)) filters[key] = params.get(key);
   const apiFilters = { ...filters };
   for (const key of PERCENT) if (apiFilters[key]) apiFilters[key] = String(Number(apiFilters[key]) / 100);
-  const [{ items, total }, { providers }] = await Promise.all([loadAll(apiFilters, sort), api("/airports")]);
+  const [{ items, total }, { providers }] = await Promise.all([load(apiFilters, sort), api("/airports")]);
 
   // ---- filters (URL-backed) ----
   const form = h("form", { class: "toolbar", role: "search" });
@@ -80,6 +49,7 @@ export async function render(root, { params, go }) {
   };
   const setParam = (key, value) => {
     value ? params.set(key, value) : params.delete(key);
+    params.delete("page");
     go("nodes", params);
   };
   form.append(
@@ -120,17 +90,16 @@ export async function render(root, { params, go }) {
     apply();
   });
 
-  // ---- selection across every loaded node ----
+  // ---- selection across the whole filtered set (not just rendered rows) ----
   const picked = new Set();
-  const byId = new Map(items.map((n) => [n.id, n]));
   const list = h("div", { class: "node-groups" });
   const count = h("span", { class: "bulk-count" });
-  const allBox = h("input", { type: "checkbox", "aria-label": `全选 ${items.length} 个节点` });
+  const allBox = h("input", { type: "checkbox", "aria-label": `全选筛选结果 ${items.length} 个节点` });
   const bar = h("div", { class: "bulkbar" });
+  const groupBoxes = new Map();
   const refreshChecks = () => {
     for (const box of list.querySelectorAll("input[data-id]")) box.checked = picked.has(box.dataset.id);
-    for (const box of list.querySelectorAll("input[data-group]")) {
-      const members = JSON.parse(box.dataset.group);
+    for (const [box, members] of groupBoxes) {
       const n = members.filter((id) => picked.has(id)).length;
       box.checked = n > 0 && n === members.length;
       box.indeterminate = n > 0 && n < members.length;
@@ -145,8 +114,8 @@ export async function render(root, { params, go }) {
     for (const id of ids) on ? picked.add(id) : picked.delete(id);
     refreshChecks();
   };
-  allBox.addEventListener("change", () => toggle(ids(), allBox.checked));
-  const ids = () => items.map((n) => n.id);
+  const allIds = () => items.map((n) => n.id);
+  allBox.addEventListener("change", () => toggle(allIds(), allBox.checked));
   const bulk = (enabled) => (e) =>
     busy(e.target, async () => {
       const chosen = [...picked];
@@ -154,71 +123,26 @@ export async function render(root, { params, go }) {
       for (let i = 0; i < chosen.length; i += 1000)
         changed += (await api("/nodes/batch", { method: "POST", body: { ids: chosen.slice(i, i + 1000), enabled } })).changed;
       toast(`${enabled ? "已启用" : "已停用"} ${changed} 个节点。`, "ok");
+      invalidateNodes();
       go("nodes", params);
     });
+  const test = async () => {
+    if (picked.size > MAX_TEST) {
+      toast(`一次最多检测 ${MAX_TEST} 个节点。请缩小筛选，或用顶部“开始检测”按范围检测。`, "bad");
+      return;
+    }
+    if (await testNodes([...picked])) toggle(allIds(), false);
+  };
   bar.append(
-    h("label", { class: "check" }, allBox, "全选"),
+    h("label", { class: "check", title: "选择当前筛选条件下的全部节点，包括未展开的分组和其他页" }, allBox, "全选"),
     count,
-    h("button", { type: "button", class: "primary", onclick: async () => { if (await testNodes([...picked])) { picked.clear(); refreshChecks(); } } }, "检测所选"),
+    h("button", { type: "button", class: "primary", onclick: test }, "检测所选"),
     h("button", { type: "button", onclick: bulk(true) }, "启用"),
     h("button", { type: "button", onclick: bulk(false), title: "停用后不再检测和导出" }, "停用"),
-    h("button", { type: "button", class: "quiet", onclick: () => toggle(ids(), false) }, "清除选择"),
+    h("button", { type: "button", class: "quiet", onclick: () => toggle(allIds(), false) }, "清除选择"),
   );
 
-  // ---- rows ----
-  const row = (n) =>
-    h(
-      "tr",
-      { class: n.enabled ? "" : "dim" },
-      h("td", { class: "pick" }, h("input", { type: "checkbox", "aria-label": "选择 " + n.name, dataset: { id: n.id }, onchange: (e) => toggle([n.id], e.target.checked) })),
-      h(
-        "td",
-        { "data-label": "节点" },
-        h(
-          "button",
-          { type: "button", class: "link name-cell", onclick: () => nodeDetail(n.id) },
-          h("span", { class: "node-name" }, n.name),
-          h(
-            "span",
-            { class: "muted small" },
-            [n.short_id, n.protocol, n.server_node_count > 1 ? `同服务器 ×${n.server_node_count}` : "", n.enabled ? "" : "已停用", n.present_source_count ? "" : "上游已移除"].filter(Boolean).join(" · "),
-          ),
-        ),
-      ),
-      h("td", { "data-label": "状态" }, badge(n.status)),
-      h("td", { "data-label": "线路" }, route(n.entry_country, n.exit_country)),
-      view === "asn"
-        ? h("td", { "data-label": "落地国家" }, n.exit_country ? `${flag(n.exit_country)} ${n.exit_country}` : "—")
-        : h("td", { "data-label": "落地运营商" }, n.exit_asn ? h("span", {}, operatorOf(n), h("span", { class: "muted small" }, ` AS${n.exit_asn}`)) : "—"),
-      h("td", { class: "num", "data-label": "累计可用" }, n.checked_days ? `${pct(n.lifetime_availability)}（${n.available_days}/${n.checked_days} 天）` : "—"),
-      h("td", { "data-label": "类别" }, h("span", { class: "tag " + (n.node_group === "AIRPORT" ? "air" : "own") }, KIND[n.node_group] || "—")),
-      h("td", { "data-label": "最近检测" }, ago(n.last_checked_at)),
-    );
-  const head = () =>
-    h(
-      "thead",
-      {},
-      h("tr", {}, ["", "节点", "状态", "线路", view === "asn" ? "落地国家" : "落地运营商", "累计可用", "类别", "最近检测"].map((t, i) => h("th", { scope: "col", class: i === 0 ? "pick" : i === 5 ? "num" : "" }, t))),
-    );
-
-  // In the country view, a light sub-header per landing ASN when a country has several.
-  const withSubheads = (members, mode) => {
-    const asns = new Set(members.map(operatorOf));
-    if (mode !== "country" || asns.size < 2) return members.map(row);
-    const rows = [];
-    let current;
-    for (const n of members) {
-      const label = operatorOf(n);
-      if (label !== current) {
-        current = label;
-        const size = members.filter((m) => operatorOf(m) === label).length;
-        rows.push(h("tr", { class: "subhead" }, h("td", { colspan: 8 }, label || "无 ASN 信息", h("span", { class: "muted" }, ` ${size} 个${n.exit_asn ? " · AS" + n.exit_asn : ""}`))));
-      }
-      rows.push(row(n));
-    }
-    return rows;
-  };
-
+  const truncated = total > items.length;
   if (!items.length) {
     list.append(
       empty(
@@ -227,7 +151,16 @@ export async function render(root, { params, go }) {
       ),
     );
   } else if (view === "list") {
-    list.append(h("div", { class: "table-wrap" }, h("table", {}, head(), h("tbody", {}, items.map(row)))));
+    const pages = Math.ceil(items.length / CHUNK);
+    const current = Math.min(page, pages - 1);
+    const goPage = (target) => {
+      target ? params.set("page", String(target)) : params.delete("page");
+      go("nodes", params);
+    };
+    list.append(
+      h("div", { class: "table-wrap" }, h("table", {}, headRow(view), h("tbody", {}, items.slice(current * CHUNK, (current + 1) * CHUNK).map((n) => nodeRow(n, view, toggle))))),
+      pager(current, pages, goPage),
+    );
   } else {
     const groups = new Map();
     for (const n of items) {
@@ -236,36 +169,37 @@ export async function render(root, { params, go }) {
       groups.get(key).push(n);
     }
     const ordered = [...groups.entries()].sort(([a, x], [b, y]) => (!a) - (!b) || y.length - x.length || collator.compare(a, b));
+    const openAll = items.length <= OPEN_ALL_BELOW || ordered.length === 1;
     for (const [key, members] of ordered) {
-      members.sort(
-        view === "country"
-          ? byAsnThenSeq
-          : view === "server"
-            ? (a, b) => collator.compare(a.protocol, b.protocol) || collator.compare(a.name, b.name)
-            : (a, b) => collator.compare(a.exit_country || "~", b.exit_country || "~") || seqOf(a) - seqOf(b),
-      );
+      members.sort(memberOrder(view));
       const up = members.filter((n) => ["UP", "DEGRADED"].includes(n.status)).length;
       const memberIds = members.map((n) => n.id);
-      const groupBox = h("input", { type: "checkbox", "aria-label": "选择本组", dataset: { group: JSON.stringify(memberIds) } });
+      const groupBox = h("input", { type: "checkbox", "aria-label": "选择本组" });
+      groupBoxes.set(groupBox, memberIds);
       groupBox.addEventListener("click", (e) => e.stopPropagation());
       groupBox.addEventListener("change", () => toggle(memberIds, groupBox.checked));
-      list.append(
-        h(
-          "details",
-          { class: "node-group", open: Boolean(key) || ordered.length === 1 },
-          h(
-            "summary",
-            {},
-            groupBox,
-            h("span", { class: "group-title" }, groupTitle(view, key, members[0])),
-            h("span", { class: "group-count" }, h("strong", {}, up), ` / ${members.length} 可用`),
-          ),
-          h("div", { class: "table-wrap flush" }, h("table", {}, head(), h("tbody", {}, withSubheads(members, view)))),
-        ),
+      const group = h(
+        "details",
+        { class: "node-group" },
+        h("summary", {}, groupBox, h("span", { class: "group-title" }, groupTitle(view, key, members[0])), h("span", { class: "group-count" }, h("strong", {}, up), ` / ${members.length} 可用`)),
       );
+      // Rows are built the first time a group opens.
+      let built = false;
+      const build = () => {
+        if (built || !group.open) return;
+        built = true;
+        group.append(...lazyBody(members, view, toggle, refreshChecks));
+      };
+      group.addEventListener("toggle", build);
+      group.open = openAll && Boolean(key);
+      build();
+      list.append(group);
     }
   }
 
+  const hint = truncated
+    ? h("p", { class: "callout" }, `符合条件的节点有 ${total} 个，只载入了前 ${items.length} 个。请用筛选缩小范围。`)
+    : null;
   root.append(
     h(
       "div",
@@ -275,6 +209,7 @@ export async function render(root, { params, go }) {
     ),
     form,
     bar,
+    hint,
     list,
   );
   refreshChecks();
