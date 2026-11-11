@@ -5,7 +5,7 @@
 ## 当前可核对的基线
 
 - 生产实例已部署：Dashboard https://nodema-dashboard.pages.dev；API https://nodema-api.simb.workers.dev；Echo https://nodema-echo.simb.workers.dev。
-- 公开源码：Samiya321/nodema，main。**2026-11-11 已发布 `7628c9e`**：检测稳定性/速度、手动同步与检测、机场/Sub-Store 子来源、保留语义、新命名与前端重写；迁移 head `0014_sources_airports_naming`，27 张业务表。[CI 42930231326](https://github.com/Samiya321/nodema/actions/runs/42930231326)：328 Python + 32 Worker + 3 Echo。设计见 [SOURCES_AIRPORTS_NAMING.md](SOURCES_AIRPORTS_NAMING.md)，发布记录见 [CLOUD_DEPLOYMENT.md](CLOUD_DEPLOYMENT.md)。
+- 公开源码：Samiya321/nodema，main。**2026-11-11 已发布 `b477963`**：检测稳定性/速度、手动同步与检测、机场/Sub-Store 子来源、保留语义、新命名与前端重写；迁移 head `0015_exit_asn_numbering`（同日追加：按落地国家+ASN 编号、检测所选节点），27 张业务表。[CI 42933849350](https://github.com/Samiya321/nodema/actions/runs/42933849350)：331 Python + 32 Worker + 3 Echo。设计见 [SOURCES_AIRPORTS_NAMING.md](SOURCES_AIRPORTS_NAMING.md)，发布记录见 [CLOUD_DEPLOYMENT.md](CLOUD_DEPLOYMENT.md)。
 - Cloudflare API version `8156a79e-b9b6-4192-8e77-609d04fac6d2`；Pages 预览 https://5bdfc055.nodema-dashboard.pages.dev。后续部署以实际资源状态为准。
 - 当前没有已知待补的本轮代码缺口。用户真实节点、大陆体验、长期配额、生产恢复不属于已完成的合成验收证明。不得把“基础链路通过”写成所有公网参数都已保证可用。
 
