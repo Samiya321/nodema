@@ -365,6 +365,19 @@ fill_missing(session_factory(make_engine(os.environ['DATABASE_URL'])))`);
         .status,
       401,
     );
+    const compact = await (
+      await request("/api/nodes?view=compact&limit=20000&sort=name:asc")
+    ).json();
+    const listed = compact.items.find((n) => n.id === nodeId);
+    assert.equal(listed.name, node.name);
+    assert.equal(listed.server_node_count, 1);
+    assert.ok(!("probe_metadata" in listed) && !("server_host" in listed));
+    for (const bad of [
+      "/api/nodes?view=compact&limit=20001",
+      "/api/nodes?limit=501",
+    ])
+      assert.equal((await request(bad)).status, 422);
+    assert.equal((await request("/api/nodes?view=everything")).status, 400);
     const runs = await (await request("/api/scans")).json();
     assert.equal(
       (await (await request(`/api/scans/${runs[0].id}`)).json()).shards.length,

@@ -132,6 +132,7 @@ async function toggleEnabled(button, node) {
   await busy(button, async () => {
     await api("/nodes/" + node.id, { method: "PATCH", body: { enabled: !node.enabled } });
     toast(node.enabled ? "已停用，不再检测和导出。" : "已启用。", "ok");
+    window.dispatchEvent(new CustomEvent("nodema:nodes-changed"));
     button.closest("dialog").close();
     window.dispatchEvent(new HashChangeEvent("hashchange"));
   });
@@ -173,6 +174,7 @@ async function annotate(id, sheet) {
     await busy(e.submitter, async () => {
       await api(`/nodes/${id}/annotations`, { method: "PATCH", body: payload });
       toast("人工资料已保存。", "ok");
+      window.dispatchEvent(new CustomEvent("nodema:nodes-changed"));
       box.close();
       sheet.close();
       nodeDetail(id);

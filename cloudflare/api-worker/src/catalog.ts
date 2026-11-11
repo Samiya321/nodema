@@ -53,7 +53,7 @@ export const filterKeys = new Set([
 export function filtersFromParams(params: URLSearchParams): Row {
   const result: Row = {};
   for (const [key, value] of params) {
-    if (["offset", "limit", "sort"].includes(key)) continue;
+    if (["offset", "limit", "sort", "view"].includes(key)) continue;
     if (!filterKeys.has(key)) throw new SafeError("INVALID_NODE_QUERY");
     if (!value) continue;
     if (["eligible", "enabled"].includes(key)) {
@@ -78,7 +78,7 @@ export async function catalogPage(
   sort = "short_id:asc",
   offset = 0,
   limit = 100,
-  projection: "full" | "identity" | "report" = "full",
+  projection: "full" | "identity" | "report" | "compact" = "full",
 ) {
   if (Object.keys(filters).some((key) => !filterKeys.has(key)))
     throw new SafeError("INVALID_NODE_QUERY");

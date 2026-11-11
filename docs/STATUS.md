@@ -26,3 +26,5 @@
 2026-11-11 第二轮（**已合并并发布**，main `b477963`，迁移 `0015`，见 [CLOUD_DEPLOYMENT.md](CLOUD_DEPLOYMENT.md)）：修复单节点 DNS 超时导致整片中止（生产 run 42907816991）、滑动窗口并发检测；导入不再自动启动 Actions，改为手动“同步来源”和按范围检测；机场识别与流量/到期、Sub-Store 子来源、自建节点保留语义、`🇸🇬HK->SG|Webbing 01` 命名；Dashboard 全部重写。迁移 head `0014_sources_airports_naming`；本地 328 Python + 32 Worker + 3 Echo 通过，loopback 握手和 100 节点合成链路通过。说明见 [SOURCES_AIRPORTS_NAMING.md](SOURCES_AIRPORTS_NAMING.md)，上线顺序见 [HANDOFF.md](HANDOFF.md)。尚未在真实节点和生产 Runner 上验证速度。
 
 2026-11-11 第三轮（迁移 `0016_servers_ipinfo_share`）：同一落地 IP 的节点共用序号并加协议后缀（`🇯🇵JP|Greencloud|xTom 01 VLESS`），落地 IP 归属/ISP 由 Actions 查询 ip-api.com，节点详情可显示 Shadowrocket 可扫的分享二维码，节点页新增“按落地服务器”视图。详见 [SOURCES_AIRPORTS_NAMING.md](SOURCES_AIRPORTS_NAMING.md) 第 8 节。
+
+2026-11-11 第四轮（迁移 `0017_compact_node_page`）：为大量数据优化列表页。节点页用一次请求取回筛选后的全部节点（`/api/nodes?view=compact`，只含列表字段，最多 20000 个），分组默认折叠、展开时每次渲染 100 行，列表视图每页 100 行，切换视图/翻页 30 秒内复用结果；“全选”覆盖整个筛选结果，单次检测超过 5000 个会提示缩小范围。来源页 Sub-Store 子来源折叠在父来源下，支持排序和每页 50 个；机场多于 6 个时按机场折叠并显示汇总；Sub-Store 子来源弹窗可搜索、只看失败并分页。合成 5000 节点本地实测：首次载入一次请求约 0.8 秒（未压缩 2.6 MB），切换视图约 30 毫秒。同日按用户要求清空了生产数据（保留设置和用量记录），清空前的加密备份已在隔离 PG 验证可恢复。

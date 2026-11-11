@@ -18,6 +18,8 @@ export function renderStrip(element) {
   window.addEventListener("hashchange", () => refreshStrip());
 }
 
+let wasWorking = false;
+
 function schedule(busyNow) {
   clearTimeout(timer);
   if (!busyNow && Date.now() > wakeUntil) return;
@@ -35,6 +37,10 @@ export async function refreshStrip() {
   }
   draw(last);
   const running = last.active_scans.some((r) => RUNNING.includes(r.status));
+  // A test or sync just finished: cached node lists are stale.
+  const work = running || last.pending_sources > 0;
+  if (wasWorking && !work) window.dispatchEvent(new CustomEvent("nodema:nodes-changed"));
+  wasWorking = work;
   schedule(running || (last.requested_scans || []).length > 0);
 }
 

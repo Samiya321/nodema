@@ -341,3 +341,29 @@ tr.subhead:hover { background: none; }
 dd .tag { margin-left: 6px; }
 .share .notice { text-align: left; width: 100%; padding: 8px 12px; border-radius: var(--radius-s); background: var(--sunken); box-shadow: inset 3px 0 0 var(--warn); font-size: 13px; }
 .share .notice ul { margin: 4px 0 0; padding-left: 18px; }
+
+/* Large lists: pager, lazily rendered groups, folded Sub-Store children. */
+.pager { display: flex; gap: 8px; align-items: center; justify-content: center; flex-wrap: wrap; padding: 12px 0; }
+.node-group > .more { display: block; width: 100%; padding: 10px; border-top: 1px solid var(--rule); }
+.node-group > .more[hidden] { display: none; }
+tr.child-row td { background: var(--sunken); }
+.name-cell.child { padding-left: 18px; position: relative; }
+.name-cell.child::before { content: "└"; position: absolute; left: 2px; color: var(--ink-2); }
+details.air-group > summary { list-style: none; cursor: pointer; }
+details.air-group > summary::-webkit-details-marker { display: none; }
+details.air-group > summary h2::before { content: "▸ "; color: var(--ink-2); }
+details.air-group[open] > summary h2::before { content: "▾ "; }
+.air-links:empty { display: none; }
+.air-links { margin: 6px 0; }
+/* Medium widths: airport rows keep one line of facts; actions move below, right-aligned. */
+details.air-group { min-width: 0; }
+details.air-group > summary { flex-wrap: wrap; }
+@media (max-width: 1280px) and (min-width: 861px) {
+  .air-row { grid-template-columns: minmax(130px, 1.4fr) auto minmax(150px, 1.3fr) auto auto auto; }
+  .air-row > .row { grid-column: 1 / -1; justify-content: flex-end; }
+}
+/* Segmented switches never widen the page; on phones they scroll sideways. */
+.toolbar .segmented { max-width: 100%; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.toolbar .segmented .seg { flex: none; white-space: nowrap; }
+/* Grid children may shrink below their content width (wide toolbars scroll instead). */
+.page > * { min-width: 0; }

@@ -439,3 +439,18 @@ export function meter(ratio, { tone = "", label } = {}) {
     fill,
   );
 }
+
+// Page navigation for client-side paged lists.
+export function pager(page, pages, onPage) {
+  if (pages <= 1) return null;
+  const button = (target, text, disabled) => h("button", { type: "button", class: "quiet", disabled, onclick: () => onPage(target) }, text);
+  return h(
+    "nav",
+    { class: "pager", "aria-label": "分页" },
+    button(0, "« 首页", page === 0),
+    button(page - 1, "‹ 上一页", page === 0),
+    h("span", { class: "muted" }, `第 ${page + 1} / ${pages} 页`),
+    button(page + 1, "下一页 ›", page >= pages - 1),
+    button(pages - 1, "末页 »", page >= pages - 1),
+  );
+}

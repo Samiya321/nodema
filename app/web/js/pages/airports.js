@@ -192,21 +192,33 @@ export async function render(root, { params, go, refresh, refreshStrip }) {
     items.length
       ? [...groups.values()]
           .filter((g) => g.items.length)
-          .map(({ provider, items: list }) =>
-            h(
-              "section",
-              { class: "panel air-group" },
+          .map(({ provider, items: list }, _i, shown) => {
+            const problems = list.filter((x) => ["expired", "exhausted", "soon", "low"].includes(x.state)).length;
+            // Few airports (or an active filter) open everything; many start collapsed.
+            const open = shown.length <= 6 || Boolean(q || state || providerId);
+            return h(
+              "details",
+              { class: "panel air-group", open },
               h(
-                "header",
+                "summary",
                 { class: "panel-head" },
-                h("h2", {}, provider ? provider.name : "未分组"),
+                h("h2", { class: "inline" }, provider ? provider.name : "未分组"),
+                h(
+                  "span",
+                  { class: "muted" },
+                  `${list.filter((x) => x.usable).length}/${list.length} 条可用 · 剩余 ${bytes(list.reduce((n, x) => n + (x.usable ? x.remaining || 0 : 0), 0))} · ${list.reduce((n, x) => n + (x.up_count || 0), 0)} 个可用节点`,
+                ),
+                problems ? h("span", { class: "warn-text small" }, `${problems} 条需要注意`) : null,
+              ),
+              h(
+                "div",
+                { class: "row tight air-links" },
                 provider?.website ? h("a", { href: provider.website, rel: "noreferrer noopener", target: "_blank" }, new URL(provider.website).host) : null,
-                h("span", { class: "muted" }, `${list.length} 条订阅 · 剩余 ${bytes(list.reduce((n, s) => n + (s.usable ? s.remaining || 0 : 0), 0))}`),
                 provider ? h("button", { type: "button", class: "quiet", onclick: () => providerDialog(provider, reload) }, "编辑机场") : null,
               ),
-              h("ul", { class: "air-list" }, list.map((s) => row(s, providers, reload))),
-            ),
-          )
+              h("ul", { class: "air-list" }, list.map((x) => row(x, providers, reload))),
+            );
+          })
       : all.length
         ? empty("没有符合条件的订阅", "调整筛选条件。")
         : empty("还没有机场订阅", "在“来源”页添加订阅链接并同步；响应里带流量信息的订阅会出现在这里。"),

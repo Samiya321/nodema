@@ -300,14 +300,14 @@ export async function handle(
         /^[\w.-]+\/[\w.-]+$/.test(env.GITHUB_REPOSITORY) &&
         Boolean(env.GITHUB_DISPATCH_TOKEN) &&
         Boolean(env.GITHUB_WORKFLOW_REF);
-      if (version !== "0016_servers_ipinfo_share")
+      if (version !== "0017_compact_node_page")
         return json({
           ready: false,
           checks: { schema: false, dispatch: dispatchReady },
         });
       const checks = {
         database: true,
-        schema: version === "0016_servers_ipinfo_share",
+        schema: version === "0017_compact_node_page",
         storage: "PLAINTEXT",
         dispatch: dispatchReady,
       };
@@ -326,6 +326,7 @@ export async function handle(
       sort = "short_id:asc",
       offset = 0,
       limit = 100,
+      projection: "full" | "compact" = "full",
     ) =>
       catalogPage(
         rows,
@@ -335,6 +336,7 @@ export async function handle(
         sort,
         offset,
         limit,
+        projection,
       );
     const source = async (id: string) => {
       const result = (
@@ -402,6 +404,10 @@ export async function handle(
       });
     }
     if (path === "/api/nodes" && method === "GET") {
+      // view=compact: only the list fields, so a whole filtered set fits one request.
+      const view = url.searchParams.get("view") ?? "full";
+      if (view !== "full" && view !== "compact")
+        throw new SafeError("INVALID_NODE_QUERY");
       const offset = Number(url.searchParams.get("offset") ?? 0),
         limit = Number(url.searchParams.get("limit") ?? 100);
       if (
@@ -409,7 +415,7 @@ export async function handle(
         offset < 0 ||
         !Number.isInteger(limit) ||
         limit < 1 ||
-        limit > 500
+        limit > (view === "compact" ? 20000 : 500)
       )
         throw new SafeError("INVALID_PAGINATION", 422);
       return json(
@@ -418,6 +424,7 @@ export async function handle(
           url.searchParams.get("sort") ?? "short_id:asc",
           offset,
           limit,
+          view,
         ),
       );
     }
