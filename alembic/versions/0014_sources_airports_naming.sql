@@ -214,7 +214,8 @@ BEGIN
        WHEN 'ENTRY_COUNTRY' THEN coalesce(entry,'UNK') WHEN 'EXIT_COUNTRY' THEN coalesce(ex,'UNK')
        WHEN 'FLAG' THEN nodema_flag(ex) WHEN 'ENTRY_FLAG' THEN nodema_flag(entry)
        WHEN 'ROUTE' THEN route WHEN 'ASN' THEN coalesce(asn_label,'Unknown')
-       WHEN 'SEQ' THEN CASE WHEN seq IS NULL THEN sid ELSE lpad(seq::text,2,'0') END
+       -- lpad() truncates; pad only 1-9 so 100+ stays intact.
+       WHEN 'SEQ' THEN CASE WHEN seq IS NULL THEN sid WHEN seq < 10 THEN '0'||seq ELSE seq::text END
        ELSE NULL END;
      IF result IS NULL THEN RAISE EXCEPTION 'INVALID_NAME_TEMPLATE'; END IF;
      i:=i+closing+1;

@@ -160,3 +160,16 @@ def test_export_names_are_unique_even_without_sequence():
         "🇸🇬SG|Webbing",
         "🇸🇬SG|Webbing N2",
     ]
+
+
+def test_sequence_numbers_above_99_are_not_truncated(db_engine):
+    with db_engine.connect() as conn:
+        render = (
+            "SELECT nodema_render_name('{ASN} {SEQ}','N1','vless',NULL,NULL,'HK','SG','X',:seq)"
+        )
+        assert [conn.scalar(sa.text(render), {"seq": s}) for s in (7, 42, 108, 1234)] == [
+            "X 07",
+            "X 42",
+            "X 108",
+            "X 1234",
+        ]
