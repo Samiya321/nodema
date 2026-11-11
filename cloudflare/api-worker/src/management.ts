@@ -7,7 +7,7 @@ type Row = Record<string, unknown>;
 type Rows = (sql: string, values?: unknown[], code?: string) => Promise<Row[]>;
 export type ManagementContext = {
   rows: Rows;
-  body: (request: Request) => Promise<Row>;
+  body: (request: Request, optional?: boolean) => Promise<Row>;
   json: (value: unknown, status?: number) => Response;
   dispatch: (workflow: string, inputs: Record<string, string>) => Promise<Row>;
 };
@@ -189,7 +189,7 @@ export async function handleManagement(
     return json(await pipeline(rows));
   if (path === "/api/pipeline/sync" && method === "POST") {
     // "Sync now" refreshes every enabled source (or the chosen ones), not only due ones.
-    const data = request.body ? await ctx.body(request) : {};
+    const data = await ctx.body(request, true);
     const chosen = data.source_ids === undefined ? null : idList(data.source_ids);
     const marked = await rows(
       // A chosen Sub-Store also refreshes the child sources it produced.
@@ -215,7 +215,7 @@ export async function handleManagement(
     return json(saved[0]);
   }
   if (path === "/api/scans" && method === "POST") {
-    const data = request.body ? await ctx.body(request) : {};
+    const data = await ctx.body(request, true);
     const requested = scope(data.scope);
     const nodes =
       data.node_ids === undefined ? null : idList(data.node_ids, 5000);

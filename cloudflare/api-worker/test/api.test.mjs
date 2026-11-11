@@ -212,6 +212,18 @@ print(json.dumps(s.sync_source(UUID('${sourceId}')),default=str))`),
         assert.equal(pipeline.settings.daily_scan_scope, "SELF_HOSTED");
         const synced = await request("/api/pipeline/sync", { method: "POST" });
         assert.equal(synced.status, 202);
+        // The Pages service binding forwards a body-less POST as an empty stream.
+        const forwarded = await handle(
+          new Request("https://assets.example/api/pipeline/sync", {
+            method: "POST",
+            headers: { Authorization: "Bearer " + env.ADMIN_PASSWORD },
+            body: new ReadableStream({ start: (c) => c.close() }),
+            duplex: "half",
+          }),
+          env,
+          connect,
+        );
+        assert.equal(forwarded.status, 202);
         assert.ok((await synced.json()).sources >= 1);
         assert.ok(
           (await (await request(`/api/sources/${sourceId}`)).json()).sync_requested_at,
@@ -237,6 +249,7 @@ print(json.dumps(s.sync_source(UUID('${sourceId}')),default=str))`),
         assert.deepEqual(
           calls.map((c) => [c.url.split("/").at(-2), c.body.inputs]),
           [
+            ["source-sync.yml", {}],
             ["source-sync.yml", {}],
             ["daily-check.yml", { run_id: "", scope: "AIRPORT" }],
           ],
