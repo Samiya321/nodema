@@ -160,7 +160,18 @@ function draw(state) {
         { class: "strip-text muted" },
         `上次同步 ${ago(state.last_synced_at)}`,
         state.pending_sources ? h("strong", { class: "light" }, `，${state.pending_sources} 个待同步`) : "",
-        state.failed_sources ? h("a", { href: "#/sources?status=FAILED", class: "bad-text" }, `，${state.failed_sources} 个失败`) : "",
+        // Worked before, failed now: worth attention. Links that never worked are dead
+        // upstreams; they are counted quietly instead of alarming on every page.
+        state.broken_sources
+          ? h("a", { href: "#/sources?status=FAILED&sort=recent", class: "bad-text", title: "之前同步成功、最近一次失败的来源" }, `，${state.broken_sources} 个这次失败`)
+          : "",
+        state.failed_sources - (state.broken_sources || 0) > 0
+          ? h(
+              "a",
+              { href: "#/sources?status=FAILED", class: "muted", title: "从未同步成功的链接（多为上游失效），节点不受影响" },
+              ` · ${state.failed_sources - (state.broken_sources || 0)} 个链接失效`,
+            )
+          : "",
       ),
     ),
     h("div", { class: "strip-group" }, testButton),

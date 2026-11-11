@@ -369,3 +369,4 @@ details.air-group > summary { flex-wrap: wrap; }
 .page > * { min-width: 0; }
 .node-groups > .more-groups { display: block; width: 100%; padding: 10px; }
 .node-groups > .more-groups[hidden] { display: none; }
+.dot.mute { background: var(--ink-2); }

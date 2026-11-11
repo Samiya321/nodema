@@ -9,6 +9,7 @@ content; nothing is deleted or overwritten with emptiness when an entry disappea
 
 import hashlib
 from datetime import datetime
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 import sqlalchemy as sa
@@ -134,21 +135,53 @@ def materialize(session, parent, index, now: datetime, sync_interval: int):
     return summary
 
 
+def _fallback_key(session, source, url_host):
+    """Without a profile title or website: the subscription host, except when a
+    Sub-Store serves the subscription from its own host (/download/...). Then the
+    host is the Sub-Store, not the airport, and the entry name identifies it."""
+    if source.parent_source_id is not None and source.origin_label:
+        parent = session.scalar(
+            sa.select(Source.url_data).where(Source.id == source.parent_source_id)
+        )
+        parent_host = urlsplit(bytes(parent).decode()).hostname if parent else None
+        if parent_host and parent_host == url_host:
+            return "label:" + " ".join(source.origin_label.split()).casefold(), source.origin_label
+    return ("host:" + url_host, url_host) if url_host else (None, None)
+
+
 def assign_provider(session, source, info, url_host, now):
-    """Group airport links by profile title / website, else by subscription host."""
+    """Group airport links by profile title / website, else by entry name or host."""
+    key, name = (info.match_key, info.title) if info.match_key else (None, None)
+    if key is None:
+        key, name = _fallback_key(session, source, url_host)
     if source.provider_id is not None:
         provider = session.get(Provider, source.provider_id)
-        if provider is not None and info.website and not provider.website:
-            provider.website, provider.updated_at = info.website, now
-        return
-    key = info.match_key or ("host:" + url_host if url_host else None)
+        # Regroup links an earlier version lumped together by the Sub-Store's host;
+        # groups the user created or renamed keep their members.
+        lumped = (
+            provider is not None
+            and provider.match_key == "host:" + str(url_host)
+            and provider.name == url_host  # not renamed by the user
+            and key is not None
+            and key.startswith("label:")
+        )
+        if not lumped:
+            if provider is not None and info.website and not provider.website:
+                provider.website, provider.updated_at = info.website, now
+            return
+        source.provider_id = None
+        session.flush()
+        if not session.scalar(
+            sa.select(sa.func.count()).select_from(Source).where(Source.provider_id == provider.id)
+        ):
+            session.delete(provider)
     if key is None:
         return
     provider = session.scalar(sa.select(Provider).where(Provider.match_key == key))
     if provider is None:
         provider = Provider(
             id=uuid4(),
-            name=(info.title or url_host or "机场")[:80],
+            name=(name or "机场")[:80],
             match_key=key,
             website=info.website,
         )

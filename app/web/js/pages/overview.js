@@ -72,8 +72,11 @@ function attention(airports, substores, sources) {
   for (const s of substores)
     if (s.last_sync_status === "FAILED")
       items.push(["bad", `Sub-Store「${s.name}」无法访问：${errorText(s.last_error_code)}`, "#/substore"]);
-  const failed = sources.filter((s) => s.last_sync_status === "FAILED" && s.effective_kind !== "SUBSTORE");
-  if (failed.length) items.push(["warn", `${failed.length} 个来源最近拉取失败，已解析的节点仍保留`, "#/sources?status=FAILED"]);
+  const failing = sources.filter((s) => s.last_sync_status === "FAILED" && s.effective_kind !== "SUBSTORE");
+  const broken = failing.filter((s) => s.last_success_at);
+  if (broken.length) items.push(["warn", `${broken.length} 个来源之前正常、最近拉取失败，已解析的节点仍保留`, "#/sources?status=FAILED&sort=recent"]);
+  if (failing.length > broken.length)
+    items.push(["mute", `${failing.length - broken.length} 个链接从未拉取成功（多为上游失效），可在来源页清理`, "#/sources?status=FAILED"]);
   return items;
 }
 
