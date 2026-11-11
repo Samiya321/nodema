@@ -371,10 +371,17 @@ fill_missing(session_factory(make_engine(os.environ['DATABASE_URL'])))`);
     assert.match(compactResponse.headers.get("content-type"), /application\/json/);
     assert.equal(compactResponse.headers.get("cache-control"), "no-store");
     const compact = await compactResponse.json();
-    const listed = compact.items.find((n) => n.id === nodeId);
+    // Positional rows; "fields" names the positions (no secrets or heavy fields).
+    assert.ok(Array.isArray(compact.items[0]));
+    assert.ok(!compact.fields.includes("server_host"));
+    assert.ok(!compact.fields.includes("probe_metadata"));
+    const listed = compact.items
+      .map((row) =>
+        Object.fromEntries(compact.fields.map((f, i) => [f, row[i]])),
+      )
+      .find((n) => n.id === nodeId);
     assert.equal(listed.name, node.name);
     assert.equal(listed.server_node_count, 1);
-    assert.ok(!("probe_metadata" in listed) && !("server_host" in listed));
     for (const bad of [
       "/api/nodes?view=compact&limit=20001",
       "/api/nodes?limit=501",

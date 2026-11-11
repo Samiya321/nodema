@@ -1,4 +1,4 @@
-import { api, busy, debounce, empty, field, h, pager, select, toast } from "../core.js";
+import { ago, api, busy, debounce, empty, field, h, pager, select, toast } from "../core.js";
 import { ADVANCED, PROTOCOLS, SORTS, advancedFields, readFilters } from "../filters.js";
 import { testNodes } from "../strip.js";
 import { CHUNK, collator, groupKey, groupTitle, headRow, lazyBody, memberOrder, nodeRow } from "./node-rows.js";
@@ -9,11 +9,15 @@ const PERCENT = ["min_success_rate", "max_timeout_rate", "min_lifetime_availabil
 const VIEWS = [["country", "按落地国家"], ["asn", "按落地 ASN"], ["server", "按落地服务器"], ["list", "列表"]];
 const FETCH_PAGE = 10000; // compact rows per request; there is no overall cap
 const OPEN_ALL_BELOW = 300; // small libraries open every group; large ones start collapsed
-const CACHE_MS = 30_000;
+// Database transfer is metered (Neon Free: 5 GB a month), so a loaded list is kept until
+// something changes it (edits, finished tests or syncs) or the user presses 刷新.
+const CACHE_MS = 10 * 60_000;
+
+// Rows arrive as positional arrays; "fields" names the positions.
+const objects = (page) => page.items.map((row) => Object.fromEntries(page.fields.map((field, i) => [field, row[i]])));
 
 // Every matching node is loaded with only the list fields (10 000 per request, the
-// rest in parallel), so grouping, paging and "select all" cover the whole filtered
-// set. Switching the view or page reuses the result for 30 s.
+// rest in parallel), so grouping, paging and "select all" cover the whole filtered set.
 let cache = null;
 async function load(filters, sort) {
   const key = JSON.stringify([filters, sort]);
@@ -24,8 +28,8 @@ async function load(filters, sort) {
   const offsets = [];
   for (let offset = FETCH_PAGE; offset < first.total; offset += FETCH_PAGE) offsets.push(offset);
   const rest = await Promise.all(offsets.map(fetchPage));
-  const data = { total: first.total, items: [first, ...rest].flatMap((page) => page.items) };
-  cache = { key, at: Date.now(), data };
+  const data = { total: first.total, items: [first, ...rest].flatMap(objects), at: Date.now() };
+  cache = { key, at: data.at, data };
   return data;
 }
 export const invalidateNodes = () => (cache = null);
@@ -40,7 +44,7 @@ export async function render(root, { params, go }) {
   for (const key of KEYS) if (params.get(key)) filters[key] = params.get(key);
   const apiFilters = { ...filters };
   for (const key of PERCENT) if (apiFilters[key]) apiFilters[key] = String(Number(apiFilters[key]) / 100);
-  const [{ items, total }, { providers }] = await Promise.all([load(apiFilters, sort), api("/airports")]);
+  const [{ items, total, at: loadedAt }, { providers }] = await Promise.all([load(apiFilters, sort), api("/airports")]);
 
   // ---- filters (URL-backed) ----
   const form = h("form", { class: "toolbar", role: "search" });
@@ -216,6 +220,11 @@ export async function render(root, { params, go }) {
       "div",
       { class: "title-row" },
       h("h1", { class: "page-title" }, "节点"),
+      h(
+        "button",
+        { type: "button", class: "quiet", title: "重新从数据库读取节点列表", onclick: () => { invalidateNodes(); go("nodes", params); } },
+        `刷新（${ago(new Date(loadedAt).toISOString())}载入）`,
+      ),
       h("div", { class: "segmented", role: "group", "aria-label": "显示方式" }, VIEWS.map(([key, text]) => h("button", { type: "button", class: "seg", "aria-pressed": String(view === key), onclick: () => setParam("view", key) }, text))),
     ),
     form,

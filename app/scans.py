@@ -40,6 +40,10 @@ def now():
 
 
 SCOPES = ("ALL", "SELF_HOSTED", "AIRPORT")
+# Storage per enabled node per day, measured on synthetic 20k-node data plus headroom
+# for real results' GeoIP/probe metadata: test result + scan item, and a daily stats row.
+DETAIL_BYTES = 1100
+STATS_BYTES = 150
 # Single definition shared with the dashboard/export catalog (nodema_catalog_base).
 node_scope = sa.table(
     "nodema_node_scope",
@@ -893,12 +897,32 @@ class ScanService:
         )
         session.execute(sa.text("SELECT nodema_assign_names()"))
 
+    def retention_days(self) -> tuple[int, int]:
+        """(detail, stats) days that fit the storage budgets for the current library.
+
+        Each enabled node adds about DETAIL_BYTES of per-test detail and STATS_BYTES of
+        daily statistics per day; large libraries keep fewer days, never less than the
+        7 days quality grading reads (detail) or 30 days (stats).
+        """
+        with self.sessions() as session:
+            nodes = session.scalar(sa.select(sa.func.count()).where(Node.enabled.is_(True))) or 0
+        mb = 1024 * 1024
+        detail_cap = self.settings.detail_storage_budget_mb * mb // max(1, nodes * DETAIL_BYTES)
+        stats_cap = self.settings.stats_storage_budget_mb * mb // max(1, nodes * STATS_BYTES)
+        return (
+            max(7, min(self.settings.detail_retention_days, detail_cap)),
+            max(30, min(self.settings.stats_retention_days, stats_cap)),
+        )
+
     def cleanup(self):
         at = now()
-        raw_cutoff = at - timedelta(days=self.settings.detail_retention_days)
+        detail_days, stats_days = self.retention_days()
+        raw_cutoff = at - timedelta(days=detail_days)
         local_day = at.astimezone(ZoneInfo(self.settings.scan_timezone)).date()
-        day_cutoff = local_day - timedelta(days=self.settings.detail_retention_days - 1)
+        day_cutoff = local_day - timedelta(days=detail_days - 1)
         total = {
+            "detail_retention_days": detail_days,
+            "stats_retention_days": stats_days,
             "deleted_results": 0,
             "deleted_daily_stats": 0,
             "archived_runs": 0,
@@ -921,8 +945,7 @@ class ScanService:
             ).rowcount
             total["deleted_daily_stats"] = session.execute(
                 sa.delete(NodeDailyStats).where(
-                    NodeDailyStats.stat_date
-                    < local_day - timedelta(days=self.settings.stats_retention_days - 1)
+                    NodeDailyStats.stat_date < local_day - timedelta(days=stats_days - 1)
                 )
             ).rowcount
         while True:

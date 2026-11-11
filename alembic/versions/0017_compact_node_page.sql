@@ -1,5 +1,8 @@
--- A compact node projection: the dashboard loads a whole filtered set in one request
--- (only the fields the list shows) and groups/pages it in the browser.
+-- A compact node projection: the dashboard loads a whole filtered set (only the fields
+-- the list shows) and groups/pages it in the browser. Rows are positional arrays so
+-- field names are not repeated 20 000 times (Neon Free has 5 GB transfer a month).
+-- The response names the positions in "fields":
+-- id,short_id,name,status,protocol,enabled,node_group,entry_country,exit_country,exit_asn,exit_asn_org,asn_label,org_label,exit_ip,exit_org,exit_region,server_node_count,present_source_count,checked_days,available_days,lifetime_availability,last_checked_at
 
 CREATE OR REPLACE FUNCTION nodema_node_page(f jsonb,ordering text,off integer,lim integer,fresh integer,tpl text,projection text DEFAULT 'full')
 RETURNS jsonb LANGUAGE plpgsql STABLE AS $$
@@ -83,13 +86,14 @@ BEGIN
  EXECUTE 'SELECT count(*)' || sql_base INTO total USING f,fresh,tpl,operator_name;
  dto := CASE projection WHEN 'identity' THEN 'jsonb_build_object(''id'',v.id,''short_id'',v.short_id,''name'',v.name,''last_success_at'',v.last_success_at)'
    WHEN 'report' THEN 'jsonb_build_object(''id'',v.id,''short_id'',v.short_id,''name'',v.name,''protocol'',v.protocol,''server_host'',v.server_host,''server_port'',v.server_port,''transport'',v.transport,''security'',v.security,''status'',v.status,''entry_country'',v.entry_country,''exit_ip'',v.exit_ip,''exit_country'',v.exit_country,''exit_asn'',v.exit_asn,''http_duration_ms'',v.http_duration_ms,''last_success_at'',v.last_success_at,''last_checked_at'',v.last_checked_at,''entry_asn'',v.entry_asn,''grade'',v.quality->''grade'',''confidence'',v.quality->''confidence'',''reasons'',v.quality->''reasons'',''rule_version'',v.quality->''rule_version'',''operator'',v.quality->''operator'',''mainland_reachability'',v.quality->''mainland_reachability'',''sample_count'',v.sample_count,''success_rate'',v.success_rate,''timeout_rate'',v.timeout_rate,''http_p50_ms'',v.http_p50_ms,''http_p95_ms'',v.http_p95_ms,''probe_key'',v.probe_key,''line_claim'',v.line_claim,''evidence_level'',v.evidence_level,''evidence_age_days'',v.quality->''evidence_age_days'',''evidence_updated_at'',v.evidence_updated_at,''tags'',v.tags,''first_seen_at'',v.first_seen_at,''age_days'',v.age_days,''checked_days'',v.checked_days,''available_days'',v.available_days,''lifetime_availability'',v.lifetime_availability,''node_group'',v.node_group,''asn_label'',v.asn_label)'
-   WHEN 'compact' THEN 'jsonb_build_object(''id'',v.id,''short_id'',v.short_id,''name'',v.name,''status'',v.status,''protocol'',v.protocol,''enabled'',v.enabled,''node_group'',v.node_group,''entry_country'',v.entry_country,''exit_country'',v.exit_country,''exit_asn'',v.exit_asn,''exit_asn_org'',v.exit_asn_org,''asn_label'',v.asn_label,''org_label'',v.org_label,''exit_ip'',v.exit_ip,''exit_org'',v.exit_org,''exit_region'',v.exit_region,''server_node_count'',v.server_node_count,''present_source_count'',v.present_source_count,''checked_days'',v.checked_days,''available_days'',v.available_days,''lifetime_availability'',v.lifetime_availability,''last_checked_at'',v.last_checked_at)'
+   WHEN 'compact' THEN 'jsonb_build_array(v.id,v.short_id,v.name,v.status,v.protocol,v.enabled,v.node_group,v.entry_country,v.exit_country,v.exit_asn,v.exit_asn_org,v.asn_label,v.org_label,v.exit_ip,v.exit_org,v.exit_region,v.server_node_count,v.present_source_count,v.checked_days,v.available_days,v.lifetime_availability,v.last_checked_at)'
    ELSE 'to_jsonb(v)-''quality'' || v.quality' END;
  -- First select only ordered identities. Materialize the bounded page before
  -- rendering names, correlated counts and reference grading for its DTOs.
  EXECUTE 'WITH chosen AS MATERIALIZED (SELECT v.id,row_number() OVER (ORDER BY ' || ord || ') AS pos' || sql_base ||
    ' ORDER BY ' || ord || ' LIMIT $5 OFFSET $6) SELECT coalesce(jsonb_agg(' || dto || ' ORDER BY chosen.pos),''[]''::jsonb) FROM chosen CROSS JOIN LATERAL (SELECT * FROM nodema_catalog($2,$3,$4) c WHERE c.id=chosen.id OFFSET 0) v'
    INTO items USING f,fresh,tpl,operator_name,lim,off;
- RETURN jsonb_build_object('total',total,'items',items);
+ RETURN jsonb_build_object('total',total,'items',items) || CASE WHEN projection='compact'
+   THEN jsonb_build_object('fields',jsonb_build_array('id','short_id','name','status','protocol','enabled','node_group','entry_country','exit_country','exit_asn','exit_asn_org','asn_label','org_label','exit_ip','exit_org','exit_region','server_node_count','present_source_count','checked_days','available_days','lifetime_availability','last_checked_at')) ELSE '{}'::jsonb END;
 END;
 $$;

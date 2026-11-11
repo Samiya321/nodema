@@ -133,3 +133,32 @@ def test_share_links_leave_out_what_a_uri_cannot_carry_and_say_so():
     strict = {**vmess, "tls": {"sni": "cdn.example"}}
     strict.pop("extensions")
     assert share_links.share_uri(strict)[2] == []
+
+
+def test_refresh_waits_for_the_rate_limit_reset_within_its_budget(
+    service, monitor_settings, monkeypatch
+):
+    nodes(service, 3)
+    monkeypatch.setattr(ipinfo, "BATCH_SIZE", 1)
+    scan(service, monitor_settings)
+    monkeypatch.setattr(ipinfo, "public_ip", lambda ip: True)
+    reply = lambda ip: BatchReply([success(ip)], 0, 5)  # noqa: E731 - quota spent each time
+    client = FakeClient([reply(f"192.0.2.{i}") for i in (1, 2, 3)])
+    waits, now = [], [0.0]
+
+    def sleep(seconds):
+        waits.append(seconds)
+        now[0] += seconds
+
+    result = ipinfo.refresh(
+        service.sessions, monitor_settings, client, sleep=sleep, clock=lambda: now[0]
+    )
+    assert result["saved"] == 3 and result["skipped"] is None
+    assert waits == [6, 6]  # X-Ttl + 1 between batches, none after the last
+    # A budget shorter than the reset stops early; the rest wait for the next run.
+    with service.sessions.begin() as session:
+        session.execute(sa.text("DELETE FROM ip_info"))
+    tight = monitor_settings.model_copy(update={"ipinfo_time_budget_seconds": 3})
+    client = FakeClient([reply(f"192.0.2.{i}") for i in (1, 2, 3)])
+    result = ipinfo.refresh(service.sessions, tight, client, sleep=sleep, clock=lambda: now[0])
+    assert result["saved"] == 1 and result["skipped"] == "RATE_LIMITED"

@@ -245,7 +245,7 @@ def source_sync(source_id: str, force: bool = False):
 
 @source_app.command("sync-all")
 @safe_command
-def source_sync_all(due_only: bool = False, fetch_workers: int = 8):
+def source_sync_all(due_only: bool = False, fetch_workers: int = 16):
     from app.ingestion.prefetch import PrefetchingFetcher
 
     assets = service()
