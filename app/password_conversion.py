@@ -16,6 +16,17 @@ SS_CIPHERS = {
     "2022-blake3-aes-256-gcm",
     "2022-blake3-chacha20-poly1305",
     "none",
+    # Legacy stream ciphers: still supported by mihomo and sing-box, common in old
+    # subscriptions. Weak, but the node owner chose them; the client must match.
+    "aes-128-cfb",
+    "aes-192-cfb",
+    "aes-256-cfb",
+    "aes-128-ctr",
+    "aes-192-ctr",
+    "aes-256-ctr",
+    "rc4-md5",
+    "chacha20-ietf",
+    "xchacha20",
 }
 
 
