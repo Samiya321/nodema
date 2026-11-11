@@ -258,6 +258,37 @@ def source_sync(source_id: str, force: bool = False):
         raise typer.Exit(2)
 
 
+# A slow server or a busy moment in the shared runner network times out now and then;
+# one more attempt at the end of the run, with fewer parallel downloads, usually works.
+RETRIED_ERRORS = frozenset({"FETCH_TIMEOUT"})
+RETRY_FETCH_WORKERS = 4
+
+
+def _sync_one(assets, source_id):
+    try:
+        return assets.sync_source(source_id)
+    except AssetError as error:
+        return {"source_id": source_id, "status": "FAILED", "error_code": error.code}
+    except Exception as error:  # noqa: BLE001 - one source must not stop the run
+        # The source keeps its sync request and is retried next run.
+        typer.echo(f"source sync failed: {diagnose(error)}", err=True)
+        return {"source_id": source_id, "status": "FAILED", "error_code": "SYNC_INTERNAL_ERROR"}
+
+
+def _retry_timeouts(assets, results):
+    """Sync every source that timed out once more; its result replaces the first one."""
+    positions = {
+        result["source_id"]: index
+        for index, result in enumerate(results)
+        if result.get("error_code") in RETRIED_ERRORS
+    }
+    if not positions:
+        return
+    assets.fetcher.prefetch(assets.fetch_targets(list(positions)), workers=RETRY_FETCH_WORKERS)
+    for source_id, index in positions.items():
+        results[index] = {**_sync_one(assets, source_id), "retried": True}
+
+
 @source_app.command("sync-all")
 @safe_command
 def source_sync_all(due_only: bool = False, fetch_workers: int = 16):
@@ -291,22 +322,8 @@ def source_sync_all(due_only: bool = False, fetch_workers: int = 16):
         assets.fetcher.prefetch(assets.fetch_targets(batch))
         for source_id in batch:
             seen.add(source_id)
-            try:
-                results.append(assets.sync_source(source_id))
-            except AssetError as error:
-                results.append(
-                    {"source_id": source_id, "status": "FAILED", "error_code": error.code}
-                )
-            except Exception as error:  # noqa: BLE001 - one source must not stop the run
-                # The source keeps its sync request and is retried next run.
-                typer.echo(f"source sync failed: {diagnose(error)}", err=True)
-                results.append(
-                    {
-                        "source_id": source_id,
-                        "status": "FAILED",
-                        "error_code": "SYNC_INTERNAL_ERROR",
-                    }
-                )
+            results.append(_sync_one(assets, source_id))
+    _retry_timeouts(assets, results)
     from app import share_links
 
     try:

@@ -44,13 +44,13 @@ class AssetService:
         *,
         fetcher=None,
         max_bytes=10_485_760,
-        max_items=10_000,
+        max_items=200_000,
         sync_interval=86400,
         name_template=DEFAULT_TEMPLATE,
         substore_max_fetches=256,
         substore_max_depth=3,
         substore_timeout=120,
-        substore_max_items=50000,
+        substore_max_items=200_000,
     ):
         self.sessions, self.fingerprint_key = sessions, fingerprint_key
         self.fetcher = fetcher or Fetcher(max_bytes=max_bytes, allow_http=True)

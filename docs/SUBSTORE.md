@@ -40,8 +40,8 @@ HTTP 与 HTTPS 公网链接均支持。HTTP 内容在网络上不加密，宜使
 | 环境变量 | 默认值 | 范围与用途 |
 | --- | ---: | --- |
 | `SOURCE_MAX_BYTES` | 10485760 | 根响应及去重后远程响应的解码总字节数；每次单独下载也受此限制 |
-| `SOURCE_MAX_ITEMS` | 10000 | 普通订阅解析上限，以及单份 API 清单的定义数上限 |
-| `SOURCE_SUBSTORE_MAX_ITEMS` | 50000 | 聚合资源预算，包含定义、引用与解析条目；最大可配置 100000 |
+| `SOURCE_MAX_ITEMS` | 200000 | 普通订阅解析上限，以及单份 API 清单的定义数上限；实际由 10 MB 大小限制约束（约 10 万条链接），最大可配置 200000 |
+| `SOURCE_SUBSTORE_MAX_ITEMS` | 200000 | 聚合资源预算，包含定义、引用与解析条目；最大可配置 500000 |
 | `SOURCE_SUBSTORE_MAX_FETCHES` | 256 | 不同 URL/UA 抓取尝试数，包含根接口；最大 256 |
 | `SOURCE_SUBSTORE_MAX_DEPTH` | 3 | 嵌套引用深度，根接口为 0；最大 8 |
 | `SOURCE_SUBSTORE_TIMEOUT_SECONDS` | 120 | 聚合网络时间预算；最大 300 秒 |

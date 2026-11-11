@@ -14,12 +14,12 @@ class Settings(BaseSettings):
     encryption_key_b64: SecretStr = SecretStr("")
     fingerprint_key_b64: SecretStr
     source_max_bytes: int = Field(default=10_485_760, gt=0, le=10_485_760)
-    source_max_items: int = Field(default=10_000, gt=0, le=10_000)
+    source_max_items: int = Field(default=200_000, gt=0, le=200_000)
     source_total_timeout_seconds: float = Field(default=30, gt=0)
     source_max_redirects: int = Field(default=3, ge=0, le=10)
     source_sync_interval_seconds: int = Field(default=86400, gt=0)
     source_substore_max_fetches: int = Field(default=256, ge=1, le=256)
-    source_substore_max_items: int = Field(default=50000, ge=1, le=100000)
+    source_substore_max_items: int = Field(default=200_000, ge=1, le=500_000)
     source_substore_max_depth: int = Field(default=3, ge=0, le=8)
     source_substore_timeout_seconds: float = Field(default=120, gt=0, le=300)
     name_template: str = DEFAULT_TEMPLATE

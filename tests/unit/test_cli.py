@@ -1,3 +1,4 @@
+import json
 import os
 
 from click import unstyle
@@ -136,3 +137,58 @@ def test_sync_all_survives_an_unexpected_error_in_one_source(monkeypatch):
     assert result.exit_code == 2  # FAILED results still exit 2 (workflow accepts it)
     assert "SYNC_INTERNAL_ERROR" in result.output and "RuntimeError" in result.output
     assert "private.example" not in result.output and "synthetic" not in result.output
+
+
+def test_sync_all_retries_timed_out_sources_once(monkeypatch):
+    import app.cli as cli
+
+    class Fetcher:
+        metrics = {}
+
+        def reset_metrics(self):
+            pass
+
+        def fetch_meta(self, url, *, user_agent=None):
+            raise AssertionError("no fetch expected")
+
+    class Assets:
+        sessions = None
+
+        def __init__(self):
+            self.fetcher, self.synced, self.targets = Fetcher(), [], []
+
+        def list_sources(self):
+            return [
+                {"id": i, "enabled": True, "sync_requested_at": "now", "last_sync_status": "NEVER"}
+                for i in ("slow", "dead", "stuck", "ok")
+            ]
+
+        def fetch_targets(self, ids):
+            self.targets.append(sorted(ids))
+            return []
+
+        def sync_source(self, source_id):
+            self.synced.append(source_id)
+            attempt = self.synced.count(source_id)
+            if source_id == "slow" and attempt == 1 or source_id == "stuck":
+                raise AssetError("FETCH_TIMEOUT")
+            if source_id == "dead":
+                raise AssetError("FETCH_DNS_FAILED")
+            return {"source_id": source_id, "status": "SUCCESS"}
+
+    from app.domain import AssetError
+
+    assets = Assets()
+    monkeypatch.setattr(cli, "service", lambda: assets)
+    monkeypatch.setattr("app.share_links.fill_missing", lambda sessions: {})
+    result = CliRunner().invoke(app, ["source", "sync-all"])
+    # Only timeouts get a second attempt, and only one.
+    assert assets.synced == ["slow", "dead", "stuck", "ok", "slow", "stuck"]
+    assert assets.targets[-1] == ["slow", "stuck"]
+    output = json.loads(result.output)
+    by_id = {item["source_id"]: item for item in output}
+    assert len(output) == 4
+    assert by_id["slow"]["status"] == "SUCCESS" and by_id["slow"]["retried"]
+    assert by_id["stuck"]["error_code"] == "FETCH_TIMEOUT" and by_id["stuck"]["retried"]
+    assert by_id["dead"]["error_code"] == "FETCH_DNS_FAILED" and "retried" not in by_id["dead"]
+    assert result.exit_code == 2
