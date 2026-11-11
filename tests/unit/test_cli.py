@@ -93,3 +93,46 @@ def test_usage_collection_accepts_default_branch_without_overriding_github_reser
     assert response.exit_code == 0, response.output
     assert captured["trusted_branch"] == "main"
     assert "synthetic-token" not in response.output
+
+
+def test_sync_all_survives_an_unexpected_error_in_one_source(monkeypatch):
+    import app.cli as cli
+
+    class Fetcher:
+        metrics = {}
+
+        def reset_metrics(self):
+            pass
+
+        def fetch_meta(self, url, *, user_agent=None):
+            raise AssertionError("no fetch expected")
+
+    class Assets:
+        sessions = None
+
+        def __init__(self):
+            self.fetcher, self.synced = Fetcher(), []
+
+        def list_sources(self):
+            return [
+                {"id": i, "enabled": True, "sync_requested_at": "now", "last_sync_status": "NEVER"}
+                for i in ("a", "b", "c")
+            ]
+
+        def fetch_targets(self, ids):
+            return []
+
+        def sync_source(self, source_id):
+            self.synced.append(source_id)
+            if source_id == "b":
+                raise RuntimeError("secret https://private.example/sub?token=synthetic")
+            return {"source_id": source_id, "status": "SUCCESS"}
+
+    assets = Assets()
+    monkeypatch.setattr(cli, "service", lambda: assets)
+    monkeypatch.setattr("app.share_links.fill_missing", lambda sessions: {})
+    result = CliRunner().invoke(app, ["source", "sync-all"])
+    assert assets.synced == ["a", "b", "c"]  # the run continued past the broken source
+    assert result.exit_code == 2  # FAILED results still exit 2 (workflow accepts it)
+    assert "SYNC_INTERNAL_ERROR" in result.output and "RuntimeError" in result.output
+    assert "private.example" not in result.output and "synthetic" not in result.output

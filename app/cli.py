@@ -8,6 +8,7 @@ import re
 import secrets
 import sys
 import tempfile
+import traceback
 from datetime import date
 from pathlib import Path
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
@@ -53,6 +54,19 @@ def output(value):
     typer.echo(json.dumps(value, default=str, ensure_ascii=False, indent=2))
 
 
+def diagnose(error):
+    """Exception type and the innermost app frame: enough to locate a bug, never the
+    message (it may quote URLs, node data or SQL parameters)."""
+    frames = [f for f in traceback.extract_tb(error.__traceback__) if "/app/" in f.filename]
+    where = (
+        f" at {frames[-1].filename.rsplit('/app/', 1)[-1]}:{frames[-1].lineno}" if frames else ""
+    )
+    constraint = getattr(
+        getattr(getattr(error, "orig", None), "diag", None), "constraint_name", None
+    )
+    return f"{type(error).__name__}{where}" + (f" ({constraint})" if constraint else "")
+
+
 def safe_command(fn):
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
@@ -70,7 +84,8 @@ def safe_command(fn):
             raise typer.Exit(1) from None
         except (typer.Exit, KeyboardInterrupt):
             raise
-        except Exception:
+        except Exception as error:
+            typer.echo(f"operation failed: {diagnose(error)}", err=True)
             output({"error_code": "OPERATION_FAILED"})
             raise typer.Exit(1) from None
 
@@ -281,6 +296,16 @@ def source_sync_all(due_only: bool = False, fetch_workers: int = 16):
             except AssetError as error:
                 results.append(
                     {"source_id": source_id, "status": "FAILED", "error_code": error.code}
+                )
+            except Exception as error:  # noqa: BLE001 - one source must not stop the run
+                # The source keeps its sync request and is retried next run.
+                typer.echo(f"source sync failed: {diagnose(error)}", err=True)
+                results.append(
+                    {
+                        "source_id": source_id,
+                        "status": "FAILED",
+                        "error_code": "SYNC_INTERNAL_ERROR",
+                    }
                 )
     from app import share_links
 

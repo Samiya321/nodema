@@ -51,7 +51,8 @@ def materialize(session, parent, index, now: datetime, sync_interval: int):
             )
         )
     }
-    wanted, summary = set(), {"created": 0, "updated": 0, "unchanged": 0, "shared": 0}
+    wanted = set()
+    summary = {"created": 0, "updated": 0, "unchanged": 0, "shared": 0, "duplicates": 0}
     for entry in index.entries:
         label = _label(entry.name, f"#{entry.ordinal}")
         parts = []
@@ -63,10 +64,19 @@ def materialize(session, parent, index, now: datetime, sync_interval: int):
             suffix = f" #{number}" if len(entry.urls) > 1 else ""
             parts.append((_key("remote", url), SourceType.SUBSCRIPTION_URL, url, label + suffix))
         if entry.content.strip():
-            parts.append(
-                (_key("local", label), SourceType.RAW_TEXT, entry.content, label + " · 本地")
-            )
+            # Same-named local lists in one index stay separate: the first keeps the
+            # plain key (existing children), later ones get "#2", "#3", ...
+            key, repeat = _key("local", label), 1
+            while key in wanted:
+                repeat += 1
+                key = _key("local", f"{label}#{repeat}")
+            suffix = f" #{repeat}" if repeat > 1 else ""
+            parts.append((key, SourceType.RAW_TEXT, entry.content, label + suffix + " · 本地"))
         for origin, kind, value, child_label in parts:
+            if origin in wanted:
+                # The same remote subscription listed twice in one index: one child.
+                summary["duplicates"] += 1
+                continue
             wanted.add(origin)
             data = value.encode()
             child = children.get(origin)

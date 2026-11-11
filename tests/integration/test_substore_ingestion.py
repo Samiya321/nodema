@@ -219,3 +219,24 @@ def test_scan_scope_separates_airport_and_self_hosted(service, monitor_settings)
     assert scans.create(scope="ALL", manual=True)["node_count"] == 2
     with service.sessions() as session:
         assert session.scalar(sa.select(sa.func.count()).select_from(Source)) == 2
+
+
+def test_index_listing_a_subscription_twice_or_reusing_a_local_name(service):
+    # Production crash: two entries with one origin key inserted twice in one pass.
+    other = "trojan://synthetic-other@other.example:443#Other"
+    fetcher = Fetcher(
+        [
+            {"name": "remote-a", "url": REMOTE, "source": "remote"},
+            {"name": "remote-b", "url": REMOTE, "source": "remote"},
+            {"name": "home", "source": "local", "content": LOCAL},
+            {"name": "home", "source": "local", "content": other},
+        ]
+    )
+    parent = api_source(service, fetcher)
+    first = service.sync_source(parent)
+    assert first["status"] == "SUCCESS"
+    assert first["children"]["created"] == 3 and first["children"]["duplicates"] == 1
+    labels = sorted(k["origin_label"] for k in children(service, parent))
+    assert labels == ["home #2 · 本地", "home · 本地", "remote-a"]
+    again = service.sync_source(parent)  # stable keys: nothing new on the next sync
+    assert again["children"]["created"] == 0 and again["children"]["unchanged"] == 3
