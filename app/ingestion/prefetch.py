@@ -36,6 +36,10 @@ class PrefetchingFetcher:
             result = ("ok", self.fetcher.fetch_meta(url, user_agent=user_agent))
         except AssetError as error:
             result = ("error", error)
+        except Exception:  # noqa: BLE001 - one bad download must not stop the round
+            # Not cached: that source falls back to a live fetch in its own sync,
+            # where the error is handled and recorded like any other.
+            return key, None, {}
         return key, result, dict(self.fetcher.metrics)
 
     def prefetch(self, targets) -> int:
@@ -45,7 +49,8 @@ class PrefetchingFetcher:
             max_workers=self.workers, thread_name_prefix="nodema-fetch"
         ) as pool:
             for key, result, metrics in pool.map(self._download, keys):
-                self._ready[key] = (result, metrics)
+                if result is not None:
+                    self._ready[key] = (result, metrics)
         return len(keys)
 
     def fetch_meta(self, url, *, user_agent=None):

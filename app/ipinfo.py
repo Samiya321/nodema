@@ -9,6 +9,7 @@ counts are reported; IPs and response bodies never reach logs.
 import ipaddress
 import json
 import re
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -67,6 +68,7 @@ def parse_entry(item: object, requested: set[str]) -> dict | None:
 class BatchReply:
     items: list
     remaining: int | None
+    reset_seconds: int | None = None
 
 
 class IpApiClient:
@@ -83,10 +85,12 @@ class IpApiClient:
         with urllib.request.urlopen(request, timeout=self.timeout) as response:  # noqa: S310
             body = response.read(2_000_000)
             remaining = response.headers.get("X-Rl")
+            reset = response.headers.get("X-Ttl")
         data = json.loads(body)
         if not isinstance(data, list):
             raise ValueError("unexpected response")
-        return BatchReply(data, int(remaining) if remaining and remaining.isdigit() else None)
+        number = lambda v: int(v) if v and v.isdigit() else None  # noqa: E731
+        return BatchReply(data, number(remaining), number(reset))
 
 
 def public_ip(value: str) -> bool:
@@ -112,8 +116,35 @@ def pending_ips(session, refresh_days: int, limit: int) -> list[str]:
     return [ip for ip in rows if public_ip(ip)]
 
 
-def refresh(sessions, settings, client: IpApiClient | None = None) -> dict:
-    """Fetch details for pending landing IPs, then renumber names. Returns counts only."""
+COLUMNS = ("status", "country_code", "region", "city", "isp", "org", "as_number", "as_org")
+
+
+def _save(session, rows, stamp):
+    """Bulk upsert; a failed lookup only bumps queried_at and never erases details."""
+    rows = list({row["ip"]: row for row in rows}.values())
+    for status, columns in (("SUCCESS", COLUMNS), ("FAILED", ())):
+        chosen = [
+            {**{c: None for c in COLUMNS}, **row, "queried_at": stamp}
+            for row in rows
+            if row["status"] == status
+        ]
+        for start in range(0, len(chosen), 1000):
+            statement = insert(IpInfo).values(chosen[start : start + 1000])
+            update = {c: statement.excluded[c] for c in (*columns, "queried_at")}
+            session.execute(
+                statement.on_conflict_do_update(index_elements=[IpInfo.ip], set_=update)
+            )
+
+
+def refresh(
+    sessions, settings, client: IpApiClient | None = None, *, sleep=time.sleep, clock=time.monotonic
+) -> dict:
+    """Fetch details for pending landing IPs, then renumber names. Returns counts only.
+
+    The free tier allows 15 batches a minute: when the quota is spent the lookup waits
+    for the reset and continues, within ipinfo_time_budget_seconds; the rest of the
+    IPs follow in the next run.
+    """
     summary = {"pending": 0, "saved": 0, "failed_lookups": 0, "names_changed": 0, "skipped": None}
     if not settings.ipinfo_enabled:
         return {**summary, "skipped": "DISABLED"}
@@ -121,6 +152,7 @@ def refresh(sessions, settings, client: IpApiClient | None = None) -> dict:
     with sessions() as session:
         ips = pending_ips(session, settings.ipinfo_refresh_days, settings.ipinfo_max_ips)
     summary["pending"] = len(ips)
+    deadline = clock() + settings.ipinfo_time_budget_seconds
     rows = []
     for start in range(0, len(ips), BATCH_SIZE):
         chunk = ips[start : start + BATCH_SIZE]
@@ -134,23 +166,15 @@ def refresh(sessions, settings, client: IpApiClient | None = None) -> dict:
         parsed = [row for row in (parse_entry(i, requested) for i in reply.items) if row]
         rows.extend(parsed)
         summary["failed_lookups"] += sum(r["status"] == "FAILED" for r in parsed)
-        if reply.remaining == 0:
-            summary["skipped"] = "RATE_LIMITED"
-            break
+        if reply.remaining == 0 and start + BATCH_SIZE < len(ips):
+            wait = (reply.reset_seconds or 60) + 1
+            if clock() + wait > deadline:
+                summary["skipped"] = "RATE_LIMITED"
+                break
+            sleep(wait)
     with sessions.begin() as session:
         if rows:
-            stamp = now()
-            for row in rows:
-                values = {**row, "queried_at": stamp}
-                update = {k: v for k, v in values.items() if k != "ip"}
-                if row["status"] == "FAILED":
-                    # A transient failure never erases details found earlier.
-                    update = {"queried_at": stamp}
-                session.execute(
-                    insert(IpInfo)
-                    .values(values)
-                    .on_conflict_do_update(index_elements=[IpInfo.ip], set_=update)
-                )
+            _save(session, rows, now())
             summary["saved"] = len(rows)
         summary["names_changed"] = session.scalar(sa.text("SELECT nodema_assign_names()"))
     return summary

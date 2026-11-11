@@ -48,3 +48,18 @@ def test_prefetched_downloads_are_replayed_once_with_their_metrics():
     # Consumed entries fall back to a live download.
     fetcher.fetch_meta("https://s3.example/sub")
     assert len(base.calls) == 22
+
+
+def test_an_unexpected_download_error_only_affects_that_source():
+    class Broken(Fake):
+        def fetch_meta(self, url, *, user_agent=None):
+            if "boom" in url and threading.current_thread().name.startswith("nodema-fetch"):
+                raise RuntimeError("unexpected")
+            return super().fetch_meta(url, user_agent=user_agent)
+
+    base = Broken()
+    fetcher = PrefetchingFetcher(base, workers=2)
+    assert fetcher.prefetch([("https://ok.example", None), ("https://boom.example", None)]) == 2
+    # The broken one was not cached and is fetched live during its own sync.
+    assert fetcher.fetch_meta("https://boom.example")[0] == b"https://boom.example"
+    assert fetcher.fetch_meta("https://ok.example")[0] == b"https://ok.example"

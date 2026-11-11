@@ -313,3 +313,28 @@ def test_large_libraries_get_bigger_shards_not_more_jobs(service, monitor_settin
     settings = monitor_settings.model_copy(update={"shard_size": 1, "max_shards": 3})
     run = ScanService(service, settings, checker_factory=Checker).create(manual=True)
     assert run["shard_count"] == 3 and run["node_count"] == 9
+
+
+def test_retention_shrinks_to_fit_the_storage_budget(service, monitor_settings):
+    nodes(service, 9)
+    scans = ScanService(service, monitor_settings, checker_factory=Checker)
+    assert scans.retention_days() == (60, 365)  # a small library keeps the configured days
+    # 9 nodes against a tiny budget behave like a huge library against the real one.
+    tight = monitor_settings.model_copy(
+        update={"detail_storage_budget_mb": 10, "stats_storage_budget_mb": 10}
+    )
+    from app import scans as module
+
+    original = (module.DETAIL_BYTES, module.STATS_BYTES)
+    module.DETAIL_BYTES, module.STATS_BYTES = (
+        10 * 1024 * 1024 // (9 * 14),
+        10 * 1024 * 1024 // (9 * 40),
+    )
+    try:
+        assert ScanService(service, tight).retention_days() == (14, 40)
+        module.DETAIL_BYTES = 10 * 1024 * 1024  # far over budget: floors still apply
+        assert ScanService(service, tight).retention_days()[0] == 7
+        cleaned = ScanService(service, tight).cleanup()
+        assert cleaned["detail_retention_days"] == 7
+    finally:
+        module.DETAIL_BYTES, module.STATS_BYTES = original

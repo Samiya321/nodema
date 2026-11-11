@@ -45,7 +45,9 @@ class Settings(BaseSettings):
     ipinfo_enabled: bool = True
     ipinfo_url: str = Field(default="http://ip-api.com/batch", pattern=r"^https?://[^\s]+$")
     ipinfo_refresh_days: int = Field(default=30, ge=1, le=365)
-    ipinfo_max_ips: int = Field(default=1000, ge=1, le=5000)
+    ipinfo_max_ips: int = Field(default=50000, ge=1, le=500000)
+    # Waits for the provider's per-minute reset within this budget; the rest go next run.
+    ipinfo_time_budget_seconds: int = Field(default=720, ge=0, le=3600)
     ipinfo_timeout_seconds: float = Field(default=15, gt=0, le=60)
     echo_token: SecretStr = SecretStr("")
     dns_timeout_seconds: float = Field(default=3, gt=0, le=30)
@@ -69,6 +71,10 @@ class Settings(BaseSettings):
     admin_password: SecretStr = SecretStr("")
     detail_retention_days: int = Field(default=60, ge=1, le=365)
     stats_retention_days: int = Field(default=365, ge=30, le=3650)
+    # Free-plan storage: cleanup shortens retention when the library is large, so per-test
+    # detail and daily stats stay within these budgets (Neon Free has 1 GB in total).
+    detail_storage_budget_mb: int = Field(default=350, ge=10, le=100000)
+    stats_storage_budget_mb: int = Field(default=250, ge=10, le=100000)
     export_ttl_hours: int = Field(default=24, ge=1, le=168)
     github_repository: str = Field(default="", pattern=r"^([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?$")
     github_dispatch_token: SecretStr = SecretStr("")
