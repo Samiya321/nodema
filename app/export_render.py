@@ -82,7 +82,7 @@ class Renderer:
     def __init__(self, format):
         if format not in FORMATS:
             raise AssetError("INVALID_EXPORT_FORMAT")
-        self.format, self.body, self.count = format, bytearray(), 0
+        self.format, self.body, self.count, self.skipped = format, bytearray(), 0, 0
         self.names = set()
         if format in ("json", "singbox"):
             self.push("[" if format == "json" else '{"outbounds":[')
@@ -112,9 +112,22 @@ class Renderer:
         return stream.getvalue()
 
     def append(self, node, identity=None):
+        """Add one node; False when this format cannot express it (others still can)."""
         # Clients reject duplicate proxy names; never emit one even if a template lacks {SEQ}.
         if node.get("name") in self.names:
             node = {**node, "name": f"{node['name']} {node.get('short_id', self.count)}"}
+        proxy = None
+        if self.format in ("mihomo", "singbox", "uri"):
+            convert = {"mihomo": to_mihomo, "singbox": to_singbox, "uri": to_uri}[self.format]
+            try:
+                proxy = convert(identity, node["name"])
+            except AssetError as error:
+                if error.code != "RUNTIME_UNSUPPORTED":
+                    raise
+                # E.g. a Reality or plugin option a URI cannot carry: skip the node,
+                # never fail the whole subscription for it.
+                self.skipped += 1
+                return False
         self.names.add(node.get("name"))
         if self.format == "json":
             self.push(
@@ -127,19 +140,16 @@ class Renderer:
             )
         elif self.format == "csv":
             self.push(self.csv_row(node))
+        elif self.format == "mihomo":
+            if not self.count:
+                self.push("proxies:\n")
+            self.push(yaml.safe_dump([proxy], allow_unicode=True, sort_keys=False))
+        elif self.format == "singbox":
+            self.push(("," if self.count else "") + json.dumps(proxy, ensure_ascii=False))
         else:
-            proxy = {"mihomo": to_mihomo, "singbox": to_singbox, "uri": to_uri}[self.format](
-                identity, node["name"]
-            )
-            if self.format == "mihomo":
-                if not self.count:
-                    self.push("proxies:\n")
-                self.push(yaml.safe_dump([proxy], allow_unicode=True, sort_keys=False))
-            elif self.format == "singbox":
-                self.push(("," if self.count else "") + json.dumps(proxy, ensure_ascii=False))
-            else:
-                self.push(proxy + "\n")
+            self.push(proxy + "\n")
         self.count += 1
+        return True
 
     def finish(self):
         if self.format in ("json", "singbox"):
@@ -164,6 +174,7 @@ def render_snapshot(assets, settings, format, filters, at, heartbeat=None):
         if filters.get("last_success_after"):
             cutoff = max(cutoff, datetime.fromisoformat(filters["last_success_after"]))
         filters.update(status="UP", eligible=True, last_success_after=cutoff.isoformat())
+        skipped_ids = set()
         writer, members, deadline = (
             Renderer(format),
             [],
@@ -234,7 +245,8 @@ def render_snapshot(assets, settings, format, filters, at, heartbeat=None):
                             identity = json.loads(bytes(stored[UUID(item["id"])]))
                         except (ValueError, TypeError, KeyError):
                             raise AssetError("STORED_DATA_INVALID") from None
-                        writer.append(item, identity)
+                        if not writer.append(item, identity):
+                            skipped_ids.add(item["id"])
                     start = end
             offset += len(items)
             if offset >= page["total"]:
@@ -242,7 +254,8 @@ def render_snapshot(assets, settings, format, filters, at, heartbeat=None):
         return {
             "payload": writer.finish(),
             "node_count": writer.count,
-            "members": members,
+            "members": [m for m in members if m not in skipped_ids],
+            "skipped_unsupported": writer.skipped,
             "catalog_revision": epoch,
             "valid_until": deadline,
         }

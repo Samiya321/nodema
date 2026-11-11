@@ -65,20 +65,25 @@ def share_uri(identity: dict) -> tuple[str | None, str | None, list[str]]:
 
 
 def fill_missing(sessions) -> dict:
-    """Create share links for nodes that have none yet. Returns counts only."""
+    """Create share links for nodes without one, and retry nodes whose earlier attempt
+    failed (converters gain support over time). Returns counts only."""
     created = unsupported = partial = 0
+    after = None
     while True:
         with sessions.begin() as session:
             rows = session.execute(
                 sa.text(
                     "SELECT n.id,n.config_data FROM nodes n "
                     "LEFT JOIN node_share_links l ON l.node_id=n.id "
-                    "WHERE l.node_id IS NULL ORDER BY n.id LIMIT :limit"
+                    "WHERE (l.node_id IS NULL OR l.error_code IS NOT NULL) "
+                    "AND (CAST(:after AS uuid) IS NULL OR n.id > CAST(:after AS uuid)) "
+                    "ORDER BY n.id LIMIT :limit"
                 ),
-                {"limit": BATCH},
+                {"limit": BATCH, "after": after},
             ).all()
             if not rows:
                 break
+            after = str(rows[-1][0])
             values = []
             for node_id, config in rows:
                 uri, error, omitted = share_uri(json.loads(bytes(config)))
@@ -92,7 +97,19 @@ def fill_missing(sessions) -> dict:
                 )
                 unsupported += error is not None
                 partial += bool(omitted)
-            session.execute(insert(NodeShareLink).values(values).on_conflict_do_nothing())
+            statement = insert(NodeShareLink).values(values)
+            session.execute(
+                statement.on_conflict_do_update(
+                    index_elements=[NodeShareLink.node_id],
+                    set_={
+                        "uri": statement.excluded.uri,
+                        "error_code": statement.excluded.error_code,
+                        "omitted": statement.excluded.omitted,
+                    },
+                    # Links that already exist are never rewritten.
+                    where=NodeShareLink.error_code.is_not(None),
+                )
+            )
             created += len(values)
         if len(rows) < BATCH:
             break

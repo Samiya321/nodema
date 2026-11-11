@@ -107,6 +107,19 @@ def test_share_links_are_created_once_without_a_name(service, monitor_settings):
     assert share_links.fill_missing(service.sessions) == created
     nothing = {"created": 0, "unsupported": 0, "partial": 0}
     assert share_links.fill_missing(service.sessions) == nothing
+    # A node whose earlier attempt failed is retried (converters gain support).
+    with service.sessions.begin() as session:
+        session.execute(
+            sa.text(
+                "UPDATE node_share_links SET uri=NULL,error_code='RUNTIME_UNSUPPORTED' "
+                "WHERE node_id=(SELECT node_id FROM node_share_links ORDER BY node_id LIMIT 1)"
+            )
+        )
+    assert share_links.fill_missing(service.sessions) == {
+        "created": 1,
+        "unsupported": 0,
+        "partial": 0,
+    }
     with service.sessions() as session:
         uris = session.scalars(sa.text("SELECT uri FROM node_share_links ORDER BY uri")).all()
     assert all(u.startswith("trojan://secret-") and u.endswith("#") for u in uris)

@@ -5,6 +5,7 @@ import copy
 import json
 from urllib.parse import quote, urlencode
 
+from app.compat import compatible, without_client_preferences
 from app.domain import PASSWORD_PROTOCOLS, AssetError
 
 
@@ -13,6 +14,7 @@ def unsupported():
 
 
 def to_mihomo(identity: dict, name: str) -> dict:
+    identity = compatible(identity)
     if identity["protocol"] in PASSWORD_PROTOCOLS:
         from app.password_conversion import to_mihomo as convert
 
@@ -131,6 +133,7 @@ def to_mihomo(identity: dict, name: str) -> dict:
 
 
 def to_singbox(identity: dict, name: str) -> dict:
+    identity = without_client_preferences(compatible(identity))
     if identity["protocol"] in PASSWORD_PROTOCOLS:
         from app.password_conversion import to_singbox as convert
 
@@ -186,6 +189,7 @@ def to_singbox(identity: dict, name: str) -> dict:
 
 
 def to_uri(identity: dict, name: str) -> str:
+    identity = without_client_preferences(compatible(identity))
     if identity["protocol"] in PASSWORD_PROTOCOLS:
         from app.password_conversion import to_uri as convert
 
