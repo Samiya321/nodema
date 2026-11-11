@@ -32,6 +32,11 @@ async function loadAll(filters, sort) {
   return { items, total };
 }
 
+const seqOf = (node) => Number((/(\d+)$/.exec(node.name) || [])[1] || 0);
+// Inside a group: by landing ASN label, then by the per-country+ASN number.
+const byAsnThenSeq = (a, b) =>
+  collator.compare(a.asn_label || "~", b.asn_label || "~") || seqOf(a) - seqOf(b) || collator.compare(a.name, b.name);
+
 function groupKey(node, view) {
   if (view === "country") return node.exit_country || "";
   if (view === "asn") return node.exit_asn ? String(node.exit_asn) : "";
@@ -182,6 +187,24 @@ export async function render(root, { params, go }) {
       h("tr", {}, ["", "节点", "状态", "线路", view === "asn" ? "落地国家" : "落地 ASN", "累计可用", "类别", "最近检测"].map((t, i) => h("th", { scope: "col", class: i === 0 ? "pick" : i === 5 ? "num" : "" }, t))),
     );
 
+  // In the country view, a light sub-header per landing ASN when a country has several.
+  const withSubheads = (members, mode) => {
+    const asns = new Set(members.map((n) => n.asn_label || ""));
+    if (mode !== "country" || asns.size < 2) return members.map(row);
+    const rows = [];
+    let current;
+    for (const n of members) {
+      const label = n.asn_label || "";
+      if (label !== current) {
+        current = label;
+        const size = members.filter((m) => (m.asn_label || "") === label).length;
+        rows.push(h("tr", { class: "subhead" }, h("td", { colspan: 8 }, label || "无 ASN 信息", h("span", { class: "muted" }, ` ${size} 个${n.exit_asn ? " · AS" + n.exit_asn : ""}`))));
+      }
+      rows.push(row(n));
+    }
+    return rows;
+  };
+
   if (!items.length) {
     list.append(
       empty(
@@ -200,7 +223,7 @@ export async function render(root, { params, go }) {
     }
     const ordered = [...groups.entries()].sort(([a, x], [b, y]) => (!a) - (!b) || y.length - x.length || collator.compare(a, b));
     for (const [key, members] of ordered) {
-      members.sort((a, b) => collator.compare(a.name, b.name));
+      members.sort(view === "country" ? byAsnThenSeq : (a, b) => collator.compare(a.exit_country || "~", b.exit_country || "~") || seqOf(a) - seqOf(b));
       const up = members.filter((n) => ["UP", "DEGRADED"].includes(n.status)).length;
       const memberIds = members.map((n) => n.id);
       const groupBox = h("input", { type: "checkbox", "aria-label": "选择本组", dataset: { group: JSON.stringify(memberIds) } });
@@ -217,7 +240,7 @@ export async function render(root, { params, go }) {
             h("span", { class: "group-title" }, groupTitle(view, key, members[0])),
             h("span", { class: "group-count" }, h("strong", {}, up), ` / ${members.length} 可用`),
           ),
-          h("div", { class: "table-wrap flush" }, h("table", {}, head(), h("tbody", {}, members.map(row)))),
+          h("div", { class: "table-wrap flush" }, h("table", {}, head(), h("tbody", {}, withSubheads(members, view)))),
         ),
       );
     }
