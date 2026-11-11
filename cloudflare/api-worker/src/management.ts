@@ -35,8 +35,8 @@ function scope(value: unknown): string {
   return s;
 }
 
-function idList(value: unknown): string[] {
-  if (!Array.isArray(value) || !value.length || value.length > 1000)
+function idList(value: unknown, limit = 1000): string[] {
+  if (!Array.isArray(value) || !value.length || value.length > limit)
     throw new SafeError("INVALID_SELECTION", 422);
   return [...new Set(value.map(uuid))];
 }
@@ -89,6 +89,8 @@ async function pipeline(rows: Rows) {
       (SELECT count(*)::int FROM sources WHERE deleted_at IS NULL AND enabled
         AND (sync_requested_at IS NOT NULL OR last_sync_status='NEVER')) AS pending_sources,
       (SELECT count(*)::int FROM sources WHERE deleted_at IS NULL AND last_sync_status='FAILED') AS failed_sources,
+      (SELECT count(*)::int FROM sources WHERE deleted_at IS NULL AND enabled) AS sources_total,
+      (SELECT max(last_checked_at) FROM sources WHERE deleted_at IS NULL) AS last_synced_at,
       (SELECT jsonb_build_object('daily_scan_enabled',daily_scan_enabled,'daily_scan_scope',daily_scan_scope)
         FROM app_settings WHERE id=1) AS settings,
       (SELECT jsonb_object_agg(node_group,n) FROM (SELECT node_group,count(*) n FROM nodema_node_scope
@@ -101,7 +103,9 @@ async function pipeline(rows: Rows) {
      ORDER BY r.started_at DESC LIMIT 10`,
   );
   const requested = await rows(
-    "SELECT scope,min(requested_at) AS requested_at,count(*)::int AS count FROM scan_requests WHERE consumed_at IS NULL GROUP BY scope ORDER BY scope",
+    `SELECT CASE WHEN node_ids IS NULL THEN scope ELSE 'NODES' END AS scope,min(requested_at) AS requested_at,
+      count(*)::int AS count,sum(coalesce(cardinality(node_ids),0))::int AS nodes
+     FROM scan_requests WHERE consumed_at IS NULL GROUP BY 1 ORDER BY 1`,
   );
   return { ...state, active_scans: active, requested_scans: requested } as Row;
 }
@@ -183,8 +187,21 @@ export async function handleManagement(
   const { rows, json } = ctx;
   if (path === "/api/pipeline" && method === "GET")
     return json(await pipeline(rows));
-  if (path === "/api/pipeline/sync" && method === "POST")
-    return json(await ctx.dispatch("source-sync.yml", {}), 202);
+  if (path === "/api/pipeline/sync" && method === "POST") {
+    // "Sync now" refreshes every enabled source (or the chosen ones), not only due ones.
+    const data = request.body ? await ctx.body(request) : {};
+    const chosen = data.source_ids === undefined ? null : idList(data.source_ids);
+    const marked = await rows(
+      // A chosen Sub-Store also refreshes the child sources it produced.
+      "UPDATE sources SET sync_requested_at=NOW() WHERE deleted_at IS NULL AND enabled AND ($1::uuid[] IS NULL OR id=ANY($1::uuid[]) OR parent_source_id=ANY($1::uuid[])) RETURNING id",
+      [chosen],
+    );
+    if (!marked.length) throw new SafeError("NO_ENABLED_SOURCES", 422);
+    return json(
+      { ...(await ctx.dispatch("source-sync.yml", {})), sources: marked.length },
+      202,
+    );
+  }
   if (path === "/api/settings" && method === "GET")
     return json((await pipeline(rows)).settings ?? null);
   if (path === "/api/settings" && method === "PUT") {
@@ -200,11 +217,13 @@ export async function handleManagement(
   if (path === "/api/scans" && method === "POST") {
     const data = request.body ? await ctx.body(request) : {};
     const requested = scope(data.scope);
+    const nodes =
+      data.node_ids === undefined ? null : idList(data.node_ids, 5000);
     // Persist first: GitHub may replace a pending run, the request is never lost.
-    await rows("INSERT INTO scan_requests(id,scope) VALUES($1,$2)", [
-      crypto.randomUUID(),
-      requested,
-    ]);
+    await rows(
+      "INSERT INTO scan_requests(id,scope,node_ids) VALUES($1,$2,$3::uuid[])",
+      [crypto.randomUUID(), nodes ? "ALL" : requested, nodes],
+    );
     try {
       return json(
         await ctx.dispatch("daily-check.yml", { run_id: "", scope: requested }),

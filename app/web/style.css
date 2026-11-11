@@ -300,3 +300,34 @@ tr.dim td { opacity: 0.6; }
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }
 }
+
+/* Strip details and choice dialogs */
+.strip strong.light { color: var(--bg); }
+.small-button { padding: 2px 10px; margin-left: 8px; font-size: 12px; }
+.warn-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--warn); margin-right: 6px; }
+.choices { display: grid; gap: 8px; border: 0; padding: 0; }
+.choice { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; align-items: center; padding: 10px 12px; border: 1px solid var(--rule); border-radius: var(--radius-m); cursor: pointer; }
+.choice:has(input:checked) { border-color: var(--action); box-shadow: inset 0 0 0 1px var(--action); }
+.choice .hint { grid-column: 2; }
+.choice-title { font-weight: 600; }
+
+/* Grouped node list */
+.bulkbar { flex-wrap: wrap; }
+.bulkbar.active { border-color: var(--action); background: color-mix(in srgb, var(--action) 8%, var(--surface)); }
+.bulkbar .check { margin-right: 4px; font-weight: 600; }
+.node-groups { display: grid; gap: 10px; }
+.node-group { background: var(--surface); border: 1px solid var(--rule); border-radius: var(--radius-m); overflow: hidden; }
+.node-group > summary { display: flex; align-items: center; gap: 10px; padding: 10px 14px; cursor: pointer; list-style: none; }
+.node-group > summary::-webkit-details-marker { display: none; }
+.node-group > summary::before { content: "▸"; color: var(--ink-2); transition: transform 0.15s; }
+.node-group[open] > summary::before { transform: rotate(90deg); }
+.node-group[open] > summary { border-bottom: 1px solid var(--rule); }
+.group-title { font-weight: 600; display: inline-flex; gap: 4px; align-items: baseline; flex-wrap: wrap; }
+.group-flag { font-size: 18px; margin-right: 2px; }
+.group-count { margin-left: auto; color: var(--ink-2); white-space: nowrap; }
+.group-count strong { color: var(--ok); }
+.table-wrap.flush { border: 0; border-radius: 0; }
+.next-step { display: flex; gap: 16px; align-items: center; justify-content: space-between; flex-wrap: wrap; padding: 14px 16px; border-radius: var(--radius-m); border: 1px solid var(--action); background: color-mix(in srgb, var(--action) 7%, var(--surface)); }
+.next-step p { margin: 2px 0 0; }
+a.button { display: inline-block; text-decoration: none; }
+a.button.primary { background: var(--action); border: 1px solid var(--action); color: var(--action-ink); font-weight: 600; border-radius: var(--radius-s); padding: 5px 12px; }

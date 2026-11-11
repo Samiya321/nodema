@@ -1,4 +1,19 @@
 import { KIND, SCAN_KIND, ago, api, badge, bytes, daysUntil, empty, errorText, flag, h } from "../core.js";
+import { openTestDialog, syncSources } from "../strip.js";
+
+// One suggestion that follows the workflow: add sources -> sync -> test -> export.
+function nextStep(sources, overview, pipeline, exportsCount) {
+  const untested = Object.values(overview.groups || {}).reduce((n, g) => n + (g.statuses?.UNKNOWN || 0), 0);
+  if (!sources.length)
+    return ["还没有来源", "添加订阅链接、Sub-Store API 或节点文本。", h("a", { class: "button primary", href: "#/sources" }, "添加来源")];
+  if (pipeline.pending_sources || !sources.some((s) => s.last_success_at))
+    return [`${pipeline.pending_sources || sources.length} 个来源等待同步`, "同步只拉取和解析，不会检测节点。", h("button", { type: "button", class: "primary", onclick: (e) => syncSources(null, e.target) }, "同步全部来源")];
+  if (untested)
+    return [`${untested} 个节点还没有检测`, "选择自建、机场或全部开始检测；也可以在节点页只勾选一部分。", h("button", { type: "button", class: "primary", onclick: openTestDialog }, "开始检测")];
+  if (!exportsCount)
+    return ["生成你的订阅链接", "按落地国家、类别等条件保存方案，节点检测后会自动更新。", h("a", { class: "button primary", href: "#/exports" }, "创建订阅")];
+  return null;
+}
 
 const GROUPS = ["SELF_HOSTED", "AIRPORT"];
 
@@ -63,12 +78,15 @@ function attention(airports, substores, sources) {
 }
 
 export async function render(root) {
-  const [overview, airports, substores, sources] = await Promise.all([
+  const [overview, airports, substores, sources, pipeline, exportsList] = await Promise.all([
     api("/overview"),
     api("/airports"),
     api("/substores"),
     api("/sources"),
+    api("/pipeline"),
+    api("/exports"),
   ]);
+  const step = nextStep(sources, overview, pipeline, exportsList.length);
   const latest = overview.latest_scan;
   const notes = attention(airports, substores, sources);
   const countries = Object.entries(overview.countries || {})
@@ -77,6 +95,9 @@ export async function render(root) {
     .slice(0, 12);
   root.append(
     h("h1", { class: "page-title" }, "总览"),
+    step
+      ? h("section", { class: "next-step" }, h("div", {}, h("h2", {}, step[0]), h("p", { class: "muted" }, step[1])), step[2])
+      : null,
     h("div", { class: "grid-2" }, GROUPS.map((key) => groupPanel(key, overview.groups?.[key]))),
     h(
       "div",

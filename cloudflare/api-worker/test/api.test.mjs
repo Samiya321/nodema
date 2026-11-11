@@ -210,9 +210,11 @@ print(json.dumps(s.sync_source(UUID('${sourceId}')),default=str))`),
         const pipeline = await (await request("/api/pipeline")).json();
         assert.ok(pipeline.pending_sources >= 1);
         assert.equal(pipeline.settings.daily_scan_scope, "SELF_HOSTED");
-        assert.equal(
-          (await request("/api/pipeline/sync", { method: "POST" })).status,
-          202,
+        const synced = await request("/api/pipeline/sync", { method: "POST" });
+        assert.equal(synced.status, 202);
+        assert.ok((await synced.json()).sources >= 1);
+        assert.ok(
+          (await (await request(`/api/sources/${sourceId}`)).json()).sync_requested_at,
         );
         assert.equal(
           (
@@ -239,11 +241,17 @@ print(json.dumps(s.sync_source(UUID('${sourceId}')),default=str))`),
             ["daily-check.yml", { run_id: "", scope: "AIRPORT" }],
           ],
         );
+        const nodeIds = (await (await request("/api/nodes?limit=2")).json()).items.map((n) => n.id);
+        assert.equal(
+          (await request("/api/scans", { method: "POST", data: { node_ids: nodeIds } })).status,
+          202,
+        );
         const queued = await (await request("/api/pipeline")).json();
         assert.deepEqual(
-          queued.requested_scans.map((r) => [r.scope, r.count]),
-          [["AIRPORT", 1]],
+          queued.requested_scans.map((r) => [r.scope, r.count, r.nodes]),
+          [["AIRPORT", 1, 0], ["NODES", 1, nodeIds.length]],
         );
+        assert.ok(queued.sources_total >= 1 && queued.last_synced_at);
         globalThis.fetch = async () => {
           throw new Error("synthetic-private-network-error");
         };

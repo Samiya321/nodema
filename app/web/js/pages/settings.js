@@ -5,7 +5,7 @@ const TOKENS = [
   ["{FLAG}", "落地国旗"],
   ["{ROUTE}", "入口->落地，相同时只写一个"],
   ["{ASN}", "落地 ASN 简称"],
-  ["{SEQ}", "同组序号（01、02…）"],
+  ["{SEQ}", "落地国家+ASN 内的序号（01、02…）"],
   ["{ENTRY_FLAG}", "入口国旗"],
   ["{ENTRY_COUNTRY}", "入口地区代码"],
   ["{EXIT_COUNTRY}", "落地地区代码"],
@@ -44,7 +44,7 @@ function naming(rules) {
   const form = h(
     "form",
     { class: "stack" },
-    field("命名模板", input, "例：🇸🇬HK->SG|Webbing 01。序号在同一“入口-落地-ASN”分组内稳定，节点失效也不会让其他节点改号。"),
+    field("命名模板", input, "例：🇸🇬HK->SG|Webbing 01。序号按“落地国家 + ASN”递增且保持稳定，节点失效也不会让其他节点改号；还没检测过的节点用编号代替序号。"),
     h("div", { class: "chips" }, TOKENS.map(([token, text]) => h("button", { type: "button", class: "chip", title: text, onclick: () => { input.setRangeText(token, input.selectionStart, input.selectionEnd, "end"); input.focus(); } }, token))),
     h(
       "div",
