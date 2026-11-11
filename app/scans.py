@@ -13,7 +13,7 @@ from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
 import sqlalchemy as sa
-from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.dialects.postgresql import ARRAY, insert
 
 from app.checker.health import GLOBAL_ENVIRONMENT_ERRORS, HealthChecker
 from app.checker.precheck import EndpointCache
@@ -119,7 +119,10 @@ class ScanService:
                     Node.enabled.is_(True),
                     scope_filter,
                     ~reserved,
-                    Node.id.in_(node_ids) if node_ids else sa.true(),
+                    # One array parameter, so tens of thousands of ids stay one bind value.
+                    Node.id == sa.any_(sa.literal(node_ids, type_=ARRAY(sa.Uuid)))
+                    if node_ids
+                    else sa.true(),
                 )
                 .order_by(Node.fingerprint)
             ).all()
@@ -127,7 +130,12 @@ class ScanService:
                 return self._run_dto(
                     next((r for r in existing if r.status != "COMPLETED"), existing[-1])
                 )
-            count = math.ceil(len(rows) / self.settings.shard_size)
+            # Large libraries get bigger shards instead of hundreds of tiny Actions
+            # jobs (each job spends about a minute on setup).
+            shard_size = max(
+                self.settings.shard_size, math.ceil(len(rows) / self.settings.max_shards)
+            )
+            count = math.ceil(len(rows) / shard_size)
             run = ScanRun(
                 id=uuid4(),
                 scan_date=scan_date,
@@ -157,9 +165,9 @@ class ScanService:
             # deterministically. Credentials never affect grouping or reachability.
             for key in sorted(groups, key=lambda key: (-len(groups[key]), key)):
                 group = groups[key]
-                for offset in range(0, len(group), self.settings.shard_size):
+                for offset in range(0, len(group), shard_size):
                     shard = min(range(count), key=lambda index: (sizes[index], index))
-                    chunk = group[offset : offset + self.settings.shard_size]
+                    chunk = group[offset : offset + shard_size]
                     items.extend(
                         {"scan_run_id": run.id, "node_id": node_id, "shard_no": shard}
                         for node_id in chunk
@@ -261,15 +269,18 @@ class ScanService:
     def request(self, scope="ALL", node_ids=None):
         """Persist a test request (a scope, or specific nodes); the next run consumes it."""
         scope_clause(scope)
+        chunks = [None]
         if node_ids is not None:
             node_ids = sorted({UUID(str(value)) for value in node_ids})
-            if not 1 <= len(node_ids) <= 5000:
+            if not node_ids:
                 raise AssetError("INVALID_SELECTION")
+            # One row holds at most 5000 nodes; the next run merges every row.
+            chunks = [node_ids[i : i + 5000] for i in range(0, len(node_ids), 5000)]
         with self.sessions.begin() as session:
-            row = ScanRequest(id=uuid4(), scope=scope, node_ids=node_ids)
-            session.add(row)
+            rows = [ScanRequest(id=uuid4(), scope=scope, node_ids=chunk) for chunk in chunks]
+            session.add_all(rows)
             session.flush()
-            return {"id": row.id, "scope": scope, "nodes": len(node_ids or [])}
+            return {"id": rows[0].id, "scope": scope, "nodes": len(node_ids or [])}
 
     def consume_requests(self, scan_date=None):
         """Turn every pending request into MANUAL runs: one per requested scope (ALL

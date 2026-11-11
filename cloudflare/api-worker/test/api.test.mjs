@@ -1487,3 +1487,61 @@ print(json.dumps({'status':result['status'],'count':run['node_count']}))`),
     data: { ids: [created.id], action: "delete" },
   });
 });
+
+test("selections and imports have no count limit", async () => {
+  // A selection beyond one stored row (5000) is split; the next run merges the parts.
+  const db = await connect();
+  try {
+    await db.query("DELETE FROM scan_requests WHERE consumed_at IS NULL");
+    const ids = Array.from({ length: 12001 }, () => crypto.randomUUID());
+    const response = await request("/api/scans", {
+      method: "POST",
+      data: { node_ids: ids },
+    });
+    assert.equal(response.status, 202);
+    const parts = (
+      await db.query(
+        "SELECT cardinality(node_ids) AS n FROM scan_requests WHERE consumed_at IS NULL ORDER BY n DESC",
+      )
+    ).rows.map((r) => Number(r.n));
+    assert.deepEqual(parts, [5000, 5000, 2001]);
+    await db.query("DELETE FROM scan_requests WHERE consumed_at IS NULL");
+  } finally {
+    await db.end();
+  }
+  // Long link lists arrive in parts; start_line keeps numbering (and names) continuous.
+  const part = await (
+    await request("/api/sources/bulk", {
+      method: "POST",
+      data: {
+        urls: "https://part-a.example/sub\n\nhttps://part-b.example/sub",
+        name_prefix: "批量",
+        start_line: 101,
+      },
+    })
+  ).json();
+  assert.deepEqual(
+    part.items.map((i) => i.line),
+    [101, 103],
+  );
+  const created = await (await request("/api/sources")).json();
+  assert.ok(created.some((s) => s.name === "批量 101"));
+  assert.ok(created.some((s) => s.name === "批量 103"));
+  for (const bad of [0, 1.5, "7"])
+    assert.equal(
+      (
+        await request("/api/sources/bulk", {
+          method: "POST",
+          data: { urls: "https://x.example/sub", start_line: bad },
+        })
+      ).status,
+      422,
+    );
+  await request("/api/sources/batch", {
+    method: "POST",
+    data: {
+      ids: part.items.filter((i) => i.id).map((i) => i.id),
+      action: "delete",
+    },
+  });
+});

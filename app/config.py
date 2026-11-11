@@ -56,6 +56,8 @@ class Settings(BaseSettings):
     degraded_http_ms: int = Field(default=8000, gt=0)
     freshness_hours: int = Field(default=36, gt=0)
     shard_size: int = Field(default=100, gt=0, le=1000)
+    # Upper bound on test jobs per run; shards grow beyond shard_size to respect it.
+    max_shards: int = Field(default=40, ge=1, le=256)
     shard_lease_seconds: int = Field(default=300, ge=180, le=3600)
     geoip_city_path: str = ""
     geoip_asn_path: str = ""

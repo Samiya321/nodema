@@ -367,3 +367,5 @@ details.air-group > summary { flex-wrap: wrap; }
 .toolbar .segmented .seg { flex: none; white-space: nowrap; }
 /* Grid children may shrink below their content width (wide toolbars scroll instead). */
 .page > * { min-width: 0; }
+.node-groups > .more-groups { display: block; width: 100%; padding: 10px; }
+.node-groups > .more-groups[hidden] { display: none; }

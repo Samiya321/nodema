@@ -19,6 +19,7 @@ import {
 import { syncSources } from "../strip.js";
 
 const TYPES = { SUBSCRIPTION_URL: "订阅链接", RAW_TEXT: "节点文本", UPLOADED_FILE: "上传文件", SINGLE_URI: "单个节点" };
+const IMPORT_PART = 100; // links per bulk request; the list itself is unlimited
 const VIEWS = [
   ["", "全部"],
   ["SELF_HOSTED", "自建"],
@@ -33,7 +34,7 @@ function importPanel(refresh, open = false) {
     "form",
     { class: "stack" },
     field(
-      "订阅链接或 Sub-Store API（每行一个，最多 100 个）",
+      "订阅链接或 Sub-Store API（每行一个，数量不限）",
       h("textarea", { name: "urls", rows: 5, required: true, placeholder: "https://example.com/sub?token=…\nhttps://substore.example.com/api/subs" }),
       "保存后不会立即拉取；准备好后点击顶部“同步来源”。带流量信息的订阅会自动识别为机场。",
     ),
@@ -42,8 +43,41 @@ function importPanel(refresh, open = false) {
   links.addEventListener("submit", async (e) => {
     e.preventDefault();
     await busy(e.submitter, async () => {
-      const r = await api("/sources/bulk", { method: "POST", body: Object.fromEntries(new FormData(links)) });
+      const form = Object.fromEntries(new FormData(links));
+      // Any number of lines: sent in parts of 100 links, numbered continuously.
+      const raw = String(form.urls).split("\n");
+      const parts = [];
+      let start = 0;
+      let count = 0;
+      raw.forEach((line, i) => {
+        if (line.trim()) count += 1;
+        if (count === IMPORT_PART || i === raw.length - 1) {
+          parts.push({ urls: raw.slice(start, i + 1).join("\n"), start_line: start + 1 });
+          start = i + 1;
+          count = 0;
+        }
+      });
+      const r = { created: 0, duplicates: 0, invalid: 0, items: [] };
+      const label = e.submitter.textContent;
+      let stopped = null;
+      try {
+        for (const [index, part] of parts.entries()) {
+          if (parts.length > 1) e.submitter.textContent = `保存中 ${index + 1}/${parts.length}…`;
+          if (!part.urls.trim()) continue;
+          const saved = await api("/sources/bulk", { method: "POST", body: { ...form, ...part } });
+          r.created += saved.created;
+          r.duplicates += saved.duplicates;
+          r.invalid += saved.invalid;
+          r.items.push(...saved.items);
+        }
+      } catch (error) {
+        // Parts already saved stay saved; say where it stopped.
+        stopped = error;
+      } finally {
+        e.submitter.textContent = label;
+      }
       result.replaceChildren(
+        stopped ? h("p", { class: "callout bad-text" }, `保存到一半出错（${errorText(stopped.code)}），之前的部分已保存，可以重新提交剩余的行。`) : null,
         h(
           "div",
           { class: "callout row wrap" },

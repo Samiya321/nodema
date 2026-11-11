@@ -378,6 +378,21 @@ class AssetService:
                 **{k: metrics.get(k, 0) for k in ("source_requests", "source_response_bytes")},
             )
 
+    def fetch_targets(self, source_ids) -> list[tuple[str, str | None]]:
+        """(url, user_agent) of the enabled subscription sources among source_ids."""
+        if not source_ids:
+            return []
+        with self.sessions() as session:
+            rows = session.execute(
+                sa.select(Source.url_data, Source.user_agent).where(
+                    Source.id.in_(list(source_ids)),
+                    Source.type == SourceType.SUBSCRIPTION_URL,
+                    Source.enabled.is_(True),
+                    Source.deleted_at.is_(None),
+                )
+            ).all()
+        return [(bytes(url).decode(), agent) for url, agent in rows if url is not None]
+
     def _fetch(self, url, user_agent):
         meta = getattr(self.fetcher, "fetch_meta", None)
         if meta is not None:
