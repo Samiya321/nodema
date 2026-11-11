@@ -365,9 +365,12 @@ fill_missing(session_factory(make_engine(os.environ['DATABASE_URL'])))`);
         .status,
       401,
     );
-    const compact = await (
-      await request("/api/nodes?view=compact&limit=20000&sort=name:asc")
-    ).json();
+    const compactResponse = await request(
+      "/api/nodes?view=compact&limit=20000&sort=name:asc",
+    );
+    assert.match(compactResponse.headers.get("content-type"), /application\/json/);
+    assert.equal(compactResponse.headers.get("cache-control"), "no-store");
+    const compact = await compactResponse.json();
     const listed = compact.items.find((n) => n.id === nodeId);
     assert.equal(listed.name, node.name);
     assert.equal(listed.server_node_count, 1);

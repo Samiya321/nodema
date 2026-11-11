@@ -203,13 +203,20 @@ export async function render(root, { params, go, refresh, refreshStrip }) {
     picked.refresh();
   });
   const batch = (action, done) => async (e) => {
-    const ids = [...picked.ids];
+    let ids = [...picked.ids];
     let include = false;
     if (action === "delete") {
       const hasParents = all.some((s) => ids.includes(s.id) && s.effective_kind === "SUBSTORE");
       const box = hasParents ? h("label", { class: "check" }, h("input", { type: "checkbox" }), "同时删除这些 Sub-Store 生成的子来源") : null;
       if (!(await confirm("删除来源", `删除 ${ids.length} 个来源？自建节点会保留并继续检测；机场节点随订阅停止检测。`, { action: "删除", danger: true, extra: box }))) return;
       include = Boolean(box?.querySelector("input").checked);
+      // Folded children picked up by "select all" follow the checkbox, not the selection.
+      if (!include) {
+        const chosen = new Set(ids);
+        const parentOf = Object.fromEntries(all.map((s) => [s.id, s.parent_source_id]));
+        ids = ids.filter((id) => !chosen.has(parentOf[id]));
+      }
+      if (!ids.length) return;
     }
     await busy(e.target, async () => {
       const r = await api("/sources/batch", { method: "POST", body: { ids, action, include_children: include } });

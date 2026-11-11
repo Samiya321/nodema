@@ -4,7 +4,12 @@ import { handleExports } from "./export-api.js";
 import { usageSummary } from "./usage.js";
 import { importLinks, subscriptionURL } from "./source-bulk.js";
 import { handleManagement, providerName } from "./management.js";
-import { catalogPage, catalogOverview, filtersFromParams } from "./catalog.js";
+import {
+  catalogPage,
+  catalogPageText,
+  catalogOverview,
+  filtersFromParams,
+} from "./catalog.js";
 import { withName } from "./share.js";
 import {
   annotation,
@@ -326,7 +331,6 @@ export async function handle(
       sort = "short_id:asc",
       offset = 0,
       limit = 100,
-      projection: "full" | "compact" = "full",
     ) =>
       catalogPage(
         rows,
@@ -336,7 +340,6 @@ export async function handle(
         sort,
         offset,
         limit,
-        projection,
       );
     const source = async (id: string) => {
       const result = (
@@ -418,15 +421,27 @@ export async function handle(
         limit > (view === "compact" ? 20000 : 500)
       )
         throw new SafeError("INVALID_PAGINATION", 422);
-      return json(
-        await page(
-          filtersFromParams(url.searchParams),
-          url.searchParams.get("sort") ?? "short_id:asc",
-          offset,
-          limit,
-          view,
-        ),
-      );
+      const filters = filtersFromParams(url.searchParams),
+        sort = url.searchParams.get("sort") ?? "short_id:asc";
+      if (view === "compact")
+        return new Response(
+          await catalogPageText(
+            rows,
+            await template(),
+            number(env.FRESHNESS_HOURS, 36),
+            filters,
+            sort,
+            offset,
+            limit,
+          ),
+          {
+            headers: {
+              ...securityHeaders,
+              "Content-Type": "application/json; charset=utf-8",
+            },
+          },
+        );
+      return json(await page(filters, sort, offset, limit));
     }
     if (path === "/api/quality-policy" && method === "GET")
       return json(await qualityPolicy(rows));
