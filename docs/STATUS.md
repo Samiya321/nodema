@@ -34,4 +34,4 @@
 - **落地 IP 类型**：ip-api 同一批量请求多取 `mobile/proxy/hosting`，`ip_info` 新增三列；目录/精简列表提供 `exit_ip_type`（家宽/机房/移动）与 `exit_ip_proxy`，可筛选，命名新增 `{IPTYPE}`。
 - **共享批量运行时**：真实检测把预检后的节点每 128 个装进一个 mihomo 进程，每个节点一个回环监听（未命中规则为 REJECT），最多 3 个进程轮换；被 mihomo 拒绝的配置二分隔离后单独检测，进程中途退出的节点在新批次重试。每个分片只做一次核心/Echo 预检（之前每个并发线程串行一次）。默认并发 16 → 48。本地 1000 节点、模拟 500 ms 网络延迟：并发 16 从 71 秒降到 38 秒（共享预检）；并发 64 时逐节点模式 14.9 秒（启动 256 个进程）、批量模式 13.1 秒（0 次逐节点启动）。纯回环无延迟时批量模式反而略慢（3.3 → 4.2 秒，批次校验与启动开销），实际网络下收益来自更高并发。`scripts/smoke_protocols.py` 用真实 mihomo 验证了 21 种协议配置同进程、错误凭据失败、非法配置隔离。
 - **GeoLite 缓存**：daily-check 用 `actions/cache`（按 ISO 周，回退到旧缓存）保存 `private/geoip`，8 天内的库直接复用（用户确认自用仓库接受缓存可被本仓库工作流读取）。
-- `scripts/benchmark_pipeline.py` 的导出校验自 0010 异步导出起已失效，新增 `--skip-exports`、`--batch`、`BENCHMARK_ECHO_DELAY_MS`、`BENCHMARK_CONCURRENCY`。
+- `scripts/benchmark_pipeline.py` 新增 `--batch`、`--skip-exports`、`BENCHMARK_ECHO_DELAY_MS`、`BENCHMARK_CONCURRENCY`（本机导出段因本地环境返回 EXPORT_PENDING，CI 中正常）。

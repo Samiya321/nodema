@@ -287,10 +287,12 @@ def benchmark(url, count, binary, workers, baseline=False, batch=False, skip_exp
             published_bytes = usage.database_sample()["table_bytes"]
             exports = ExportService(assets, settings)
             export_bytes, export_counts = {}, {}
-            # Exports build asynchronously since migration 0010; --skip-exports measures checks.
+            # --skip-exports measures checks only (e.g. where local settings defer exports).
             for format in () if skip_exports else ("mihomo", "singbox", "uri", "json", "csv"):
                 artifact = exports.create(format, build=True)
                 export_counts[format] = artifact["node_count"]
+                if artifact["node_count"] != count:
+                    raise AssetError("BENCHMARK_EXPORT_COUNT_FAILED")
                 raw, _, _ = exports.download(artifact["id"], artifact["token"])
                 export_bytes[format] = len(raw)
             total_seconds = time.monotonic() - started
