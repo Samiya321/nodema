@@ -208,3 +208,13 @@ proxy-groups:
     assert sg["protocol_options"]["cipher"] == "aes-128-gcm"
     assert jp["protocol_options"]["cipher"] == "chacha20-ietf-poly1305"  # explicit key wins
     assert (sg["server_host"], jp["server_port"]) == ("sg.example", 8443)
+
+
+def test_large_subscription_is_not_limited_by_item_count():
+    # Only the byte limit applies by default; 10,001 links used to hit TOO_MANY_ITEMS.
+    user = base64.urlsafe_b64encode(b"aes-128-gcm:pw").decode()
+    lines = "\n".join(
+        f"ss://{user}@10.{i // 65536}.{i // 256 % 256}.{i % 256}:8388#n{i}" for i in range(10_001)
+    )
+    report = parse_document(lines.encode())
+    assert len(report.nodes) == 10_001

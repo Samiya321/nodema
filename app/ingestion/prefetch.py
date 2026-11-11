@@ -42,11 +42,11 @@ class PrefetchingFetcher:
             return key, None, {}
         return key, result, dict(self.fetcher.metrics)
 
-    def prefetch(self, targets) -> int:
+    def prefetch(self, targets, *, workers: int | None = None) -> int:
         """Download every (url, user_agent) target concurrently; returns how many."""
         keys = list(dict.fromkeys(targets))
         with ThreadPoolExecutor(
-            max_workers=self.workers, thread_name_prefix="nodema-fetch"
+            max_workers=max(1, workers or self.workers), thread_name_prefix="nodema-fetch"
         ) as pool:
             for key, result, metrics in pool.map(self._download, keys):
                 if result is not None:

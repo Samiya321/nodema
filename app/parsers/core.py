@@ -25,7 +25,9 @@ from app.domain import (
 PARSER_VERSION = "protocols-v4"
 MISSING = object()
 MAX_BYTES = 10_485_760
-MAX_ITEMS = 10_000
+# Item counts are not limited on their own: MAX_BYTES bounds every document, and a
+# 10 MiB list holds at most ~100k share links. This only stops pathological inputs.
+MAX_ITEMS = 200_000
 
 
 def _take(data, *keys, default=MISSING):

@@ -63,3 +63,18 @@ def test_an_unexpected_download_error_only_affects_that_source():
     # The broken one was not cached and is fetched live during its own sync.
     assert fetcher.fetch_meta("https://boom.example")[0] == b"https://boom.example"
     assert fetcher.fetch_meta("https://ok.example")[0] == b"https://ok.example"
+
+
+def test_prefetch_can_use_fewer_workers_for_a_retry():
+    base = Fake()
+    fetcher = PrefetchingFetcher(base, workers=16)
+    seen = set()
+
+    class Spy(Fake):
+        def fetch_meta(self, url, *, user_agent=None):
+            seen.add(threading.current_thread().name)
+            return super().fetch_meta(url, user_agent=user_agent)
+
+    fetcher.fetcher = Spy()
+    fetcher.prefetch([(f"https://r{i}.example", None) for i in range(12)], workers=1)
+    assert len(seen) == 1
