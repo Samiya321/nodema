@@ -421,6 +421,7 @@ class NodeShareLink(Base):
     )
     uri: Mapped[str | None] = mapped_column(sa.Text)
     error_code: Mapped[str | None] = mapped_column(sa.Text)
+    omitted: Mapped[str | None] = mapped_column(sa.Text)
     created_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), server_default=sa.func.now()
     )

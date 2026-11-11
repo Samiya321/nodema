@@ -2,8 +2,13 @@
 
 The URI is stored without a display name; the Worker adds the current name when
 the dashboard asks for it, so renumbering never makes stored links stale.
+
+Subscriptions stay lossless, but a QR code is for trying a node on a phone: when
+the strict converter refuses, settings a share link cannot carry are left out and
+recorded in ``omitted`` so the dashboard can say exactly what to set by hand.
 """
 
+import copy
 import json
 
 import sqlalchemy as sa
@@ -14,10 +19,28 @@ from app.database.models import NodeShareLink
 from app.domain import AssetError
 
 BATCH = 2000
+BANDWIDTH = ("up_mbps", "down_mbps", "hop_seconds")
 
 
-def share_uri(identity: dict) -> tuple[str | None, str | None]:
-    """(uri, None) or (None, error_code) when the URI format cannot express the node."""
+def relaxed(identity: dict) -> tuple[dict, list[str]]:
+    """Copy without settings URIs cannot express, plus the codes of what was removed."""
+    node, omitted = copy.deepcopy(identity), []
+    if node.pop("extensions", None):
+        omitted.append("CLIENT_OPTIONS")  # e.g. Clash "udp", "ecn"
+    options = node.get("protocol_options", {})
+    if node["protocol"] == "hysteria2" and any(k in options for k in BANDWIDTH):
+        for key in BANDWIDTH:
+            options.pop(key, None)
+        omitted.append("BANDWIDTH")
+    tls = node.get("tls", {})
+    if node["protocol"] == "vmess" and "insecure" in tls:
+        # The VMess share format has no agreed field for skipping certificate checks.
+        if tls.pop("insecure"):
+            omitted.append("SKIP_CERT_VERIFY")
+    return node, omitted
+
+
+def _convert(identity: dict) -> tuple[str | None, str | None]:
     try:
         uri = to_uri(identity, "")
     except AssetError as error:
@@ -29,9 +52,21 @@ def share_uri(identity: dict) -> tuple[str | None, str | None]:
     return uri, None
 
 
+def share_uri(identity: dict) -> tuple[str | None, str | None, list[str]]:
+    """(uri, None, omitted) or (None, error_code, [])."""
+    uri, error = _convert(identity)
+    if uri:
+        return uri, None, []
+    node, omitted = relaxed(identity)
+    if not omitted:
+        return None, error, []
+    uri, relaxed_error = _convert(node)
+    return (uri, None, omitted) if uri else (None, relaxed_error, [])
+
+
 def fill_missing(sessions) -> dict:
     """Create share links for nodes that have none yet. Returns counts only."""
-    created = unsupported = 0
+    created = unsupported = partial = 0
     while True:
         with sessions.begin() as session:
             rows = session.execute(
@@ -46,11 +81,19 @@ def fill_missing(sessions) -> dict:
                 break
             values = []
             for node_id, config in rows:
-                uri, error = share_uri(json.loads(bytes(config)))
-                values.append({"node_id": node_id, "uri": uri, "error_code": error})
+                uri, error, omitted = share_uri(json.loads(bytes(config)))
+                values.append(
+                    {
+                        "node_id": node_id,
+                        "uri": uri,
+                        "error_code": error,
+                        "omitted": ",".join(omitted) or None,
+                    }
+                )
                 unsupported += error is not None
+                partial += bool(omitted)
             session.execute(insert(NodeShareLink).values(values).on_conflict_do_nothing())
             created += len(values)
         if len(rows) < BATCH:
             break
-    return {"created": created, "unsupported": unsupported}
+    return {"created": created, "unsupported": unsupported, "partial": partial}

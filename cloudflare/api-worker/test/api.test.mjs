@@ -469,7 +469,7 @@ from pathlib import Path
 from app.parsers import parse_document,parse_password_uri,parse_shadowsocks
 from app.conversion import to_mihomo,to_singbox,to_uri
 from app.domain import AssetError
-from app.share_links import share_uri
+from app.share_links import relaxed,share_uri
 nodes=[n.identity for n in parse_document(Path('tests/fixtures/protocols_all.txt').read_bytes()).nodes]
 nodes.append(parse_shadowsocks('ss://aes-128-gcm:synthetic@ss.example:443/?plugin=obfs-local%3Bobfs%3Dtls%3Bobfs-host%3Dcdn.example').identity)
 nodes.append(parse_shadowsocks('ss://2022-blake3-aes-128-gcm:'+base64.b64encode(b'S'*16).decode()+'@ss.example:443').identity)
@@ -482,7 +482,9 @@ for d in nodes:
  v={'identity':d,'mihomo':to_mihomo(d,'synthetic-vector'),'singbox':to_singbox(d,'synthetic-vector')}
  try:v['uri']=to_uri(d,'synthetic-vector')
  except AssetError:v['uri']=None
- v['share']=share_uri(d)[0]
+ share,_,omitted=share_uri(d)
+ v['share']=share
+ v['share_expected']=to_uri(relaxed(d)[0] if omitted else d,'synthetic-vector') if share else None
  vectors.append(v)
 print(json.dumps(vectors))`),
   );
@@ -500,16 +502,20 @@ print(json.dumps(vectors))`),
       vector.singbox,
     );
     // Stored share links (no name) plus the Worker's name equal Python's named URI.
-    assert.equal(vector.share === null, vector.uri === null);
+    // Strictly convertible nodes share exactly the subscription URI.
+    if (vector.uri !== null) assert.equal(vector.share_expected, vector.uri);
     if (vector.share?.startsWith("vmess://")) {
       const decode = (u) =>
         JSON.parse(Buffer.from(u.slice(8), "base64").toString("utf8"));
       assert.deepEqual(
         decode(withName(vector.share, "synthetic-vector")),
-        decode(vector.uri),
+        decode(vector.share_expected),
       );
     } else if (vector.share)
-      assert.equal(withName(vector.share, "synthetic-vector"), vector.uri);
+      assert.equal(
+        withName(vector.share, "synthetic-vector"),
+        vector.share_expected,
+      );
     if (vector.uri === null)
       assert.throws(() => render("uri", [item]), /RUNTIME_UNSUPPORTED/);
     else {

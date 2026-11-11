@@ -100,11 +100,36 @@ def test_private_landing_ips_are_never_sent(service, monitor_settings):
 
 def test_share_links_are_created_once_without_a_name(service, monitor_settings):
     nodes(service, 2)
-    assert share_links.fill_missing(service.sessions) == {"created": 2, "unsupported": 0}
-    assert share_links.fill_missing(service.sessions) == {"created": 0, "unsupported": 0}
+    created = {"created": 2, "unsupported": 0, "partial": 0}
+    assert share_links.fill_missing(service.sessions) == created
+    nothing = {"created": 0, "unsupported": 0, "partial": 0}
+    assert share_links.fill_missing(service.sessions) == nothing
     with service.sessions() as session:
         uris = session.scalars(sa.text("SELECT uri FROM node_share_links ORDER BY uri")).all()
     assert all(u.startswith("trojan://secret-") and u.endswith("#") for u in uris)
     # Secrets stay out of list views: the catalog never carries the share link.
     item = Catalog(service, monitor_settings).page({}, limit=1)["items"][0]
     assert "trojan://" not in json.dumps(item, default=str)
+
+
+def test_share_links_leave_out_what_a_uri_cannot_carry_and_say_so():
+    vmess = {
+        "protocol": "vmess",
+        "server_host": "vm.example",
+        "server_port": 443,
+        "uuid": "11111111-2222-4333-8444-555555555555",
+        "transport": "ws",
+        "security": "tls",
+        "transport_options": {"host": "cdn.example", "path": "/ws"},
+        "protocol_options": {"alter_id": 0, "cipher": "auto"},
+        "tls": {"sni": "cdn.example", "insecure": True},
+        "extensions": {"clash": {"udp": True}},
+    }
+    uri, error, omitted = share_links.share_uri(vmess)
+    assert error is None and uri.startswith("vmess://")
+    assert omitted == ["CLIENT_OPTIONS", "SKIP_CERT_VERIFY"]
+    # The stored identity is never modified.
+    assert vmess["tls"]["insecure"] is True and "extensions" in vmess
+    strict = {**vmess, "tls": {"sni": "cdn.example"}}
+    strict.pop("extensions")
+    assert share_links.share_uri(strict)[2] == []
