@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import ARRAY, insert
 
+from app.checker.batch import ListenerPool
 from app.checker.health import GLOBAL_ENVIRONMENT_ERRORS, HealthChecker
 from app.checker.precheck import EndpointCache
 from app.database.models import (
@@ -64,11 +65,60 @@ def scope_clause(scope="ALL"):
     return sa.exists(query)
 
 
+def _elapsed_ms(started):
+    return max(0, round((time.monotonic() - started) * 1000))
+
+
+class _Batching:
+    """Prepare nodes on worker threads, then probe them through shared batch runtimes."""
+
+    def __init__(self, pool, available, size):
+        self.pool, self.available, self.size = pool, available, size
+
+    def prepare(self, job):
+        node_id, attempt, identity, short_id, context = job
+        checker = self.available.get()
+        try:
+            checker.set_context(**context)
+            started = time.monotonic()
+            result, ready = checker.prepare(identity, short_id)
+            result.check_duration_ms = _elapsed_ms(started)
+        finally:
+            self.available.put(checker)
+        if ready is None:
+            result.checked_at = result.checked_at or now()
+            return ("done", node_id, attempt, result)
+        return ("ready", node_id, attempt, result, ready, short_id)
+
+    def dispatch(self, prepared, executor):
+        batch = self.pool.load({item[3]["proxy"]["name"]: item[3] for item in prepared})
+        return {executor.submit(self.probe, item, batch) for item in prepared}
+
+    def probe(self, item, batch):
+        node_id, attempt, result, ready, _short_id = item
+        listener = batch.listener(ready["proxy"]["name"])
+        checker = self.available.get()
+        started = time.monotonic()
+        try:
+            # No listener (config refused in a batch, port not bound): own runtime.
+            result = checker.probe(result, ready, listener)
+        finally:
+            self.available.put(checker)
+            if listener is not None:
+                batch.release()
+        result.check_duration_ms = (result.check_duration_ms or 0) + _elapsed_ms(started)
+        result.checked_at = now()
+        return ("done", node_id, attempt, result)
+
+
 class ScanService:
-    def __init__(self, assets, settings, *, checker_factory=None):
+    def __init__(self, assets, settings, *, checker_factory=None, pool_factory=None):
         self.assets, self.settings = assets, settings
         self.sessions = assets.sessions
         self.checker_factory = checker_factory
+        # Shared batch runtimes: real mihomo by default; tests inject a fake pool. Injected
+        # checkers without a pool keep the per-node path (no real process is started).
+        self.pool_factory = pool_factory
 
     def create(self, scan_date: date | None = None, *, scope="ALL", manual=False, node_ids=None):
         """Daily/supplemental runs test each node once per day; manual runs always retest.
@@ -497,6 +547,12 @@ class ScanService:
         Runner-wide failures abort immediately; isolated per-node runtime/DNS errors are
         retried once and then stored as UNKNOWN instead of discarding the whole shard.
         """
+        if result.status == "ENVIRONMENT_ERROR" and result.error_code == "MIHOMO_BATCH_CRASHED":
+            # One shared runtime died: its nodes are retried in a new batch, not judged.
+            if not final:
+                return False, None
+            result.status = "UNKNOWN"
+            return True, None
         if result.status == "ENVIRONMENT_ERROR":
             code = result.error_code or "CHECK_ENVIRONMENT_ERROR"
             breaker["streak"] += 1
@@ -515,10 +571,28 @@ class ScanService:
             result.status = "DOWN"
         return result.status in TERMINAL and not (failed and not final), None
 
-    def _pass(self, run_id, shard_no, owner, ids, executor, check, counts, usage, breaker, final):
-        """Keep every worker busy (no per-batch barrier); persist results in small chunks."""
+    def _pass(
+        self,
+        run_id,
+        shard_no,
+        owner,
+        ids,
+        executor,
+        check,
+        counts,
+        usage,
+        breaker,
+        final,
+        batching=None,
+    ):
+        """Keep every worker busy (no per-batch barrier); persist results in small chunks.
+
+        With batching, workers first prepare nodes (DNS, TCP, cooldown); prepared nodes
+        are loaded batching.size at a time into a shared runtime and probed there.
+        """
         window = max(1, executor._max_workers) * 2
         queue, futures, records, pending = list(ids), set(), [], []
+        preparing, prepared = set(), []
         heartbeat = flushed = time.monotonic()
 
         def flush():
@@ -530,15 +604,34 @@ class ScanService:
             flushed = time.monotonic()
 
         abort = None
-        while (queue or futures) and abort is None:
+        while (queue or futures or prepared) and abort is None:
             while queue and len(futures) < window:
                 chunk = queue[: self.settings.check_batch_size]
                 del queue[: len(chunk)]
                 jobs = self._reserve(run_id, shard_no, owner, chunk)
-                futures |= {executor.submit(check, job) for job in jobs}
+                if batching:
+                    submitted = {executor.submit(batching.prepare, job) for job in jobs}
+                    preparing |= submitted
+                    futures |= submitted
+                else:
+                    futures |= {executor.submit(check, job) for job in jobs}
+            while prepared and (len(prepared) >= batching.size or not (queue or preparing)):
+                # Results already in hand are saved before a load that may wait for a slot.
+                flush()
+                futures |= batching.dispatch(prepared[: batching.size], executor)
+                prepared = prepared[batching.size :]
+            if not futures:
+                continue
             done, futures = wait(futures, timeout=2, return_when=FIRST_COMPLETED)
             for future in done:
-                node_id, attempt, result = future.result()
+                outcome = future.result()
+                preparing.discard(future)
+                if batching:
+                    if outcome[0] == "ready":
+                        prepared.append(outcome[1:])
+                        continue
+                    outcome = outcome[1:]
+                node_id, attempt, result = outcome
                 counts["check_count"] += 1
                 counts["check_duration_ms"] += result.check_duration_ms
                 counts["timeout_checks"] += int(bool(result.timeout_stages))
@@ -559,7 +652,19 @@ class ScanService:
         if abort is not None:
             # Let in-flight checks finish so their attempts are recorded consistently.
             for future in futures:
-                node_id, attempt, result = future.result()
+                outcome = future.result()
+                if batching:
+                    if outcome[0] == "ready":
+                        prepared.append(outcome[1:])
+                        continue
+                    outcome = outcome[1:]
+                node_id, attempt, result = outcome
+                records.append((node_id, attempt, result, False))
+            # Prepared but never probed: recorded as not terminal, retried later.
+            for node_id, attempt, result, _ready, _short_id in prepared:
+                result.status, result.error_code = "ENVIRONMENT_ERROR", abort
+                result.checked_at = result.checked_at or now()
+                result.check_duration_ms = result.check_duration_ms or 0
                 records.append((node_id, attempt, result, False))
         flush()
         if abort is not None:
@@ -576,6 +681,7 @@ class ScanService:
         counts = {"check_count": 0, "check_duration_ms": 0, "timeout_checks": 0}
         checkers, available = [], Queue()
         cache = EndpointCache(self.settings)
+        pool = batching = None
 
         def usage(status):
             metrics = dict(counts)
@@ -644,18 +750,47 @@ class ScanService:
                     if self.checker_factory
                     else HealthChecker(self.settings, cache=cache)
                 )
+                adopt = getattr(checker, "adopt_preflight", None)
+                if checkers and adopt is not None:
+                    adopt(checkers[0])  # one core/Echo preflight per shard
+                else:
+                    # Serial preflights may exceed the original lease at high concurrency.
+                    with self.sessions.begin() as session:
+                        self._owned(session, run_id, shard_no, owner)
+                    checker.preflight()
                 checkers.append(checker)
-                # Serial core/Echo preflights may exceed the original lease at high concurrency.
-                with self.sessions.begin() as session:
-                    self._owned(session, run_id, shard_no, owner)
-                checker.preflight()
                 available.put(checker)
+            # Real checkers share batch runtimes; injected test checkers keep per-node checks.
+            if (
+                self.settings.mihomo_batch_size
+                and (self.pool_factory or not self.checker_factory)
+                and all(hasattr(c, "prepare") and hasattr(c, "probe") for c in checkers)
+            ):
+                pool = (
+                    self.pool_factory()
+                    if self.pool_factory
+                    else ListenerPool(
+                        self.settings.mihomo_binary,
+                        processes=self.settings.mihomo_batch_processes,
+                    )
+                )
+                batching = _Batching(pool, available, self.settings.mihomo_batch_size)
             with ThreadPoolExecutor(
                 max_workers=concurrency, thread_name_prefix="nodema-check"
             ) as executor:
                 breaker = {"streak": 0}
                 pending_ids = self._pass(
-                    run_id, shard_no, owner, ids, executor, check, counts, usage, breaker, False
+                    run_id,
+                    shard_no,
+                    owner,
+                    ids,
+                    executor,
+                    check,
+                    counts,
+                    usage,
+                    breaker,
+                    False,
+                    batching,
                 )
                 if pending_ids:
                     # One retry pass at the end instead of a sleep after every batch.
@@ -671,6 +806,7 @@ class ScanService:
                         usage,
                         breaker,
                         True,
+                        batching,
                     )
             with self.sessions.begin() as session:
                 shard = self._owned(session, run_id, shard_no, owner)
@@ -704,6 +840,8 @@ class ScanService:
                     shard.lease_owner = shard.lease_until = None
             raise AssetError(code) from None
         finally:
+            if pool is not None:
+                pool.close()
             for checker in checkers:
                 checker.close()
             Usage(self.sessions).best_effort(owner, "CHECK", **usage(outcome))

@@ -45,6 +45,24 @@ def download_provider(settings):
     return provider
 
 
+def cached_databases(directory, max_age_days, *, verify=verify_mmdb):
+    """Databases restored by actions/cache, if both exist, verify and are recent."""
+    if max_age_days <= 0:
+        return None
+    results = []
+    for edition in EDITIONS:
+        path = Path(directory) / (edition + ".mmdb")
+        try:
+            metadata = verify(path)
+        except Exception:  # noqa: BLE001 - missing or corrupt cache: just download
+            return None
+        fresh = time.time() - max_age_days * 86400 <= metadata["build_epoch"] <= time.time() + 86400
+        if metadata["type"] != edition or not fresh:
+            return None
+        results.append({"edition": edition, "provider": "cache", **metadata})
+    return results
+
+
 def download_databases(settings, directory):
     provider = download_provider(settings)
     if provider == "disabled":

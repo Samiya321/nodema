@@ -305,14 +305,14 @@ export async function handle(
         /^[\w.-]+\/[\w.-]+$/.test(env.GITHUB_REPOSITORY) &&
         Boolean(env.GITHUB_DISPATCH_TOKEN) &&
         Boolean(env.GITHUB_WORKFLOW_REF);
-      if (version !== "0017_compact_node_page")
+      if (version !== "0017_scale_ip_type")
         return json({
           ready: false,
           checks: { schema: false, dispatch: dispatchReady },
         });
       const checks = {
         database: true,
-        schema: version === "0017_compact_node_page",
+        schema: version === "0017_scale_ip_type",
         storage: "PLAINTEXT",
         dispatch: dispatchReady,
       };

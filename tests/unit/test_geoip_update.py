@@ -232,3 +232,28 @@ def test_geoip_provider_and_optional_failure_keeps_scan_running(
     assert json.loads(result.stdout)["status"] == "UNAVAILABLE"
     assert output.read_text() == "geoip_ready=false\n"
     assert not (tmp_path / "geoip.nma").exists()
+
+
+def test_cached_databases_are_reused_only_when_complete_and_recent(tmp_path):
+    import time
+
+    from app.geoip_update import cached_databases
+
+    now = time.time()
+    epochs = {"GeoLite2-City": now - 2 * 86400, "GeoLite2-ASN": now - 3 * 86400}
+
+    def verify(path):
+        edition = path.name.removesuffix(".mmdb")
+        if not path.exists():
+            raise FileNotFoundError(path)
+        return {"type": edition, "build_epoch": epochs[edition]}
+
+    assert cached_databases(tmp_path, 8, verify=verify) is None  # nothing restored
+    for edition in epochs:
+        (tmp_path / f"{edition}.mmdb").write_bytes(b"synthetic")
+    hit = cached_databases(tmp_path, 8, verify=verify)
+    assert [d["edition"] for d in hit] == ["GeoLite2-City", "GeoLite2-ASN"]
+    assert all(d["provider"] == "cache" for d in hit)
+    assert cached_databases(tmp_path, 0, verify=verify) is None  # reuse disabled
+    epochs["GeoLite2-ASN"] = now - 20 * 86400
+    assert cached_databases(tmp_path, 8, verify=verify) is None  # too old: download

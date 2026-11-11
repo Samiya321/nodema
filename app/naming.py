@@ -24,7 +24,9 @@ FIELDS = {
     "OPERATOR",
     "SEQ",
     "VARIANT",
+    "IPTYPE",
 }
+IP_TYPES = {"RESIDENTIAL": "家宽", "HOSTING": "机房", "MOBILE": "移动"}
 UNKNOWN_FLAG = "🏳"
 
 
@@ -56,6 +58,7 @@ def render_name(
     org_label: str | None = None,
     seq: int | None = None,
     variant: str | None = None,
+    ip_type: str | None = None,
 ) -> str:
     try:
         if len(template) > 200 or any(ord(c) < 32 for c in template):
@@ -80,6 +83,7 @@ def render_name(
             else asn_label or "Unknown",
             SEQ=short_id if seq is None else f"{seq:02d}",
             VARIANT=f" {variant}" if variant else "",
+            IPTYPE=IP_TYPES.get(ip_type or "", ""),
         )
         if len(result) > 500:
             raise ValueError

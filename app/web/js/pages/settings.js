@@ -9,6 +9,7 @@ const TOKENS = [
   ["{ORG}", "落地 IP 归属（org）简称，与 ASN 相同时为空"],
   ["{SEQ}", "落地服务器序号（01、02…），同一落地 IP 共用"],
   ["{VARIANT}", "同服务器多个节点时的协议后缀，如 “ VLESS”"],
+  ["{IPTYPE}", "落地 IP 类型：家宽 / 机房 / 移动（ip-api 判断，未知时为空）"],
   ["{ENTRY_FLAG}", "入口国旗"],
   ["{ENTRY_COUNTRY}", "入口地区代码"],
   ["{EXIT_COUNTRY}", "落地地区代码"],

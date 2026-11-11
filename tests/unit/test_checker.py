@@ -226,3 +226,58 @@ def test_crashed_runtime_is_restarted_once(monkeypatch, monitor_settings, fixtur
         identity, "N1"
     )
     assert result.status == "UP" and Flaky.starts == 2 and Flaky.closes >= 1
+
+
+@pytest.mark.parametrize("second_target_answers", [True, False])
+def test_echo_unreachable_from_exit_falls_back_to_a_second_target(
+    monkeypatch, monitor_settings, fixture_bytes, second_target_answers
+):
+    import app.checker.health as module
+
+    monkeypatch.setattr(module.socket, "create_connection", lambda *a, **k: nullcontext())
+    calls = []
+
+    class BlockedExit(Echo):
+        def request(self, port=None):
+            if port:
+                raise AssetError("ECHO_HTTP_ERROR")  # e.g. Cloudflare refuses this exit
+            return super().request()
+
+        def reachable(self, port, url, timeout):
+            calls.append((port, url, timeout))
+            return second_target_answers
+
+    identity = parse_document(fixture_bytes("sample_vless.txt")).nodes[0].identity
+    identity["server_host"] = "198.51.100.1"
+    result = HealthChecker(
+        monitor_settings, runtime=Runtime(), echo=BlockedExit(), geoip=Geo()
+    ).check(identity, "N1")
+    assert calls == [(Runtime.port, monitor_settings.fallback_probe_url, 6)]
+    if second_target_answers:
+        assert result.status == "UP" and result.exit_ip is None and result.error_code is None
+        assert result.echo_source == "fallback"
+        assert result.precheck_metadata["echo_unreachable"] == "ECHO_HTTP_ERROR"
+    else:
+        assert result.status == "UNKNOWN" and result.error_code == "ECHO_HTTP_ERROR"
+
+
+def test_echo_timeouts_do_not_spend_a_fallback(monkeypatch, monitor_settings, fixture_bytes):
+    import app.checker.health as module
+
+    monkeypatch.setattr(module.socket, "create_connection", lambda *a, **k: nullcontext())
+
+    class Slow(Echo):
+        def request(self, port=None):
+            if port:
+                raise AssetError("ECHO_TIMEOUT")
+            return super().request()
+
+        def reachable(self, *args):
+            raise AssertionError("a timed-out node must not be retried elsewhere")
+
+    identity = parse_document(fixture_bytes("sample_vless.txt")).nodes[0].identity
+    identity["server_host"] = "198.51.100.1"
+    result = HealthChecker(monitor_settings, runtime=Runtime(), echo=Slow(), geoip=Geo()).check(
+        identity, "N1"
+    )
+    assert result.status == "UNKNOWN" and result.error_code == "ECHO_TIMEOUT"

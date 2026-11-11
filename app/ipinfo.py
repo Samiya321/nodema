@@ -20,7 +20,7 @@ from sqlalchemy.dialects.postgresql import insert
 from app.database.models import IpInfo
 from app.scans import now
 
-FIELDS = "status,countryCode,regionName,city,isp,org,as,query"
+FIELDS = "status,countryCode,regionName,city,isp,org,as,mobile,proxy,hosting,query"
 BATCH_SIZE = 100
 MAX_TEXT = 200
 CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f​-‏ -‮⁦-⁩]")
@@ -61,6 +61,15 @@ def parse_entry(item: object, requested: set[str]) -> dict | None:
         "org": clean(item.get("org")),
         "as_number": as_number,
         "as_org": as_org,
+        # Mobile network, flagged VPN/proxy/Tor, data center: the landing IP's type.
+        **{
+            column: value if isinstance(value, bool) else None
+            for column, value in (
+                ("is_mobile", item.get("mobile")),
+                ("is_proxy", item.get("proxy")),
+                ("is_hosting", item.get("hosting")),
+            )
+        },
     }
 
 
@@ -116,7 +125,19 @@ def pending_ips(session, refresh_days: int, limit: int) -> list[str]:
     return [ip for ip in rows if public_ip(ip)]
 
 
-COLUMNS = ("status", "country_code", "region", "city", "isp", "org", "as_number", "as_org")
+COLUMNS = (
+    "status",
+    "country_code",
+    "region",
+    "city",
+    "isp",
+    "org",
+    "as_number",
+    "as_org",
+    "is_mobile",
+    "is_proxy",
+    "is_hosting",
+)
 
 
 def _save(session, rows, stamp):

@@ -17,6 +17,8 @@ FILTER_KEYS = {
     "node_group",
     "provider_id",
     "asn_label",
+    "exit_ip_type",
+    "exit_ip_proxy",
     "q",
     "status",
     "protocol",
@@ -61,7 +63,7 @@ def filters_from_params(params):
     if set(params) - FILTER_KEYS - {"offset", "limit", "sort"}:
         raise AssetError("INVALID_NODE_QUERY")
     result = {k: v for k, v in params.items() if k in FILTER_KEYS and v != ""}
-    for key in ("enabled", "eligible"):
+    for key in ("enabled", "eligible", "exit_ip_proxy"):
         if key in result:
             if result[key] not in ("true", "false"):
                 raise AssetError("INVALID_NODE_QUERY")

@@ -410,6 +410,9 @@ class IpInfo(Base):
     queried_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), server_default=sa.func.now()
     )
+    is_mobile: Mapped[bool | None]
+    is_proxy: Mapped[bool | None]
+    is_hosting: Mapped[bool | None]
 
 
 class NodeShareLink(Base):

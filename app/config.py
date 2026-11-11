@@ -26,7 +26,10 @@ class Settings(BaseSettings):
     mihomo_binary: str = "private/bin/mihomo"
     mihomo_reuse: bool = True
     mihomo_max_nodes_per_process: int = Field(default=250, ge=1, le=10000)
-    check_concurrency: int = Field(default=16, ge=1, le=64)
+    # Nodes loaded together into one shared runtime (0: one reload per node per worker).
+    mihomo_batch_size: int = Field(default=128, ge=0, le=1000)
+    mihomo_batch_processes: int = Field(default=3, ge=1, le=16)
+    check_concurrency: int = Field(default=48, ge=1, le=128)
     check_batch_size: int = Field(default=16, ge=1, le=250)
     runner_probe_id: str = Field(default="auto", pattern=r"^[A-Za-z0-9_-]{1,64}$")
     dns_cache_max_ttl_seconds: float = Field(default=300, ge=0, le=3600)
@@ -41,6 +44,10 @@ class Settings(BaseSettings):
     failure_cooldown_base_hours: int = Field(default=6, ge=1, le=24)
     failure_cooldown_max_hours: int = Field(default=72, ge=1, le=168)
     echo_url: str = ""
+    # Tried through the proxy when Echo fails; empty disables the fallback.
+    fallback_probe_url: str = Field(
+        default="https://www.gstatic.com/generate_204", pattern=r"^(https://[^\s]+)?$"
+    )
     # Landing-IP details: ip-api.com free tier (HTTP only, non-commercial, 15 batches/min).
     ipinfo_enabled: bool = True
     ipinfo_url: str = Field(default="http://ip-api.com/batch", pattern=r"^https?://[^\s]+$")
