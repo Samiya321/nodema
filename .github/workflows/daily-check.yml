@@ -38,7 +38,7 @@ env:
   ECHO_TOKEN: ${{ secrets.ECHO_TOKEN }}
   SCAN_TIMEZONE: Asia/Shanghai
   FRESHNESS_HOURS: ${{ vars.FRESHNESS_HOURS || '36' }}
-  CHECK_CONCURRENCY: ${{ vars.CHECK_CONCURRENCY || '16' }}
+  CHECK_CONCURRENCY: ${{ vars.CHECK_CONCURRENCY || '48' }}
   CHECK_BATCH_SIZE: ${{ vars.CHECK_BATCH_SIZE || '16' }}
   MIHOMO_REUSE: ${{ vars.MIHOMO_REUSE || 'true' }}
   MIHOMO_MAX_NODES_PER_PROCESS: ${{ vars.MIHOMO_MAX_NODES_PER_PROCESS || '250' }}
@@ -104,15 +104,27 @@ jobs:
           else
             uv run nodema scan prepare --trigger manual --scope "$REQUESTED_SCOPE"
           fi
+      - id: week
+        if: steps.plan.outputs.has_tasks == 'true'
+        run: echo "week=$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
+      - name: Restore cached GeoLite databases
+        # Owner's choice for this self-use repo: the databases live in the Actions cache
+        # (readable by workflows in this repository) instead of being downloaded each run.
+        if: steps.plan.outputs.has_tasks == 'true'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: private/geoip
+          key: geolite-${{ steps.week.outputs.week }}
+          restore-keys: geolite-
       - id: geoip
-        name: Download GeoLite once and encrypt for this workflow
+        name: Reuse or download GeoLite, encrypt for this workflow
         if: steps.plan.outputs.has_tasks == 'true'
         env:
           MAXMIND_ACCOUNT_ID: ${{ secrets.MAXMIND_ACCOUNT_ID }}
           MAXMIND_LICENSE_KEY: ${{ secrets.MAXMIND_LICENSE_KEY }}
           GEOIP_DOWNLOAD_PROVIDER: ${{ vars.GEOIP_DOWNLOAD_PROVIDER || 'auto' }}
           GEOIP_GITHUB_TOKEN: ${{ github.token }}
-        run: uv run nodema geoip-pack --output-file private/geoip.nma
+        run: uv run nodema geoip-pack --output-file private/geoip.nma --reuse-days 8
       - name: Share encrypted GeoLite bundle
         if: steps.geoip.outputs.geoip_ready == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

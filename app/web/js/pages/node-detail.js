@@ -1,4 +1,4 @@
-import { KIND, ago, api, badge, busy, date, dialog, errorText, field, h, ms, pct, route, select, table, toast } from "../core.js";
+import { IP_TYPE, KIND, ago, api, badge, busy, date, dialog, errorText, field, h, ms, pct, route, select, table, toast } from "../core.js";
 import { testNodes } from "../strip.js";
 import { showShare } from "../share.js";
 
@@ -24,6 +24,9 @@ export async function nodeDetail(id) {
       h("span", { class: "tag " + (n.node_group === "AIRPORT" ? "air" : "own") }, KIND[n.node_group]),
       h("span", { class: "muted" }, `最近检测 ${ago(n.last_checked_at)}`),
     ),
+    obs?.echo_source === "fallback"
+      ? h("p", { class: "callout" }, "节点可用，但它的出口访问不了检测用的 Echo（Cloudflare），已通过备用地址确认连通，所以落地国家、ASN 暂时未知，名称不编号。")
+      : null,
     h(
       "div",
       { class: "grid-2" },
@@ -37,6 +40,7 @@ export async function nodeDetail(id) {
         ["落地位置", [n.exit_country, n.exit_region, n.exit_ip_city || obs?.exit_city].filter(Boolean).join(" · ") || null],
         ["IP 归属（org）", n.exit_org],
         ["ISP", n.exit_isp],
+        ["IP 类型", n.exit_ip_type ? `${IP_TYPE[n.exit_ip_type]}${n.exit_ip_proxy ? "，已被标记为 VPN/代理" : ""}（ip-api 判断）` : null],
         ["落地 ASN", n.exit_asn ? `AS${n.exit_asn} ${n.exit_asn_org || ""}` : "—"],
       ]),
       pairs([
@@ -97,7 +101,7 @@ export async function nodeDetail(id) {
       [
         { label: "时间", render: (r) => date(r.checked_at) },
         { label: "结果", render: (r) => badge(r.status) },
-        { label: "落地", render: (r) => (r.exit_country ? `${r.exit_country} AS${r.exit_asn ?? "?"}` : "—") },
+        { label: "落地", render: (r) => (r.exit_country ? `${r.exit_country} AS${r.exit_asn ?? "?"}` : r.echo_source === "fallback" ? "未知（Echo 不可达）" : "—") },
         { label: "延迟", class: "num", render: (r) => ms(r.http_duration_ms) },
         { label: "阶段", render: (r) => `DNS ${r.dns_status} · TCP ${r.tcp_status} · 代理 ${r.proxy_status}` },
         { label: "原因", render: (r) => (r.error_code ? errorText(r.error_code) : "—") },

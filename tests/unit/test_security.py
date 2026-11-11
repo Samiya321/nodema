@@ -183,5 +183,8 @@ def test_keys_and_naming():
         )
         == "🇯🇵JP|Greencloud|xTom 01 VLESS"
     )
+    assert render_name("N1", "vless", None, None, "{IPTYPE}{SEQ}", ip_type="HOSTING", seq=3) == (
+        "机房03"
+    )
     with pytest.raises(AssetError, match="INVALID_NAME_TEMPLATE"):
         render_name("N000001", "vless", None, None, "{SHORT_ID.__class__}")

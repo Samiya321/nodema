@@ -106,6 +106,8 @@ export const KIND = {
   AUTO: "自动识别",
   ALL: "全部",
 };
+// Landing IP type from ip-api flags.
+export const IP_TYPE = { RESIDENTIAL: "家宽", HOSTING: "机房", MOBILE: "移动网络" };
 export const SCAN_KIND = { DAILY: "每日", SUPPLEMENTAL: "补测", MANUAL: "手动" };
 
 export const ERRORS = {

@@ -55,6 +55,11 @@ class Observation:
 
 
 ENVIRONMENT_VERDICT_TTL_SECONDS = 20
+# Echo failures after which a second target is tried (not timeouts: a slow or
+# blackholed node would only spend the fallback timeout as well).
+FALLBACK_AFTER = frozenset({"ECHO_REQUEST_FAILED", "ECHO_HTTP_ERROR"})
+FALLBACK_TIMEOUT = 6
+FALLBACK_SOURCE = "fallback"
 # Errors that prove the whole Runner is unusable; every other per-node error is retried.
 GLOBAL_ENVIRONMENT_ERRORS = frozenset(
     {"ECHO_ENVIRONMENT_ERROR", "RUNNER_NETWORK_ERROR", "MIHOMO_UNAVAILABLE"}
@@ -151,6 +156,38 @@ class EchoClient:
             self.metrics["echo_failures"] += 1
             raise AssetError("ECHO_REQUEST_FAILED") from None
 
+    def reachable(self, port, url, timeout):
+        """Fallback probe through the local proxy: does a non-Cloudflare URL answer?
+
+        Some exits cannot reach the Echo Worker (Cloudflare blocks or challenges their
+        IP). A 2xx/3xx from a second target proves the node works; only the landing
+        details stay unknown.
+        """
+        self.metrics["fallback_requests"] = self.metrics.get("fallback_requests", 0) + 1
+        deadline = time.monotonic() + timeout
+        pool = httpcore.HTTPProxy(
+            proxy_url=f"http://127.0.0.1:{port}", network_backend=TimedLocalBackend(deadline)
+        )
+        limits = {"connect": timeout, "read": timeout, "write": timeout, "pool": timeout}
+        try:
+            with pool:
+                response = pool.request(
+                    "GET",
+                    url,
+                    headers={"Accept-Encoding": "identity"},
+                    extensions={"timeout": limits},
+                )
+            return 200 <= response.status < 400
+        except (
+            AssetError,
+            httpcore.TimeoutException,
+            httpcore.NetworkError,
+            httpcore.ProtocolError,
+            OSError,
+            TimeoutError,
+        ):
+            return False
+
 
 class TimedLocalBackend(httpcore.SyncBackend):
     def __init__(self, deadline):
@@ -233,6 +270,12 @@ class HealthChecker:
         except AssetError:
             raise AssetError("ECHO_ENVIRONMENT_ERROR") from None
 
+    def adopt_preflight(self, other):
+        """Share another worker's preflight (same Runner, binary and Echo) instead of
+        repeating it: at high concurrency serial preflights dominated short shards."""
+        self.probe_key = other.probe_key
+        self.probe_metadata = copy.deepcopy(other.probe_metadata)
+
     def environment_ok(self):
         """Direct Echo canary, shared by all workers for a short TTL.
 
@@ -252,6 +295,14 @@ class HealthChecker:
             return probe()
         return verdict("echo-direct", probe, ENVIRONMENT_VERDICT_TTL_SECONDS)
 
+    def _works_without_echo(self, error, port):
+        """After an Echo failure, a second (non-Cloudflare) target decides UP vs failure."""
+        url = self.settings.fallback_probe_url
+        reachable = getattr(self.echo, "reachable", None)
+        if not url or reachable is None or error.code not in FALLBACK_AFTER:
+            return False
+        return reachable(port, url, min(self.settings.http_timeout_seconds, FALLBACK_TIMEOUT))
+
     def _start_runtime(self, proxy):
         """A crashed per-worker runtime is restarted once before reporting an error."""
         try:
@@ -270,6 +321,15 @@ class HealthChecker:
         return result
 
     def _check(self, identity, short_id):
+        result, ready = self.prepare(identity, short_id)
+        return result if ready is None else self.probe(result, ready)
+
+    def prepare(self, identity, short_id):
+        """Everything before the proxy itself: conversion, DNS, TCP pre-check, cooldown.
+
+        Returns (result, None) when the node is decided without a proxy, or
+        (result, ready) where ready holds the mihomo proxy and the pinned entry IPs.
+        """
         result = Observation(
             geoip_metadata=dict(self.geoip.metadata),
             echo_source=urlsplit(self.echo.url).hostname,
@@ -280,7 +340,7 @@ class HealthChecker:
             proxy = to_mihomo(identity, short_id)
         except AssetError:
             result.status, result.error_code = "UNSUPPORTED", "RUNTIME_UNSUPPORTED"
-            return result
+            return result, None
         resolution = self.cache.resolve(identity["server_host"], self.probe_key)
         result.dns_status, result.dns_duration_ms = resolution["status"], resolution["duration_ms"]
         result.precheck_metadata["dns"] = {
@@ -301,7 +361,7 @@ class HealthChecker:
                     result.error_code = "RUNNER_NETWORK_ERROR"
                 elif result.error_code == "DNS_ENVIRONMENT_ERROR":
                     result.error_code = "ENTRY_DNS_ERROR"
-            return result
+            return result, None
         ips = resolution["ips"]
         result.entry_ips = list(ips)
         result.geoip_metadata["entry"] = [
@@ -318,7 +378,7 @@ class HealthChecker:
             result.measurement_kind, result.error_code = "SKIPPED", "ENTRY_NETWORK_UNAVAILABLE"
             result.precheck_metadata["decision"] = "ENTRY_NETWORK_UNAVAILABLE"
             self.metrics["preflight_skips"] += 1
-            return result
+            return result, None
         if identity["protocol"] == "hysteria2":
             result.tcp_status = "NOT_APPLICABLE"
         else:
@@ -334,7 +394,7 @@ class HealthChecker:
                 result.measurement_kind, result.error_code = "SKIPPED", "ENTRY_NETWORK_UNAVAILABLE"
                 result.precheck_metadata["decision"] = "ENTRY_NETWORK_UNAVAILABLE"
                 self.metrics["preflight_skips"] += 1
-                return result
+                return result, None
             if (
                 self.settings.precheck_gate_enabled
                 and tcp["status"] == "FAILED"
@@ -347,7 +407,7 @@ class HealthChecker:
                     )
                     result.precheck_metadata["decision"] = "CONFIRMED_UNREACHABLE"
                     self.metrics["preflight_skips"] += 1
-                    return result
+                    return result, None
                 result.precheck_metadata["sampled_full"] = True
                 self.metrics["full_samples"] += 1
         next_check = self.context.get("next_full_check_at")
@@ -363,20 +423,42 @@ class HealthChecker:
                     decision="COOLDOWN", next_full_check_at=next_check.isoformat()
                 )
                 self.metrics["cooldown_skips"] += 1
-                return result
+                return result, None
             if not result.precheck_metadata.get("sampled_full"):
                 result.precheck_metadata["sampled_full"] = True
                 self.metrics["full_samples"] += 1
-        if hasattr(self.runtime, "set_hosts"):
-            self.runtime.set_hosts(
-                {identity["server_host"]: ips} if not resolution["literal"] else {}
-            )
         self.metrics["full_checks"] += 1
+        hosts = {identity["server_host"]: ips} if not resolution["literal"] else {}
+        return result, {"proxy": proxy, "hosts": hosts}
+
+    def probe(self, result, ready, listener=None):
+        """The proxy request itself. listener=(port, alive) uses a shared batch runtime
+        (app.checker.runtime.ListenerPool) instead of this worker's own mihomo."""
+        proxy = ready["proxy"]
+        if listener is None and hasattr(self.runtime, "set_hosts"):
+            self.runtime.set_hosts(ready["hosts"])
         # Only a successful proxy HTTPS response can establish UP.
         try:
-            self._start_runtime(proxy)
+            if listener is None:
+                self._start_runtime(proxy)
+            port = self.runtime.port if listener is None else listener[0]
             started = time.monotonic()
-            data = self.echo.request(self.runtime.port)
+            try:
+                data = self.echo.request(port)
+            except AssetError as error:
+                if listener is not None and not listener[1]():
+                    raise AssetError("MIHOMO_BATCH_CRASHED") from None
+                if not self._works_without_echo(error, port):
+                    raise
+                # The node works; its exit just cannot reach Echo. No landing details.
+                result.http_duration_ms = milliseconds(started)
+                result.proxy_status = result.http_status = "SUCCESS"
+                result.echo_source = FALLBACK_SOURCE
+                result.precheck_metadata["echo_unreachable"] = error.code
+                result.status = (
+                    "DEGRADED" if result.http_duration_ms > self.settings.degraded_http_ms else "UP"
+                )
+                return result
             result.http_duration_ms = milliseconds(started)
             result.proxy_status = result.http_status = "SUCCESS"
             result.exit_ip = data["ip"]
@@ -410,10 +492,11 @@ class HealthChecker:
                 if not self.environment_ok():
                     result.status, result.error_code = "ENVIRONMENT_ERROR", "ECHO_ENVIRONMENT_ERROR"
         finally:
-            try:
-                getattr(self.runtime, "reset", self.runtime.close)()
-            except AssetError as error:
-                result.status, result.error_code = "ENVIRONMENT_ERROR", error.code
+            if listener is None:
+                try:
+                    getattr(self.runtime, "reset", self.runtime.close)()
+                except AssetError as error:
+                    result.status, result.error_code = "ENVIRONMENT_ERROR", error.code
         return result
 
     def close(self):

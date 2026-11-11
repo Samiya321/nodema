@@ -1,6 +1,6 @@
 // Row, group and pager rendering for the nodes page. Rows are built lazily, a
 // chunk at a time, so thousands of nodes never land in the DOM at once.
-import { KIND, ago, badge, flag, h, pct, route } from "../core.js";
+import { IP_TYPE, KIND, ago, badge, flag, h, pct, route } from "../core.js";
 import { nodeDetail } from "./node-detail.js";
 
 export const CHUNK = 100;
@@ -53,7 +53,8 @@ export function headRow(view) {
 }
 
 export function nodeRow(n, view, onPick) {
-  const meta = [n.short_id, n.protocol, n.server_node_count > 1 ? `同服务器 ×${n.server_node_count}` : "", n.enabled ? "" : "已停用", n.present_source_count ? "" : "上游已移除"];
+  const ipType = n.exit_ip_type ? IP_TYPE[n.exit_ip_type] + (n.exit_ip_proxy ? "（被标记为代理）" : "") : "";
+  const meta = [n.short_id, n.protocol, ipType, n.server_node_count > 1 ? `同服务器 ×${n.server_node_count}` : "", n.enabled ? "" : "已停用", n.present_source_count ? "" : "上游已移除"];
   return h(
     "tr",
     { class: n.enabled ? "" : "dim" },

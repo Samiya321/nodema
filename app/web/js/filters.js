@@ -25,6 +25,8 @@ export const ADVANCED = [
   ["entry_asn", "入口 ASN 号", "number"],
   ["server_host", "入口主机", "text"],
   ["exit_ip", "出口 IP", "text"],
+  ["exit_ip_type", "落地 IP 类型", "select", [["", "全部"], ["RESIDENTIAL", "家宽"], ["HOSTING", "机房"], ["MOBILE", "移动网络"]]],
+  ["exit_ip_proxy", "落地 IP 被标记为代理", "select", [["", "全部"], ["false", "否"], ["true", "是"]]],
   ["transport", "传输", "select", [["", "全部"], ["tcp", "TCP"], ["ws", "WS"], ["grpc", "gRPC"], ["quic", "QUIC"]]],
   ["security", "安全层", "select", [["", "全部"], ["none", "无"], ["tls", "TLS"], ["reality", "Reality"]]],
   ["grade", "大陆参考等级", "select", [["", "全部"], ["P1", "P1"], ["P2", "P2"], ["P3", "P3"], ["U", "资料不足"]]],

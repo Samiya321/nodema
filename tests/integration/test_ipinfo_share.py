@@ -162,3 +162,25 @@ def test_refresh_waits_for_the_rate_limit_reset_within_its_budget(
     client = FakeClient([reply(f"192.0.2.{i}") for i in (1, 2, 3)])
     result = ipinfo.refresh(service.sessions, tight, client, sleep=sleep, clock=lambda: now[0])
     assert result["saved"] == 1 and result["skipped"] == "RATE_LIMITED"
+
+
+def test_landing_ip_type_flags_reach_catalog_filters_and_names(
+    service, monitor_settings, monkeypatch
+):
+    nodes(service, 2)
+    scan(service, monitor_settings)
+    monkeypatch.setattr(ipinfo, "public_ip", lambda ip: True)
+    home = {**success("192.0.2.1"), "mobile": False, "proxy": False, "hosting": False}
+    idc = {**success("192.0.2.2"), "mobile": False, "proxy": True, "hosting": True}
+    ipinfo.refresh(service.sessions, monitor_settings, FakeClient([BatchReply([home, idc], 14)]))
+    catalog = Catalog(service, monitor_settings)
+    by_ip = {n["exit_ip"]: n for n in catalog.page({}, limit=10)["items"]}
+    assert by_ip["192.0.2.1"]["exit_ip_type"] == "RESIDENTIAL"
+    assert by_ip["192.0.2.2"]["exit_ip_type"] == "HOSTING" and by_ip["192.0.2.2"]["exit_ip_proxy"]
+    assert catalog.page({"exit_ip_type": "RESIDENTIAL"}, limit=10)["total"] == 1
+    assert catalog.page({"exit_ip_proxy": True}, limit=10)["total"] == 1
+    named = catalog.page({}, limit=10, template="{IPTYPE}|{SHORT_ID}")["items"]
+    assert sorted(n["name"].split("|")[0] for n in named) == ["家宽", "机房"]
+    assert (
+        parse_entry({**success("192.0.2.9"), "hosting": "yes"}, {"192.0.2.9"})["is_hosting"] is None
+    )

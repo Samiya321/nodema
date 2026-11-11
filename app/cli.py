@@ -755,8 +755,17 @@ def geoip_update(directory: str = "private/geoip"):
 
 @app.command("geoip-pack")
 @safe_command
-def geoip_pack(output_file: str = typer.Option(...), directory: str = "private/geoip"):
-    from app.geoip_update import download_databases, download_provider, pack_databases
+def geoip_pack(
+    output_file: str = typer.Option(...),
+    directory: str = "private/geoip",
+    reuse_days: int = typer.Option(0, help="Reuse cached databases built within N days."),
+):
+    from app.geoip_update import (
+        cached_databases,
+        download_databases,
+        download_provider,
+        pack_databases,
+    )
 
     settings = Settings()
     ready = False
@@ -764,7 +773,9 @@ def geoip_pack(output_file: str = typer.Option(...), directory: str = "private/g
     if result["provider"] != "disabled":
         try:
             aes, _ = settings.keys()
-            result["databases"] = download_databases(settings, directory)
+            cached = cached_databases(directory, reuse_days)
+            result["cache"] = "HIT" if cached else "MISS"
+            result["databases"] = cached or download_databases(settings, directory)
             pack_databases(directory, output_file, Cipher(aes, settings.encryption_key_id))
             ready = True
         except AssetError as error:

@@ -11,6 +11,8 @@ export const filterKeys = new Set([
   "node_group",
   "provider_id",
   "asn_label",
+  "exit_ip_type",
+  "exit_ip_proxy",
   "q",
   "status",
   "protocol",
@@ -56,7 +58,7 @@ export function filtersFromParams(params: URLSearchParams): Row {
     if (["offset", "limit", "sort", "view"].includes(key)) continue;
     if (!filterKeys.has(key)) throw new SafeError("INVALID_NODE_QUERY");
     if (!value) continue;
-    if (["eligible", "enabled"].includes(key)) {
+    if (["eligible", "enabled", "exit_ip_proxy"].includes(key)) {
       if (!["true", "false"].includes(value))
         throw new SafeError("INVALID_NODE_QUERY");
       result[key] = value === "true";

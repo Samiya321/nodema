@@ -26,6 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from alembic.config import Config  # noqa: E402
 
 from alembic import command  # noqa: E402
+from app.checker.batch import ListenerPool  # noqa: E402
 from app.checker.health import HealthChecker  # noqa: E402
 from app.checker.precheck import EndpointCache  # noqa: E402
 from app.checker.runtime import Mihomo, free_port  # noqa: E402
@@ -54,6 +55,8 @@ def fixture_server(binary, users):
                 if self.path != "/" + nonce:
                     self.send_error(404)
                     return
+                # Optional delay models a real exit's network round trip (loopback is ~1 ms).
+                time.sleep(float(os.environ.get("BENCHMARK_ECHO_DELAY_MS", "0")) / 1000)
                 raw = json.dumps(
                     {"nonce": nonce, "ip": "198.51.100.20", "country": "ZZ", "asn": 64512}
                 ).encode()
@@ -178,7 +181,7 @@ def fixture_server(binary, users):
             thread.join(timeout=2)
 
 
-def benchmark(url, count, binary, workers, baseline=False):
+def benchmark(url, count, binary, workers, baseline=False, batch=False, skip_exports=False):
     admin = make_engine(url)
     schema = "pipeline_benchmark_" + uuid4().hex
     with admin.begin() as conn:
@@ -227,9 +230,12 @@ def benchmark(url, count, binary, workers, baseline=False):
             retry_delay_seconds=0,
             shard_size=250,
             mihomo_binary=binary,
-            check_concurrency=1 if baseline else 4,
+            check_concurrency=1
+            if baseline
+            else int(os.environ.get("BENCHMARK_CONCURRENCY", 16 if batch else 4)),
             check_batch_size=1 if baseline else 16,
             mihomo_reuse=not baseline,
+            mihomo_batch_size=128 if batch else 0,
         )
         users = [str(uuid4()) for _ in range(count)]
         with fixture_server(binary, users) as (port, echo_class):
@@ -265,6 +271,7 @@ def benchmark(url, count, binary, workers, baseline=False):
                         echo=echo_class(),
                         geoip=Geo(),
                     ),
+                    pool_factory=(lambda: ListenerPool(binary)) if batch else None,
                 )
                 result = runner.run_shard(run["id"], shard)
                 if result["status"] != "COMPLETED":
@@ -279,11 +286,11 @@ def benchmark(url, count, binary, workers, baseline=False):
                 raise AssetError("BENCHMARK_PUBLICATION_FAILED")
             published_bytes = usage.database_sample()["table_bytes"]
             exports = ExportService(assets, settings)
-            export_bytes = {}
-            for format in ("mihomo", "singbox", "uri", "json", "csv"):
+            export_bytes, export_counts = {}, {}
+            # Exports build asynchronously since migration 0010; --skip-exports measures checks.
+            for format in () if skip_exports else ("mihomo", "singbox", "uri", "json", "csv"):
                 artifact = exports.create(format, build=True)
-                if artifact["node_count"] != count:
-                    raise AssetError("BENCHMARK_EXPORT_COUNT_FAILED")
+                export_counts[format] = artifact["node_count"]
                 raw, _, _ = exports.download(artifact["id"], artifact["token"])
                 export_bytes[format] = len(raw)
             total_seconds = time.monotonic() - started
@@ -334,7 +341,11 @@ def benchmark(url, count, binary, workers, baseline=False):
                 )
             summary = usage.summary()
             return {
-                "mode": "serial-restart" if baseline else "bounded-reuse",
+                "mode": "serial-restart"
+                if baseline
+                else "shared-batch-runtime"
+                if batch
+                else "bounded-reuse",
                 **{
                     key: summary["totals"][key]
                     for key in (
@@ -369,6 +380,7 @@ def benchmark(url, count, binary, workers, baseline=False):
                 "echo_requests": summary["totals"]["echo_requests"],
                 "echo_response_bytes": summary["totals"]["echo_response_bytes"],
                 "export_bytes": export_bytes,
+                "export_counts": export_counts,
                 "idempotent_replay": True,
                 "github_actions_minutes": None,
                 "public_network_bytes": None,
@@ -388,6 +400,12 @@ def main():
         action="store_true",
         help="Serial checks and a fresh runtime per node, with identical protocol and workload",
     )
+    parser.add_argument(
+        "--batch",
+        action="store_true",
+        help="Shared batch runtimes (one process per 128 nodes, 16 concurrent checks)",
+    )
+    parser.add_argument("--skip-exports", action="store_true")
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--binary", default="private/bin/mihomo")
     args = parser.parse_args()
@@ -399,7 +417,10 @@ def main():
         raise AssetError("TEST_DATABASE_URL_REQUIRED")
     binary = str(Path(args.binary).resolve())
     Mihomo(binary).preflight()
-    results = [benchmark(url, n, binary, args.workers, args.baseline) for n in args.sizes]
+    results = [
+        benchmark(url, n, binary, args.workers, args.baseline, args.batch, args.skip_exports)
+        for n in args.sizes
+    ]
     print(
         json.dumps(
             {

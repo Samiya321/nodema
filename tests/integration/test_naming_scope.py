@@ -170,7 +170,7 @@ def test_sequence_numbers_above_99_are_not_truncated(db_engine):
     with db_engine.connect() as conn:
         render = (
             "SELECT nodema_render_name("
-            "'{ASN} {SEQ}','N1','vless',NULL,NULL,'HK','SG','X',NULL,:seq,NULL)"
+            "'{ASN} {SEQ}','N1','vless',NULL,NULL,'HK','SG','X',NULL,:seq,NULL,NULL)"
         )
         assert [conn.scalar(sa.text(render), {"seq": s}) for s in (7, 42, 108, 1234)] == [
             "X 07",

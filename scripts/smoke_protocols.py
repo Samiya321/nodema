@@ -26,6 +26,7 @@ from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 from cryptography.x509.oid import NameOID
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from app.checker.batch import ListenerPool  # noqa: E402
 from app.checker.health import HealthChecker  # noqa: E402
 from app.checker.runtime import Mihomo, free_port  # noqa: E402
 from app.config import Settings  # noqa: E402
@@ -415,6 +416,44 @@ def main(binary):
             if checker.check(pinned, "synthetic").status != "UP":
                 raise AssetError("RESOLVED_HOST_PINNING_FAILED")
             print("reuse/same-name-invalid-auth/recovery/dns-pinning: OK", flush=True)
+
+            # Batch runtime: every protocol in one process behind its own listener, a
+            # wrong credential that must fail, a pinned hostname, and a refused proxy.
+            pool = ListenerPool(binary, processes=2)
+            try:
+                cases = {f"B{i}": (identity, True) for i, identity in enumerate(identities)}
+                cases["BX"] = (invalid, False)
+                cases["BP"] = (pinned, True)
+                prepared = {}
+                for name, (identity, _) in cases.items():
+                    result, ready = checker.prepare(identity, name)
+                    if ready is None:
+                        raise AssetError("BATCH_PREPARE_FAILED_" + name)
+                    prepared[name] = (result, ready)
+                refused = {"name": "BR", "type": "vless", "server": "127.0.0.1", "port": 1}
+                batch = pool.load(
+                    {name: ready for name, (_, ready) in prepared.items()}
+                    | {"BR": {"proxy": refused, "hosts": {}}}
+                )
+                if batch.listener("BR") is not None or pool.metrics["batch_rejected"] != 1:
+                    raise AssetError("BATCH_REFUSED_PROXY_NOT_ISOLATED")
+                for name, (result, ready) in prepared.items():
+                    listener = batch.listener(name)
+                    if listener is None:
+                        raise AssetError("BATCH_LISTENER_MISSING_" + name)
+                    observed = checker.probe(result, ready, listener)
+                    batch.release()
+                    if (observed.status == "UP") != cases[name][1]:
+                        raise AssetError("BATCH_RESULT_WRONG_" + name)
+                if batch.alive() or pool.metrics["batch_runtimes"] != 1:
+                    raise AssetError("BATCH_RUNTIME_NOT_RETIRED")
+                print(
+                    f"batch runtime: {len(prepared)} nodes in one process, wrong credential "
+                    "rejected, refused proxy isolated: OK",
+                    flush=True,
+                )
+            finally:
+                pool.close()
         finally:
             if checker:
                 checker.close()
