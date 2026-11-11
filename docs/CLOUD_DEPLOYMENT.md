@@ -83,3 +83,11 @@ UI 额外验证逐行结果、重复提交、390px 布局，以及慢网络下�
 - 生产在单个事务中删除：来源、机场分组、节点及其状态/命名/服务器编号/分享链接/人工资料/日统计、检测批次/分片/条目/结果/请求、Runner 汇总、落地 IP 信息、订阅导出（0 个）。节点编号序列重置为 N000001。用量记录保留，只解除与已删除检测批次的关联。
 - 保留：命名模板、定时检测设置、大陆参考规则及历史、ASN 简称、运行用量（Actions 运行、使用事件、数据库采样）。
 - 验证：所有数据表为 0，保留表行数不变；readiness、总览、流水线、来源、节点、机场、Sub-Store、订阅、用量、检测记录、ASN、设置接口均返回 200。
+
+## 2026-11-11 第六次发布：0017 大数据量列表、去掉数量限制、备用检测地址、落地 IP 类型、共享批量运行时
+
+- 代码 `f6f7b06`（main，快进合并），[CI 42984169955](https://github.com/Samiya321/nodema/actions/runs/42984169955)：353 Python、33 Worker 通过；Linux 上真实 mihomo 回环验证 21 种协议配置同进程批量检测、错误凭据失败、非法配置隔离。
+- 发布前：确认无运行中的工作流；生产仍为清空后的空库（0 来源 / 0 节点）。加密备份 `backup-2026-11-11-pre-0017.nma` 在隔离 PG 恢复后升级到 0017：模板校验通过、精简列表返回 24 个字段、`ip_info` 新增 3 列。
+- 生产迁移到 `0017_scale_ip_type`；`nodema_api` 对新/重建的函数与视图均有权限。API Worker 版本 `bde2e506-89ef-4b88-a2a5-20c637752180`；Pages https://e13e8f92.nodema-dashboard.pages.dev；Echo 未变。
+- 验证：health 200、未认证 401、readiness 为真；`/api/nodes?view=compact` 直接返回 JSON 文本（`no-store`，位置数组 + `fields`），IP 类型筛选可用，非法视图 400、超限 422；各页面接口 200；新前端模块以 JavaScript 类型提供。
+- 待真实数据后观察：生产节点列表载入耗时与 Workers CPU 限制；首次检测中经备用地址判为可用的节点数、批量运行时指标（`batch_runtimes`/`batch_nodes`/`batch_rejected`）与 `MIHOMO_BATCH_CRASHED`；GeoLite 缓存命中。可用仓库变量 `MIHOMO_BATCH_SIZE=0`、`FALLBACK_PROBE_URL=` 关闭新行为。
