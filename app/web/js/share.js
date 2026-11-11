@@ -51,13 +51,20 @@ export async function showShare(node, button) {
       },
       "复制链接",
     );
+    // Version-40 QR codes hold about 2.3 KB; very long links fall back to copying.
+    let code;
+    try {
+      code = qrCanvas(link.uri);
+    } catch {
+      code = h("p", { class: "hint" }, "链接太长，无法生成二维码，请复制后在 Shadowrocket 中“从剪贴板导入”。");
+    }
     dialog(
       "分享到手机",
       h(
         "div",
         { class: "stack share" },
         h("p", { class: "hint" }, "用 Shadowrocket 扫码添加（首页右上角扫码图标）。二维码包含节点密码，不要截图外传。"),
-        qrCanvas(link.uri),
+        code,
         h("p", { class: "node-name" }, link.name),
         text,
         h("div", { class: "row" }, copy),
