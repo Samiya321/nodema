@@ -1,4 +1,5 @@
 import { KIND, ago, api, badge, busy, date, dialog, errorText, field, h, ms, pct, route, select, table, toast } from "../core.js";
+import { testNodes } from "../strip.js";
 
 const MEASURE = { FULL: "完整代理验证", PREFLIGHT: "入口预检", SKIPPED: "本轮跳过" };
 const OPERATORS = [["GENERAL", "通用"], ["CT", "电信"], ["CU", "联通"], ["CM", "移动"]];
@@ -49,6 +50,7 @@ export async function nodeDetail(id) {
     h(
       "div",
       { class: "row" },
+      h("button", { type: "button", class: "primary", onclick: async () => { if (await testNodes([n.id])) sheet.close(); } }, "检测此节点"),
       h("button", { type: "button", onclick: (e) => toggleEnabled(e.target, n) }, n.enabled ? "停用此节点" : "启用此节点"),
       h("button", { type: "button", onclick: () => annotate(n.id, sheet) }, "编辑人工资料"),
       h(

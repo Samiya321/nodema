@@ -123,6 +123,7 @@ export const ERRORS = {
   DISPATCH_FAILED: "提交到 GitHub Actions 失败，请稍后重试；请求已保存。",
   INVALID_SCAN_SCOPE: "检测范围无效。",
   SOURCE_DISABLED: "来源已暂停，请先启用。",
+  NO_ENABLED_SOURCES: "所选来源都已暂停或删除，没有可同步的来源。",
   SOURCE_NOT_FOUND: "来源不存在或已删除。",
   PROVIDER_NOT_FOUND: "机场分组不存在。",
   INVALID_PROVIDER_NAME: "分组名称需为 1–80 个字符，且不能包含链接。",
@@ -377,6 +378,7 @@ export function selection(onChange) {
   const changed = () => onChange(ids);
   return {
     ids,
+    refresh: changed,
     clear() {
       ids.clear();
       changed();

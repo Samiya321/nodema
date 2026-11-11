@@ -1,4 +1,5 @@
 import { KIND, ago, api, badge, busy, confirm, dialog, empty, errorText, field, h, table, toast } from "../core.js";
+import { syncSources } from "../strip.js";
 
 function validity(s) {
   if (s.last_sync_status === "NEVER" || !s.last_checked_at) return ["未同步", "mute"];
@@ -61,12 +62,7 @@ export async function render(root, { refresh, refreshStrip }) {
       reload();
     });
   };
-  const sync = (store) => async (e) =>
-    busy(e.target, async () => {
-      await api("/sources/batch", { method: "POST", body: { ids: [store.id], action: "request_sync" } });
-      toast("已标记待同步，点击顶部“同步来源”执行。", "ok");
-      refreshStrip();
-    });
+  const sync = (store) => (e) => syncSources([store.id], e.target);
   root.append(
     h("h1", { class: "page-title" }, "Sub-Store"),
     h("p", { class: "hint" }, "Nodema 只读取 Sub-Store 的订阅列表（/api/subs），把其中的远程订阅和本地节点拆成独立的子来源，不执行 Sub-Store 脚本。"),
@@ -90,7 +86,7 @@ export async function render(root, { refresh, refreshStrip }) {
             h(
               "div",
               { class: "row tight" },
-              h("button", { type: "button", class: "quiet", onclick: sync(s) }, "标记同步"),
+              h("button", { type: "button", class: "quiet", onclick: sync(s) }, "同步"),
               h("button", { type: "button", class: "quiet danger-text", onclick: remove(s) }, "删除"),
             ),
         },

@@ -1,10 +1,11 @@
-// The only place that starts GitHub Actions: sync sources, or test one node group.
-import { KIND, SCAN_KIND, api, busy, confirm, h, meter, toast } from "./core.js";
+// The only place that starts GitHub Actions: sync sources, or test nodes.
+import { KIND, ago, api, busy, confirm, dialog, h, meter, toast } from "./core.js";
 
 // Poll only while work is pending or just requested, so an idle tab lets the free
 // database suspend. Navigation, focus and actions refresh it otherwise.
 let root, timer, last, listening = false, wakeUntil = 0;
 const WAKE_MS = 10 * 60 * 1000;
+const RUNNING = ["PENDING", "RUNNING"];
 
 export function renderStrip(element) {
   root = element;
@@ -17,12 +18,12 @@ export function renderStrip(element) {
   window.addEventListener("hashchange", () => refreshStrip());
 }
 
-function schedule(busy) {
+function schedule(busyNow) {
   clearTimeout(timer);
-  if (!busy && Date.now() > wakeUntil) return;
+  if (!busyNow && Date.now() > wakeUntil) return;
   timer = setTimeout(() => {
     if (!document.hidden) refreshStrip();
-    else schedule(busy);
+    else schedule(busyNow);
   }, 15000);
 }
 
@@ -33,101 +34,138 @@ export async function refreshStrip() {
     return;
   }
   draw(last);
-  schedule(last.active_scans.length > 0 || (last.requested_scans || []).length > 0);
+  const running = last.active_scans.some((r) => RUNNING.includes(r.status));
+  schedule(running || (last.requested_scans || []).length > 0);
+}
+
+function submitted(result, what) {
+  wakeUntil = Date.now() + WAKE_MS;
+  setTimeout(refreshStrip, 4000);
+  if (result?.dispatched === false)
+    toast(`${what}已保存，但提交到 GitHub 失败；下一次同步、检测或定时任务会执行它。`, "bad");
+  else toast(`${what}已提交到 GitHub Actions，通常 1 分钟内开始。`, "ok");
+}
+
+// Sync chosen sources right away (sources page, Sub-Store page).
+export async function syncSources(ids, button) {
+  return busy(button, async () => {
+    submitted(await api("/pipeline/sync", { method: "POST", body: ids ? { source_ids: ids } : {} }), "同步");
+    return true;
+  });
 }
 
 async function startSync(button) {
-  await busy(button, async () => {
-    await api("/pipeline/sync", { method: "POST" });
-    toast("已提交同步。GitHub Actions 通常在 1 分钟内开始，只拉取来源，不检测节点。", "ok");
-    wakeUntil = Date.now() + WAKE_MS;
-    setTimeout(refreshStrip, 4000);
+  const count = last?.sources_total ?? "全部";
+  if (!(await confirm("同步来源", `重新拉取 ${count} 个启用的来源：更新节点、机场流量与 Sub-Store 子来源。只同步，不检测节点。`, { action: "开始同步" })))
+    return;
+  await busy(button, async () => submitted(await api("/pipeline/sync", { method: "POST" }), "同步"));
+}
+
+// Test specific nodes (from the node list) without choosing a scope.
+export async function testNodes(ids) {
+  if (!ids.length) return false;
+  if (!(await confirm("检测所选节点", `检测已选的 ${ids.length} 个节点。正在其他未完成批次中的节点会跳过。`, { action: "开始检测" })))
+    return false;
+  try {
+    submitted(await api("/scans", { method: "POST", body: { node_ids: ids } }), "检测");
+    return true;
+  } catch (error) {
+    toast(error.code || "检测提交失败", "bad");
+    return false;
+  }
+}
+
+export function openTestDialog() {
+  const testable = last?.testable || {};
+  const options = [
+    ["SELF_HOSTED", "自建节点", testable.SELF_HOSTED || 0, "你自己的服务器节点。"],
+    ["AIRPORT", "机场节点", testable.AIRPORT || 0, "只含未过期、流量未用完、未暂停的机场订阅。"],
+    ["ALL", "全部", (testable.SELF_HOSTED || 0) + (testable.AIRPORT || 0), "自建与机场一起检测。"],
+  ];
+  const form = h(
+    "form",
+    { class: "stack" },
+    h(
+      "fieldset",
+      { class: "choices" },
+      h("legend", {}, "检测范围"),
+      options.map(([value, title, count, hint], index) =>
+        h(
+          "label",
+          { class: "choice" },
+          h("input", { type: "radio", name: "scope", value, checked: index === 0 }),
+          h("span", { class: "choice-title" }, title, h("span", { class: "muted" }, ` ${count} 个`)),
+          h("span", { class: "hint" }, hint),
+        ),
+      ),
+    ),
+    last?.pending_sources ? h("p", { class: "hint" }, `开始前会先同步 ${last.pending_sources} 个待同步来源。`) : null,
+    h("p", { class: "hint" }, "想只测部分节点：在“节点”页勾选后点“检测所选”。"),
+    h("div", { class: "row end" }, h("button", { type: "submit", class: "primary" }, "开始检测")),
+  );
+  const box = dialog("开始检测", form);
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const scope = new FormData(form).get("scope");
+    await busy(e.submitter, async () => {
+      submitted(await api("/scans", { method: "POST", body: { scope } }), "检测");
+      box.close();
+    });
   });
 }
 
-async function startTest(button, scope) {
-  const testable = last?.testable?.[scope] ?? (scope === "ALL" ? undefined : 0);
-  const pending = last?.pending_sources ?? 0;
-  const message =
-    `将检测${KIND[scope]}节点` +
-    (testable !== undefined ? `（当前约 ${testable} 个可检测）` : "") +
-    "。" +
-    (pending ? `开始前会先同步 ${pending} 个待同步来源。` : "") +
-    "同一节点若已在未完成的批次中会被跳过。";
-  if (!(await confirm("开始检测", message, { action: "开始检测" }))) return;
-  await busy(button, async () => {
-    const result = await api("/scans", { method: "POST", body: { scope } });
-    toast(
-      result.dispatched === false
-        ? "检测请求已保存，但提交到 GitHub 失败；下一次同步、检测或定时任务会执行它。"
-        : "检测已提交，进度会显示在顶部。",
-      result.dispatched === false ? "bad" : "ok",
-    );
-    wakeUntil = Date.now() + WAKE_MS;
-    setTimeout(refreshStrip, 4000);
-  });
-}
-
-function progress(run) {
+function runView(run) {
   const done = Number(run.done || 0),
     total = Number(run.node_count || 0);
-  const ratio = total ? Math.min(1, done / total) : 0;
+  const label = run.scope === "ALL" ? "全部" : KIND[run.scope] || "全部";
+  if (RUNNING.includes(run.status))
+    return h(
+      "a",
+      { class: "run", href: "#/scans", title: "查看检测记录" },
+      h("span", { class: "run-label" }, `检测中 · ${label} ${done}/${total}`),
+      meter(total ? done / total : 0, { tone: "info", label: "检测进度" }),
+    );
+  const resume = h("button", { type: "button", class: "small-button" }, "继续");
+  resume.addEventListener("click", () =>
+    busy(resume, async () => submitted(await api(`/scans/${run.id}/retry`, { method: "POST" }), "继续检测")),
+  );
   return h(
-    "a",
-    {
-      class: "run",
-      href: "#/scans",
-      title: `${SCAN_KIND[run.kind] || run.kind}检测：${done}/${total}`,
-    },
-    h("span", { class: "run-label" }, `${KIND[run.scope] || "全部"} ${done}/${total}`),
-    meter(ratio, { tone: "info", label: "检测进度" }),
+    "p",
+    { class: "strip-text" },
+    h("span", { class: "warn-dot" }),
+    `上次检测中断（${label} ${done}/${total}）`,
+    resume,
   );
 }
 
 function draw(state) {
-  const testable = state.testable || {};
-  const pending = state.pending_sources || 0;
-  const syncButton = h("button", { type: "button", class: pending ? "primary" : "" }, "同步来源");
+  const syncButton = h("button", { type: "button" }, "同步来源");
   syncButton.addEventListener("click", () => startSync(syncButton));
-  const testButtons = ["SELF_HOSTED", "AIRPORT", "ALL"].map((scope) => {
-    const label = scope === "ALL" ? "全部" : KIND[scope];
-    const count = scope === "ALL" ? (testable.SELF_HOSTED || 0) + (testable.AIRPORT || 0) : testable[scope] || 0;
-    const button = h("button", { type: "button", class: "seg" }, label, h("span", { class: "count" }, count));
-    button.addEventListener("click", () => startTest(button, scope));
-    return button;
-  });
+  const testButton = h("button", { type: "button", class: "primary" }, "开始检测");
+  testButton.addEventListener("click", openTestDialog);
+  const requested = state.requested_scans || [];
   root.replaceChildren(
     h(
       "div",
       { class: "strip-group" },
+      syncButton,
       h(
         "p",
-        { class: "strip-text" },
-        pending ? h("strong", {}, pending) : "没有",
-        " 个来源待同步",
-        state.failed_sources
-          ? h("a", { href: "#/sources?status=FAILED", class: "bad-text" }, `，${state.failed_sources} 个失败`)
-          : "",
+        { class: "strip-text muted" },
+        `上次同步 ${ago(state.last_synced_at)}`,
+        state.pending_sources ? h("strong", { class: "light" }, `，${state.pending_sources} 个待同步`) : "",
+        state.failed_sources ? h("a", { href: "#/sources?status=FAILED", class: "bad-text" }, `，${state.failed_sources} 个失败`) : "",
       ),
-      syncButton,
     ),
-    h(
-      "div",
-      { class: "strip-group" },
-      h("p", { class: "strip-text" }, "检测"),
-      h("div", { class: "segmented", role: "group", "aria-label": "选择检测范围并开始" }, testButtons),
-    ),
+    h("div", { class: "strip-group" }, testButton),
     h(
       "div",
       { class: "strip-group runs", "aria-live": "polite" },
-      (state.requested_scans || []).map((r) =>
-        h("p", { class: "strip-text", title: "等待 GitHub Actions 开始" }, `已请求：${KIND[r.scope]}`),
+      requested.map((r) =>
+        h("p", { class: "strip-text", title: "等待 GitHub Actions 开始" }, `已请求：${r.scope === "NODES" ? `所选 ${r.nodes} 个节点` : KIND[r.scope]}`),
       ),
-      state.active_scans.length
-        ? state.active_scans.slice(0, 3).map(progress)
-        : (state.requested_scans || []).length
-          ? null
-          : h("p", { class: "strip-text muted" }, "没有进行中的检测"),
+      state.active_scans.slice(0, 2).map(runView),
+      !requested.length && !state.active_scans.length ? h("p", { class: "strip-text muted" }, "没有进行中的检测") : null,
     ),
   );
 }

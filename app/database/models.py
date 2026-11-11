@@ -327,6 +327,7 @@ class ScanRequest(Base):
     )
     consumed_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
     scan_run_id: Mapped[UUID | None] = mapped_column(sa.ForeignKey("scan_runs.id"))
+    node_ids: Mapped[list[UUID] | None] = mapped_column(sa.ARRAY(sa.Uuid))
 
 
 class AppSettings(Base):

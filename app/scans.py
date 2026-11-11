@@ -66,7 +66,7 @@ class ScanService:
         self.sessions = assets.sessions
         self.checker_factory = checker_factory
 
-    def create(self, scan_date: date | None = None, *, scope="ALL", manual=False):
+    def create(self, scan_date: date | None = None, *, scope="ALL", manual=False, node_ids=None):
         """Daily/supplemental runs test each node once per day; manual runs always retest.
 
         Manual runs skip only nodes still pending in another unfinished batch.
@@ -115,7 +115,12 @@ class ScanService:
                 sa.select(
                     Node.id, Node.fingerprint, Node.server_host, Node.server_port, Node.protocol
                 )
-                .where(Node.enabled.is_(True), scope_filter, ~reserved)
+                .where(
+                    Node.enabled.is_(True),
+                    scope_filter,
+                    ~reserved,
+                    Node.id.in_(node_ids) if node_ids else sa.true(),
+                )
                 .order_by(Node.fingerprint)
             ).all()
             if existing and not rows and not manual:
@@ -253,20 +258,25 @@ class ScanService:
                 result["items"] = run.archive_summary.get("items", {})
             return result
 
-    def request(self, scope="ALL"):
-        """Persist a test request; the next pipeline run consumes it."""
+    def request(self, scope="ALL", node_ids=None):
+        """Persist a test request (a scope, or specific nodes); the next run consumes it."""
         scope_clause(scope)
+        if node_ids is not None:
+            node_ids = sorted({UUID(str(value)) for value in node_ids})
+            if not 1 <= len(node_ids) <= 5000:
+                raise AssetError("INVALID_SELECTION")
         with self.sessions.begin() as session:
-            row = ScanRequest(id=uuid4(), scope=scope)
+            row = ScanRequest(id=uuid4(), scope=scope, node_ids=node_ids)
             session.add(row)
             session.flush()
-            return {"id": row.id, "scope": scope}
+            return {"id": row.id, "scope": scope, "nodes": len(node_ids or [])}
 
     def consume_requests(self, scan_date=None):
-        """Create one MANUAL run per requested scope (ALL subsumes the others).
+        """Turn every pending request into MANUAL runs: one per requested scope (ALL
+        subsumes the others) plus one run for all explicitly selected nodes.
 
         GitHub keeps one pending run per concurrency group, so a dispatch input can be
-        lost; persisted requests are never lost and each becomes exactly one run.
+        lost; persisted requests are never lost.
         """
         with self.sessions() as session:
             pending = session.scalars(
@@ -274,18 +284,23 @@ class ScanService:
                 .where(ScanRequest.consumed_at.is_(None))
                 .order_by(ScanRequest.requested_at)
             ).all()
-            scopes = {row.scope for row in pending}
+            scopes = {row.scope for row in pending if not row.node_ids}
+            selected = {node for row in pending if row.node_ids for node in row.node_ids}
             ids = [row.id for row in pending]
         if not ids:
             return []
         targets = ["ALL"] if "ALL" in scopes else sorted(scopes)
         runs = {scope: self.create(scan_date, scope=scope, manual=True) for scope in targets}
+        if selected:
+            runs["NODES"] = self.create(
+                scan_date, scope="ALL", manual=True, node_ids=sorted(selected)
+            )
         with self.sessions.begin() as session:
             for row in session.scalars(
                 sa.select(ScanRequest).where(ScanRequest.id.in_(ids)).with_for_update()
             ):
-                row.consumed_at = now()
-                row.scan_run_id = runs["ALL" if "ALL" in runs else row.scope]["id"]
+                key = "NODES" if row.node_ids else ("ALL" if "ALL" in runs else row.scope)
+                row.consumed_at, row.scan_run_id = now(), runs[key]["id"]
         return list(runs.values())
 
     def plan(self, run_id=None, scan_date=None, *, scope="ALL", manual=False, run=None):

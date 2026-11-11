@@ -15,6 +15,7 @@ import {
   table,
   toast,
 } from "../core.js";
+import { syncSources } from "../strip.js";
 
 const TYPES = { SUBSCRIPTION_URL: "订阅链接", RAW_TEXT: "节点文本", UPLOADED_FILE: "上传文件", SINGLE_URI: "单个节点" };
 const VIEWS = [
@@ -42,7 +43,14 @@ function importPanel(refresh) {
     await busy(e.submitter, async () => {
       const r = await api("/sources/bulk", { method: "POST", body: Object.fromEntries(new FormData(links)) });
       result.replaceChildren(
-        h("p", { class: "callout" }, `新增 ${r.created} 个，已存在 ${r.duplicates} 个，无效 ${r.invalid} 个。`, r.created ? "点击顶部“同步来源”开始拉取。" : ""),
+        h(
+          "div",
+          { class: "callout row wrap" },
+          h("span", {}, `新增 ${r.created} 个，已存在 ${r.duplicates} 个，无效 ${r.invalid} 个。`),
+          r.created
+            ? h("button", { type: "button", class: "primary", onclick: (e) => syncSources(r.items.filter((i) => i.status === "CREATED").map((i) => i.id), e.target) }, "立即同步这些来源")
+            : null,
+        ),
         r.invalid
           ? h("ul", { class: "plain" }, r.items.filter((i) => i.status === "INVALID").map((i) => h("li", {}, `第 ${i.line} 行：${errorText(i.error_code)}`)))
           : null,
@@ -67,8 +75,10 @@ function importPanel(refresh) {
   text.addEventListener("submit", async (e) => {
     e.preventDefault();
     await busy(e.submitter, async () => {
-      await api("/sources", { method: "POST", body: { ...Object.fromEntries(new FormData(text)), type: "RAW_TEXT" } });
-      result.replaceChildren(h("p", { class: "callout" }, "已保存。点击顶部“同步来源”解析节点。"));
+      const saved = await api("/sources", { method: "POST", body: { ...Object.fromEntries(new FormData(text)), type: "RAW_TEXT" } });
+      result.replaceChildren(
+        h("div", { class: "callout row wrap" }, h("span", {}, "已保存。"), h("button", { type: "button", class: "primary", onclick: (e) => syncSources([saved.id], e.target) }, "立即同步并解析")),
+      );
       text.reset();
       refresh();
     });
@@ -133,10 +143,20 @@ export async function render(root, { params, go, refresh, refreshStrip }) {
     value ? params.set(key, value) : params.delete(key);
     go("sources", params);
   };
-  const bar = h("div", { class: "bulkbar", hidden: true });
-  const picked = selection((ids) => {
-    bar.hidden = !ids.size;
-    bar.firstChild.textContent = `已选 ${ids.size} 个`;
+  const bar = h("div", { class: "bulkbar" });
+  const count = h("span", { class: "bulk-count" });
+  const allBox = h("input", { type: "checkbox", "aria-label": "全选" });
+  const picked = selection((chosen) => {
+    count.textContent = chosen.size ? `已选 ${chosen.size} 个` : `共 ${list.length} 个来源`;
+    bar.classList.toggle("active", chosen.size > 0);
+    for (const button of bar.querySelectorAll("button")) button.disabled = !chosen.size;
+    allBox.checked = chosen.size > 0 && chosen.size === list.length;
+    allBox.indeterminate = chosen.size > 0 && chosen.size < list.length;
+    for (const box of root.querySelectorAll("input[data-source]")) box.checked = chosen.has(box.dataset.source);
+  });
+  allBox.addEventListener("change", () => {
+    for (const s of list) allBox.checked ? picked.ids.add(s.id) : picked.ids.delete(s.id);
+    picked.refresh();
   });
   const batch = (action, done) => async (e) => {
     const ids = [...picked.ids];
@@ -155,8 +175,9 @@ export async function render(root, { params, go, refresh, refreshStrip }) {
     });
   };
   bar.append(
-    h("span", {}),
-    h("button", { type: "button", onclick: batch("request_sync", (n) => `${n} 个来源待同步。`) }, "标记待同步"),
+    h("label", { class: "check" }, allBox, "全选"),
+    count,
+    h("button", { type: "button", class: "primary", onclick: async (e) => { if (await syncSources([...picked.ids], e.target)) { picked.clear(); reload(); } } }, "同步所选"),
     h("button", { type: "button", onclick: batch("enable", (n) => `已启用 ${n} 个。`) }, "启用"),
     h("button", { type: "button", onclick: batch("disable", (n) => `已暂停 ${n} 个。`) }, "暂停"),
     h("button", { type: "button", class: "danger", onclick: batch("delete", (n) => `已删除 ${n} 个。`) }, "删除"),
@@ -175,7 +196,7 @@ export async function render(root, { params, go, refresh, refreshStrip }) {
     bar,
     table(
       [
-        { label: picked.all(ids), class: "pick", render: (s) => picked.box(s.id) },
+        { label: "", class: "pick", render: (s) => { const box = picked.box(s.id); box.dataset.source = s.id; return box; } },
         {
           label: "来源",
           render: (s) =>

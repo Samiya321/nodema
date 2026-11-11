@@ -293,14 +293,14 @@ export async function handle(
         /^[\w.-]+\/[\w.-]+$/.test(env.GITHUB_REPOSITORY) &&
         Boolean(env.GITHUB_DISPATCH_TOKEN) &&
         Boolean(env.GITHUB_WORKFLOW_REF);
-      if (version !== "0014_sources_airports_naming")
+      if (version !== "0015_exit_asn_numbering")
         return json({
           ready: false,
           checks: { schema: false, dispatch: dispatchReady },
         });
       const checks = {
         database: true,
-        schema: version === "0014_sources_airports_naming",
+        schema: version === "0015_exit_asn_numbering",
         storage: "PLAINTEXT",
         dispatch: dispatchReady,
       };

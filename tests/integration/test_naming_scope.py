@@ -5,7 +5,7 @@ import sqlalchemy as sa
 
 from app.catalog import Catalog
 from app.checker.health import Observation
-from app.domain import SourceType
+from app.domain import AssetError, SourceType
 from app.scans import ScanService
 
 pytestmark = pytest.mark.integration
@@ -173,3 +173,44 @@ def test_sequence_numbers_above_99_are_not_truncated(db_engine):
             "X 108",
             "X 1234",
         ]
+
+
+def test_numbers_follow_exit_country_and_asn_not_entry(service, monitor_settings):
+    nodes(service, 3)
+
+    class Mixed(Checker):
+        def check(self, identity, short_id):
+            result = super().check(identity, short_id)
+            # host-1 enters via SG (same as exit); others via HK.
+            result.entry_country = "SG" if identity["server_host"] == "host-1.example" else "HK"
+            return result
+
+    scans = ScanService(service, monitor_settings, checker_factory=Mixed)
+    run = scans.create(manual=True)
+    scans.run_shard(run["id"], 0)
+    scans.finalize(run["id"])
+    result = names(service, monitor_settings)
+    numbers = sorted(name.rsplit(" ", 1)[1] for name in result.values())
+    assert numbers == ["01", "02", "03"]  # one sequence for SG + Webbing
+    assert result["host-1"].startswith("🇸🇬SG|Webbing ")
+    assert result["host-2"].startswith("🇸🇬HK->SG|Webbing ")
+
+
+def test_untested_nodes_are_not_numbered(service, monitor_settings):
+    nodes(service, 2)
+    items = Catalog(service, monitor_settings).page({}, limit=10)["items"]
+    assert sorted(n["name"] for n in items) == sorted(f"🏳?|Unknown {n['short_id']}" for n in items)
+    with service.sessions() as session:
+        assert session.scalar(sa.text("SELECT count(*) FROM node_names")) == 0
+
+
+def test_selected_nodes_get_their_own_run(service, monitor_settings):
+    nodes(service, 3)
+    scans = ScanService(service, monitor_settings, checker_factory=Checker)
+    chosen = [n["id"] for n in Catalog(service, monitor_settings).page({}, limit=10)["items"]][:2]
+    scans.request(node_ids=chosen)
+    scans.request(node_ids=chosen[:1])
+    runs = scans.consume_requests()
+    assert len(runs) == 1 and runs[0]["node_count"] == 2 and runs[0]["kind"] == "MANUAL"
+    with pytest.raises(AssetError, match="INVALID_SELECTION"):
+        scans.request(node_ids=[])
