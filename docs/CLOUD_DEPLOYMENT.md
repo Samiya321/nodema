@@ -98,3 +98,11 @@ UI 额外验证逐行结果、重复提交、390px 布局，以及慢网络下�
 - API Worker 版本 `e1c33ee2-de7f-4864-9b1e-1dab96cc3626`；Pages https://3186f037.nodema-dashboard.pages.dev；Echo 未变。检测器与同步代码随 main 在下一次 Actions 运行时生效。
 - 验证：health 200、readiness 为真；`/api/airports` 146 条均带条目名与来源 Sub-Store；`/api/sources/:id/link` 认证 200 且 `no-store`、未认证 401；流水线返回 204 个失败来源中 0 个“之前正常”（全部为从未成功的链接）；新前端模块已提供。
 - 待观察：下一次同步后机场分组拆分（当前 60 组）；下一次检测中原 6,665 个“不支持”节点的实际检测结果与导出跳过计数。
+
+## 2026-11-11 第八次发布：单订阅条数上限放开、超时来源重试
+
+- 代码 `0460978`（main，快进合并），分支 [CI 43018343340](https://github.com/Samiya321/nodema/actions/runs/43018343340)、main [CI 43022767276](https://github.com/Samiya321/nodema/actions/runs/43022767276)：380 Python 测试通过。无迁移（schema 仍为 `0017_scale_ip_type`），Worker、Pages、Echo 未变，未重新部署。
+- 仅 Actions 侧：单条订阅默认条数上限 200,000（实际受 10 MB 约束），Sub-Store 聚合预算 200,000；`source sync-all` 对本轮 `FETCH_TIMEOUT` 的来源再同步一次。下一次“同步来源”生效。
+- 第七次发布的待观察项已在第二次全量检测中复核（见 STATUS 第七轮）：原“不支持”节点 984 个可用；机场 61 组，剩余按域名分组确为同一机场。
+- 待观察：下一次同步中原超过 10,000 条的子订阅能否入库，及超时来源重试后的结果（标 `retried`）。
+
