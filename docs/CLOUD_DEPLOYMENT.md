@@ -68,3 +68,11 @@ UI 额外验证逐行结果、重复提交、390px 布局，以及慢网络下�
 - 代码 `720ae9d`（main），仅 API Worker：版本 `11350de9-6d95-472b-a53b-0f3ec6a2ec6e`。无迁移，Pages/Echo 未变。本地 32 Worker 测试通过。
 - 验证：health 200、未认证 POST 401、认证 readiness 为真。没有替用户在生产触发同步。
 - ASN 排查（只读）：259 个节点中 218 个从未连通（146 入口域名不解析、39 Echo 请求失败、28 TCP 不通等），没有落地信息，无法得到落地 ASN；41 个可用节点都有 ASN，但其中 38 个最后一次检测早于返回 `org` 的新 Echo，只能靠内置简称表，AS6939/AS3258 因此显示为 AS 号。下一次检测会写入 Cloudflare 的运营商名称（启发式得到 Hurricane、xTom 等）。
+
+## 2026-11-11 第五次发布：0016 按落地服务器编号、落地 IP 归属（ip-api）、分享二维码
+
+- 代码 `10013a4`（main，快进合并），[CI 42953963233](https://github.com/Samiya321/nodema/actions/runs/42953963233)：339 Python、32 Worker 通过。
+- 发布前：新加密备份 `backup-2026-11-11-pre-0016.nma`，在隔离 PG 恢复后演练 0016：259 个节点名称零重复，再次编号无变化，41 个节点 / 23 台落地服务器，16 对同 IP 的 VMess 节点为 `01 VMess` / `01 VMess-2`，节点落地国家与服务器一致；分享链接 257/259 可生成（61 个省略了无法表示的设置，2 个 SS 不支持）。
+- 生产：确认无运行中的工作流与租约后迁移到 `0016_servers_ipinfo_share`，结果与演练一致；`nodema_api` 对新表、视图和函数均有权限；`nodema node share-links` 生成 259 条（本地计算，无外部请求）。API Worker 版本 `214ee485-4956-4471-bc88-170c6676e0a4`；Pages https://a829be38.nodema-dashboard.pages.dev；Echo 未变。
+- 验证：health 200、readiness 为真；节点列表包含新字段；分享接口未认证 401、认证 200 且 `no-store`，名称与目录一致；二维码模块以 JavaScript 类型提供。
+- 未做：生产尚未查询 ip-api（由下一次“同步来源”或检测在 Actions 中执行，届时名称会加上 IP 归属并再变化一次）；未在真实手机上扫码验证；没有用管理员密钥登录生产 Dashboard 做浏览器检查（本地合成数据上检查过服务器视图、详情和二维码弹窗）。
