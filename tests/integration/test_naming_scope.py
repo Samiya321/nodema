@@ -292,3 +292,24 @@ def test_operator_combines_netblock_org_and_asn(service, monitor_settings, monke
         "xTom Japan Corporation",
         "Greencloud",
     )
+
+
+def test_large_node_selections_are_split_and_merged_into_one_run(service, monitor_settings):
+    from uuid import uuid4
+
+    nodes(service, 3)
+    scans = ScanService(service, monitor_settings, checker_factory=Checker)
+    real = [n["id"] for n in Catalog(service, monitor_settings).page({}, limit=10)["items"]]
+    selection = real + [uuid4() for _ in range(5001)]  # beyond one stored row
+    assert scans.request(node_ids=selection)["nodes"] == 5004
+    with service.sessions() as session:
+        assert session.scalar(sa.text("SELECT count(*) FROM scan_requests")) == 2
+    runs = scans.consume_requests()
+    assert len(runs) == 1 and runs[0]["node_count"] == 3
+
+
+def test_large_libraries_get_bigger_shards_not_more_jobs(service, monitor_settings):
+    nodes(service, 9)
+    settings = monitor_settings.model_copy(update={"shard_size": 1, "max_shards": 3})
+    run = ScanService(service, settings, checker_factory=Checker).create(manual=True)
+    assert run["shard_count"] == 3 and run["node_count"] == 9

@@ -35,7 +35,10 @@ function scope(value: unknown): string {
   return s;
 }
 
-function idList(value: unknown, limit = 1000): string[] {
+const REQUEST_CHUNK = 5000; // scan_requests.node_ids holds at most this many
+
+// Selections are bounded only by the request body size (10 MB), not by a count.
+function idList(value: unknown, limit = 200000): string[] {
   if (!Array.isArray(value) || !value.length || value.length > limit)
     throw new SafeError("INVALID_SELECTION", 422);
   return [...new Set(value.map(uuid))];
@@ -174,7 +177,7 @@ async function asnLabels(rows: Rows) {
         bool_or(l.asn IS NOT NULL) AS overridden,count(*)::int AS nodes
        FROM node_current_status c LEFT JOIN asn_labels l ON l.asn=c.last_exit_asn
        LEFT JOIN ip_info i ON i.ip=c.last_exit_ip AND i.status='SUCCESS'
-       WHERE c.last_exit_asn IS NOT NULL GROUP BY c.last_exit_asn ORDER BY nodes DESC,asn LIMIT 500`,
+       WHERE c.last_exit_asn IS NOT NULL GROUP BY c.last_exit_asn ORDER BY nodes DESC,asn`,
     ),
   };
 }
@@ -218,12 +221,26 @@ export async function handleManagement(
   if (path === "/api/scans" && method === "POST") {
     const data = await ctx.body(request, true);
     const requested = scope(data.scope);
-    const nodes =
-      data.node_ids === undefined ? null : idList(data.node_ids, 5000);
+    const nodes = data.node_ids === undefined ? null : idList(data.node_ids);
     // Persist first: GitHub may replace a pending run, the request is never lost.
+    // Large selections are stored as several rows; the next run merges them.
+    const chunks: (string[] | null)[] = [];
+    if (nodes)
+      for (let i = 0; i < nodes.length; i += REQUEST_CHUNK)
+        chunks.push(nodes.slice(i, i + REQUEST_CHUNK));
+    else chunks.push(null);
+    const placeholders = chunks.map((_, i) => {
+      const n = i * 3;
+      return "($" + (n + 1) + ",$" + (n + 2) + ",$" + (n + 3) + "::uuid[])";
+    });
     await rows(
-      "INSERT INTO scan_requests(id,scope,node_ids) VALUES($1,$2,$3::uuid[])",
-      [crypto.randomUUID(), nodes ? "ALL" : requested, nodes],
+      "INSERT INTO scan_requests(id,scope,node_ids) VALUES " +
+        placeholders.join(","),
+      chunks.flatMap((chunk) => [
+        crypto.randomUUID(),
+        chunk ? "ALL" : requested,
+        chunk,
+      ]),
     );
     try {
       return json(

@@ -7,19 +7,24 @@ const QUICK = ["q", "node_group", "status", "exit_country", "protocol", "provide
 const KEYS = [...QUICK, ...ADVANCED.map(([key]) => key)];
 const PERCENT = ["min_success_rate", "max_timeout_rate", "min_lifetime_availability"];
 const VIEWS = [["country", "按落地国家"], ["asn", "按落地 ASN"], ["server", "按落地服务器"], ["list", "列表"]];
-const MAX_NODES = 20000;
-const MAX_TEST = 5000; // one test request holds at most this many nodes
+const FETCH_PAGE = 10000; // compact rows per request; there is no overall cap
 const OPEN_ALL_BELOW = 300; // small libraries open every group; large ones start collapsed
 const CACHE_MS = 30_000;
 
-// One request returns every matching node with only the list fields, so grouping,
-// paging and "select all" cover the whole filtered set. Switching the view or page
-// reuses the result for a minute instead of asking the database again.
+// Every matching node is loaded with only the list fields (10 000 per request, the
+// rest in parallel), so grouping, paging and "select all" cover the whole filtered
+// set. Switching the view or page reuses the result for 30 s.
 let cache = null;
 async function load(filters, sort) {
   const key = JSON.stringify([filters, sort]);
   if (cache && cache.key === key && Date.now() - cache.at < CACHE_MS) return cache.data;
-  const data = await api("/nodes?" + new URLSearchParams({ ...filters, sort, view: "compact", limit: String(MAX_NODES) }));
+  const fetchPage = (offset) =>
+    api("/nodes?" + new URLSearchParams({ ...filters, sort, view: "compact", offset: String(offset), limit: String(FETCH_PAGE) }));
+  const first = await fetchPage(0);
+  const offsets = [];
+  for (let offset = FETCH_PAGE; offset < first.total; offset += FETCH_PAGE) offsets.push(offset);
+  const rest = await Promise.all(offsets.map(fetchPage));
+  const data = { total: first.total, items: [first, ...rest].flatMap((page) => page.items) };
   cache = { key, at: Date.now(), data };
   return data;
 }
@@ -127,10 +132,6 @@ export async function render(root, { params, go }) {
       go("nodes", params);
     });
   const test = async () => {
-    if (picked.size > MAX_TEST) {
-      toast(`一次最多检测 ${MAX_TEST} 个节点。请缩小筛选，或用顶部“开始检测”按范围检测。`, "bad");
-      return;
-    }
     if (await testNodes([...picked])) toggle(allIds(), false);
   };
   bar.append(
@@ -142,7 +143,7 @@ export async function render(root, { params, go }) {
     h("button", { type: "button", class: "quiet", onclick: () => toggle(allIds(), false) }, "清除选择"),
   );
 
-  const truncated = total > items.length;
+
   if (!items.length) {
     list.append(
       empty(
@@ -170,7 +171,19 @@ export async function render(root, { params, go }) {
     }
     const ordered = [...groups.entries()].sort(([a, x], [b, y]) => (!a) - (!b) || y.length - x.length || collator.compare(a, b));
     const openAll = items.length <= OPEN_ALL_BELOW || ordered.length === 1;
-    for (const [key, members] of ordered) {
+    // Thousands of landing servers are possible: groups appear 100 at a time too.
+    const moreGroups = h("button", { type: "button", class: "quiet more-groups" });
+    let shownGroups = 0;
+    const appendGroups = () => {
+      for (const [key, members] of ordered.slice(shownGroups, shownGroups + CHUNK)) list.insertBefore(groupFor(key, members), moreGroups);
+      shownGroups = Math.min(ordered.length, shownGroups + CHUNK);
+      moreGroups.textContent = `显示更多分组（还有 ${ordered.length - shownGroups} 组）`;
+      moreGroups.hidden = shownGroups >= ordered.length;
+      refreshChecks();
+    };
+    moreGroups.addEventListener("click", appendGroups);
+    list.append(moreGroups);
+    function groupFor(key, members) {
       members.sort(memberOrder(view));
       const up = members.filter((n) => ["UP", "DEGRADED"].includes(n.status)).length;
       const memberIds = members.map((n) => n.id);
@@ -193,13 +206,11 @@ export async function render(root, { params, go }) {
       group.addEventListener("toggle", build);
       group.open = openAll && Boolean(key);
       build();
-      list.append(group);
+      return group;
     }
+    appendGroups();
   }
 
-  const hint = truncated
-    ? h("p", { class: "callout" }, `符合条件的节点有 ${total} 个，只载入了前 ${items.length} 个。请用筛选缩小范围。`)
-    : null;
   root.append(
     h(
       "div",
@@ -209,7 +220,6 @@ export async function render(root, { params, go }) {
     ),
     form,
     bar,
-    hint,
     list,
   );
   refreshChecks();

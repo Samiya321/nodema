@@ -69,9 +69,14 @@ export async function importLinks(rows: Rows, data: Row) {
     throw new SafeError("INVALID_REQUEST", 422);
   if (Buffer.byteLength(data.urls) > 131072)
     throw new SafeError("INPUT_TOO_LARGE", 413);
+  // The dashboard sends long lists in 100-line parts; start_line keeps line numbers
+  // (and the names derived from them) continuous across parts.
+  const start = data.start_line === undefined ? 1 : data.start_line;
+  if (typeof start !== "number" || !Number.isInteger(start) || start < 1 || start > 1e7)
+    throw new SafeError("INVALID_REQUEST", 422);
   const lines = data.urls
     .split("\n")
-    .map((line, i) => ({ line: i + 1, value: line.trim() }))
+    .map((line, i) => ({ line: start + i, value: line.trim() }))
     .filter((i) => i.value);
   if (!lines.length) throw new SafeError("EMPTY_INPUT");
   if (lines.length > 100) throw new SafeError("TOO_MANY_SUBSCRIPTION_LINKS");

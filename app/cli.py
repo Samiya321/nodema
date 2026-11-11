@@ -245,8 +245,12 @@ def source_sync(source_id: str, force: bool = False):
 
 @source_app.command("sync-all")
 @safe_command
-def source_sync_all(due_only: bool = False):
+def source_sync_all(due_only: bool = False, fetch_workers: int = 8):
+    from app.ingestion.prefetch import PrefetchingFetcher
+
     assets = service()
+    # Downloads run in parallel; parsing and database writes stay sequential.
+    assets.fetcher = PrefetchingFetcher(assets.fetcher, workers=fetch_workers)
     results, seen = [], set()
     # Sub-Store indexes create child sources during a sync; follow them for a few rounds.
     for _round in range(4):
@@ -269,6 +273,7 @@ def source_sync_all(due_only: bool = False):
             batch.append(source["id"])
         if not batch:
             break
+        assets.fetcher.prefetch(assets.fetch_targets(batch))
         for source_id in batch:
             seen.add(source_id)
             try:
