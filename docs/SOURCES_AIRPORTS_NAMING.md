@@ -7,7 +7,8 @@
 | 操作 | 之前 | 现在 |
 | --- | --- | --- |
 | 新增/批量导入/编辑/单个“同步”来源 | 立即 dispatch `source-sync.yml`（实际是完整检测流水线） | 只写 `sync_requested_at`，不启动任何 Actions |
-| 顶部“同步来源” | — | dispatch `source-sync.yml`：只拉取、解析、生成 Sub-Store 子来源、刷新机场流量，然后发布订阅；不检测 |
+| 顶部“同步来源” | — | 先把**全部启用来源**标记为待同步（来源页/Sub-Store 页可只同步所选，Sub-Store 连同其子来源），再 dispatch `source-sync.yml`：只拉取、解析、生成子来源、刷新机场流量，然后发布订阅；不检测 |
+| 节点页“检测所选”/详情“检测此节点” | — | 写入带 `node_ids` 的检测请求，单独建一个 MANUAL 批次，只测这些节点 |
 | 顶部“检测 · 自建/机场/全部” | 只有一个“开始检测” | dispatch `daily-check.yml`，输入 `scope`；先同步待同步来源，再创建 **MANUAL** 批次 |
 | 每日 04:17 定时 | 检测全部 | 读取设置页 `app_settings`：默认 **开启、仅自建**；可关闭或改为机场/全部 |
 | 订阅方案保存/重试 | dispatch `export-build.yml` | 不变（用户明确操作） |
@@ -57,7 +58,7 @@
 
 - `FLAG` 落地国旗；`ROUTE` 入口与落地不同时 `HK->SG`，相同时只写一个；`ASN` 落地 ASN 简称；`SEQ` 两位序号。
 - ASN 组织名来自 Echo（Cloudflare `asOrganization`，需要部署新版 Echo）或 GeoLite ASN 库（同一 ASN 时）。简称顺序：用户覆盖 → 内置表（AWS、GCP、HKT、HKBN…）→ `nodema_org_short()` 启发式（去掉 Limited/Inc/地区名等，取首词）→ `AS号`。设置页可逐个修改。
-- 序号由 `node_names` 持久化：按（入口, 落地, ASN 简称）分组（入口与落地相同或入口未知视为同一组，因为显示相同），新成员取组内最大号 + 1，节点失效不重排；节点落地变化时移到新组取新号。某天 GeoIP/Echo 缺字段时沿用旧值，名称不会因此跳组。导出时若仍出现同名（例如自定义模板去掉了 `{SEQ}`），自动追加节点编号，客户端不会因重名拒绝导入。
+- 序号由 `node_names` 持久化：按（落地国家, ASN 简称）分组（`0015` 起入口不再拆分序号，例如 `🇸🇬HK->SG|Webbing 01` 与 `🇸🇬SG|Webbing 02` 同一序列），新成员取组内最大号 + 1，节点失效不重排；节点落地变化时移到新组取新号。从未检测、没有落地信息的节点不编号，名称用节点编号代替（如 `🏳?|Unknown N000123`）。某天 GeoIP/Echo 缺字段时沿用旧值，名称不会因此跳组。导出时若仍出现同名（例如自定义模板去掉了 `{SEQ}`），自动追加节点编号，客户端不会因重名拒绝导入。
 - SQL `nodema_render_name()` 是唯一的生产渲染器；Worker 预览与校验都调用 SQL，Python `render_name` 只做本地镜像。迁移把仍是旧默认模板的 `naming_rules` 改为新默认。
 - 预留字段：之后可加入线路标注字段；仍不自动推断 IPLC/IEPL/CN2。
 

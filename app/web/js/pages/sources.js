@@ -26,7 +26,7 @@ const VIEWS = [
   ["CHILD", "来自 Sub-Store"],
 ];
 
-function importPanel(refresh) {
+function importPanel(refresh, open = false) {
   const result = h("div", { "aria-live": "polite" });
   const links = h(
     "form",
@@ -85,7 +85,7 @@ function importPanel(refresh) {
   });
   return h(
     "details",
-    { class: "panel import" },
+    { class: "panel import", open },
     h("summary", {}, "添加来源"),
     h("div", { class: "grid-2" }, h("section", {}, h("h3", {}, "链接"), links), h("section", {}, h("h3", {}, "节点文本"), text)),
     result,
@@ -185,7 +185,7 @@ export async function render(root, { params, go, refresh, refreshStrip }) {
   const ids = list.map((s) => s.id);
   root.append(
     h("h1", { class: "page-title" }, "来源"),
-    importPanel(reload),
+    importPanel(reload, all.length === 0),
     h(
       "div",
       { class: "toolbar" },
@@ -207,7 +207,13 @@ export async function render(root, { params, go, refresh, refreshStrip }) {
               h("span", { class: "muted small" }, [TYPES[s.type], s.url_host, s.parent_source_id ? `来自 ${names[s.parent_source_id] || "已删除的 Sub-Store"}` : ""].filter(Boolean).join(" · ")),
             ),
         },
-        { label: "类别", render: (s) => h("span", { class: "tag " + ({ AIRPORT: "air", SUBSTORE: "store" }[s.effective_kind] || "own") }, KIND[s.effective_kind]) },
+        {
+          label: "类别",
+          render: (s) =>
+            s.kind === "AUTO" && s.detected_kind === "UNKNOWN" && s.effective_kind !== "SUBSTORE"
+              ? h("span", { class: "tag", title: "同步后根据响应自动识别为自建或机场" }, "待识别")
+              : h("span", { class: "tag " + ({ AIRPORT: "air", SUBSTORE: "store" }[s.effective_kind] || "own") }, KIND[s.effective_kind]),
+        },
         { label: "同步", render: (s) => h("div", { class: "name-cell" }, badge(s.last_sync_status), s.last_error_code ? h("span", { class: "small bad-text" }, errorText(s.last_error_code)) : null, s.sync_requested_at ? h("span", { class: "small muted" }, "待同步") : null) },
         { label: "节点", class: "num", render: (s) => (s.effective_kind === "SUBSTORE" ? h("a", { href: "#/substore" }, "见子来源") : h("a", { href: `#/nodes?source_id=${s.id}` }, `${s.up_count} 可用 / ${s.node_count}`)) },
         { label: "最近成功", render: (s) => ago(s.last_success_at) },
@@ -218,4 +224,5 @@ export async function render(root, { params, go, refresh, refreshStrip }) {
     ),
   );
   root.querySelector("select[name=status]").addEventListener("change", (e) => set("status", e.target.value));
+  picked.refresh();
 }
