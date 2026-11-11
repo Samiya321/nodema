@@ -117,6 +117,9 @@ def pending_ips(session, refresh_days: int, limit: int) -> list[str]:
         LEFT JOIN ip_info i ON i.ip=c.last_exit_ip
         WHERE c.last_exit_ip IS NOT NULL AND length(c.last_exit_ip)<=64 AND (i.ip IS NULL
           OR (i.status='SUCCESS' AND i.queried_at < now()-make_interval(days=>:days))
+          -- Looked up before 0017 added the type flags: query once more.
+          OR (i.status='SUCCESS' AND i.is_hosting IS NULL
+              AND i.queried_at < now()-interval '1 day')
           OR (i.status<>'SUCCESS' AND i.queried_at < now()-interval '1 day'))
         ORDER BY 1 LIMIT :limit
     """),

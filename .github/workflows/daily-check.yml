@@ -42,6 +42,9 @@ env:
   CHECK_BATCH_SIZE: ${{ vars.CHECK_BATCH_SIZE || '16' }}
   MIHOMO_REUSE: ${{ vars.MIHOMO_REUSE || 'true' }}
   MIHOMO_MAX_NODES_PER_PROCESS: ${{ vars.MIHOMO_MAX_NODES_PER_PROCESS || '250' }}
+  # Switches without a deploy: 0 = per-worker runtimes; empty URL = no fallback probe.
+  MIHOMO_BATCH_SIZE: ${{ vars.MIHOMO_BATCH_SIZE || '128' }}
+  FALLBACK_PROBE_URL: ${{ vars.FALLBACK_PROBE_URL || 'https://www.gstatic.com/generate_204' }}
   RUNNER_PROBE_ID: ${{ vars.RUNNER_PROBE_ID || 'auto' }}
   DNS_CACHE_MAX_TTL_SECONDS: ${{ vars.DNS_CACHE_MAX_TTL_SECONDS || '300' }}
   DNS_NEGATIVE_TTL_SECONDS: ${{ vars.DNS_NEGATIVE_TTL_SECONDS || '15' }}

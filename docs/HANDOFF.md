@@ -113,7 +113,7 @@ docker stop nodema-handoff-test
 
 pytest 和 Worker 测试会在此数据库创建/删除临时 schema；缺少测试 DB 应失败，不能通过 skip 掩盖。真实 PG 备份恢复测试需要 Docker。不要在测试进程环境中残留生产 DATABASE_URL/MIGRATION_DATABASE_URL/PGOPTIONS。
 
-协议核心改动在停止上述测试容器前还运行：`uv run python scripts/install_mihomo.py`、`uv run python scripts/smoke_protocols.py`、`uv run python scripts/benchmark_pipeline.py --sizes 100 --skip-exports`（导出段自 0010 异步导出起失效；`--batch` 测共享批量运行时），同样在上述隔离 DB 环境；这是合成 loopback 验证，不是公网节点测速。仅文档改动检查链接、路径、命令和事实即可，不需要重新做性能测试。
+协议核心改动在停止上述测试容器前还运行：`uv run python scripts/install_mihomo.py`、`uv run python scripts/smoke_protocols.py`、`uv run python scripts/benchmark_pipeline.py --sizes 100`（`--batch` 测共享批量运行时，`--skip-exports` 只测检测段），同样在上述隔离 DB 环境；这是合成 loopback 验证，不是公网节点测速。仅文档改动检查链接、路径、命令和事实即可，不需要重新做性能测试。
 
 ## 常见的接管误区
 

@@ -35,6 +35,9 @@ def success(ip, org="Greencloud LLC", as_text="AS64500 xTom Japan Corporation"):
         "isp": "xTom Japan Corporation",
         "org": org,
         "as": as_text,
+        "mobile": False,
+        "proxy": False,
+        "hosting": False,
     }
 
 
@@ -184,3 +187,23 @@ def test_landing_ip_type_flags_reach_catalog_filters_and_names(
     assert (
         parse_entry({**success("192.0.2.9"), "hosting": "yes"}, {"192.0.2.9"})["is_hosting"] is None
     )
+
+
+def test_ips_looked_up_before_type_flags_are_queried_once_more(
+    service, monitor_settings, monkeypatch
+):
+    nodes(service, 1)
+    scan(service, monitor_settings)
+    monkeypatch.setattr(ipinfo, "public_ip", lambda ip: True)
+    with service.sessions.begin() as session:
+        session.execute(
+            sa.text(
+                "INSERT INTO ip_info(ip,status,org,queried_at) "
+                "VALUES ('192.0.2.1','SUCCESS','Old LLC',now()-interval '2 days')"
+            )
+        )
+    flagged = {**success("192.0.2.1"), "mobile": False, "proxy": False, "hosting": True}
+    client = FakeClient([BatchReply([flagged], 14)])
+    assert ipinfo.refresh(service.sessions, monitor_settings, client)["saved"] == 1
+    again = FakeClient([])
+    assert ipinfo.refresh(service.sessions, monitor_settings, again)["pending"] == 0
