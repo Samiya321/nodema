@@ -67,3 +67,16 @@
 - 生产事故 run 42907816991：一个节点入口域名 DNS 超时被当作 Runner 环境故障，整片中止并丢弃全部结果。现在单节点 DNS/核心错误按节点处理（重试一次后 DOWN/UNKNOWN）；只有共享的直连 Echo 探针失败（20 秒缓存）或连续 6 个核心错误才中止分片。
 - 滑动窗口替代每 16 个一批的屏障，失败节点在末尾统一重试一次（不再每批 sleep 10 秒）；默认并发 16、分片 100（200 个节点约 2 个 Runner 并行）；单个 Mihomo 崩溃会重启重试一次。
 - 结果约 1 秒内提交；批次未完成时先发布已确认的可用结果，失败结果仍等批次完整，避免环境故障误判 DOWN。
+
+## 8. 落地服务器、IP 归属与分享二维码（迁移 `0016_servers_ipinfo_share`）
+
+2026-11-11 用户决策：同一落地 IP 的节点共用序号并加协议后缀；落地 IP 的 org/ISP 用 ip-api.com 查询；节点详情可显示二维码供 Shadowrocket 扫码。
+
+- **默认模板** `{FLAG}{ROUTE}|{OPERATOR} {SEQ}{VARIANT}`，例如 `🇯🇵JP|Greencloud|xTom 01 VLESS`。
+  - `{OPERATOR}`：IP 归属（ip-api `org` 的简称）`|` ASN 简称；归属与 ASN 是同一家公司（简称相同，或与 ASN 组织名的简称相同）时只写 ASN，如 `🇯🇵JP|Oracle 01`。
+  - `{ORG}`：单独的归属简称（可为空）；`{VARIANT}`：同一服务器有多个节点时为 ` VLESS`/` VMess`/` SS`/` Trojan`/` Hy2`/` AnyTLS`，同协议重复时 `VMess-2`，否则为空。
+  - 0014 默认模板自动升级；自定义模板不变。
+- **按服务器编号**：`name_servers` 以落地 IP 为键，在（落地国家, 归属, ASN）组内取最大号 + 1，节点失效不重排；节点换了落地 IP 就取新服务器的号。`node_names` 复制服务器的组与号并保存协议后缀。`nodema_assign_names()` 只在结果变化时写 `node_names`，避免无变化时触发订阅重建。0016 上线时全部重新编号一次（订阅中的名称会变化一次）。
+- **ip-api**：`daily-check.yml` 的 finalize 之后运行 `nodema ipinfo refresh`（`continue-on-error`），只查询新出现或超过 30 天的公网落地 IP（失败的 1 天后重试），每批 100 个、遇到限流即停。免费版只能 HTTP 明文、限非商业用途；落地 IP 会发送给 ip-api。返回的文本去除控制/双向字符并限长；日志只输出计数。设置 `IPINFO_ENABLED=false` 可关闭。ASN 简称仍优先 Cloudflare（Echo）的组织名，缺失时用 ip-api 的 `as` 字段。
+- **分享链接**：Python 用订阅导出同一套转换器生成不含名称的 URI，存 `node_share_links`（每个节点一次，`source sync-all` 结束时及 `nodema node share-links` 补齐；URI 无法表示的配置记录原因）。Worker `GET /api/nodes/:id/share` 只在点击时返回，附上当前名称（VMess 改写 base64 JSON 的 `ps`），`Cache-Control: no-store`。前端用内置的 `qrcode-generator`（MIT，`app/web/js/vendor/qrcode.js`）在 canvas 上绘制，不调用外部二维码服务。
+- **界面**：节点页新增“按落地服务器”视图与“同服务器 ×N”标记；节点详情显示落地 IP、地区、IP 归属（org）、ISP、同服务器的其他节点，以及“二维码 / 分享”。

@@ -5,7 +5,7 @@ import string
 
 from app.domain import AssetError
 
-DEFAULT_TEMPLATE = "{FLAG}{ROUTE}|{ASN} {SEQ}"
+DEFAULT_TEMPLATE = "{FLAG}{ROUTE}|{OPERATOR} {SEQ}{VARIANT}"
 LEGACY_TEMPLATE = (
     "{ENTRY_COUNTRY} → {EXIT_COUNTRY} | {PROTOCOL}-{TRANSPORT}-{SECURITY} | {SHORT_ID}"
 )
@@ -20,7 +20,10 @@ FIELDS = {
     "ENTRY_FLAG",
     "ROUTE",
     "ASN",
+    "ORG",
+    "OPERATOR",
     "SEQ",
+    "VARIANT",
 }
 UNKNOWN_FLAG = "🏳"
 
@@ -50,7 +53,9 @@ def render_name(
     entry_country: str | None = None,
     exit_country: str | None = None,
     asn_label: str | None = None,
+    org_label: str | None = None,
     seq: int | None = None,
+    variant: str | None = None,
 ) -> str:
     try:
         if len(template) > 200 or any(ord(c) < 32 for c in template):
@@ -69,7 +74,12 @@ def render_name(
             ENTRY_FLAG=flag(entry_country),
             ROUTE=route(entry_country, exit_country),
             ASN=asn_label or "Unknown",
+            ORG=org_label or "",
+            OPERATOR=f"{org_label}|{asn_label or 'Unknown'}"
+            if org_label
+            else asn_label or "Unknown",
             SEQ=short_id if seq is None else f"{seq:02d}",
+            VARIANT=f" {variant}" if variant else "",
         )
         if len(result) > 500:
             raise ValueError

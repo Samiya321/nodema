@@ -37,6 +37,7 @@ scan_app = typer.Typer(no_args_is_help=True)
 export_app = typer.Typer(no_args_is_help=True)
 usage_app = typer.Typer(no_args_is_help=True)
 quality_app = typer.Typer(no_args_is_help=True)
+ipinfo_app = typer.Typer(no_args_is_help=True)
 app.add_typer(source_app, name="source")
 app.add_typer(node_app, name="node")
 app.add_typer(keys_app, name="keys")
@@ -45,6 +46,7 @@ app.add_typer(scan_app, name="scan")
 app.add_typer(export_app, name="export")
 app.add_typer(usage_app, name="usage")
 app.add_typer(quality_app, name="quality")
+app.add_typer(ipinfo_app, name="ipinfo")
 
 
 def output(value):
@@ -275,6 +277,12 @@ def source_sync_all(due_only: bool = False):
                 results.append(
                     {"source_id": source_id, "status": "FAILED", "error_code": error.code}
                 )
+    from app import share_links
+
+    try:
+        share_links.fill_missing(assets.sessions)
+    except Exception as error:  # noqa: BLE001 - QR links must never fail a source sync
+        typer.echo(f"share links skipped: {type(error).__name__}", err=True)
     output(results)
     if any(result["status"] in ("FAILED", "PARTIAL") for result in results):
         raise typer.Exit(2)
@@ -461,6 +469,24 @@ def scan_finalize_batch(run_ids_json: str = typer.Option(...)):
     output(results)
     if any(r["status"] != "COMPLETED" for r in results):
         raise typer.Exit(2)
+
+
+@ipinfo_app.command("refresh")
+@safe_command
+def ipinfo_refresh():
+    """Look up new landing IPs (org/ISP/region) and renumber names. Never fails a run."""
+    from app import ipinfo
+
+    output(ipinfo.refresh(service().sessions, Settings()))
+
+
+@node_app.command("share-links")
+@safe_command
+def node_share_links():
+    """Create share links (for dashboard QR codes) for nodes that have none yet."""
+    from app import share_links
+
+    output(share_links.fill_missing(service().sessions))
 
 
 @scan_app.command("worker")

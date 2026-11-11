@@ -6,7 +6,7 @@ import { nodeDetail } from "./node-detail.js";
 const QUICK = ["q", "node_group", "status", "exit_country", "protocol", "provider_id", "eligible", "enabled", "source_id"];
 const KEYS = [...QUICK, ...ADVANCED.map(([key]) => key)];
 const PERCENT = ["min_success_rate", "max_timeout_rate", "min_lifetime_availability"];
-const VIEWS = [["country", "按落地国家"], ["asn", "按落地 ASN"], ["list", "列表"]];
+const VIEWS = [["country", "按落地国家"], ["asn", "按落地 ASN"], ["server", "按落地服务器"], ["list", "列表"]];
 const regionNames = new Intl.DisplayNames(["zh-CN"], { type: "region" });
 const collator = new Intl.Collator("zh-CN", { numeric: true });
 
@@ -32,20 +32,30 @@ async function loadAll(filters, sort) {
   return { items, total };
 }
 
-const seqOf = (node) => Number((/(\d+)$/.exec(node.name) || [])[1] || 0);
-// Inside a group: by landing ASN label, then by the per-country+ASN number.
+// Names end with the server number, optionally followed by a protocol suffix ("01 VMess").
+const seqOf = (node) => Number((/ (\d+)(?: \S+)?$/.exec(node.name) || [])[1] || 0);
+// "Greencloud|xTom" when the netblock holder differs from the ASN, else the ASN label.
+const operatorOf = (n) => (n.org_label ? `${n.org_label}|${n.asn_label || "Unknown"}` : n.asn_label || "");
+// Inside a group: by operator, then by server number.
 const byAsnThenSeq = (a, b) =>
-  collator.compare(a.asn_label || "~", b.asn_label || "~") || seqOf(a) - seqOf(b) || collator.compare(a.name, b.name);
+  collator.compare(operatorOf(a) || "~", operatorOf(b) || "~") || seqOf(a) - seqOf(b) || collator.compare(a.name, b.name);
 
 function groupKey(node, view) {
   if (view === "country") return node.exit_country || "";
   if (view === "asn") return node.exit_asn ? String(node.exit_asn) : "";
+  if (view === "server") return node.exit_ip || "";
   return "all";
 }
 
 function groupTitle(view, key, sample) {
   if (!key) return [h("span", { class: "group-flag" }, "🏳"), "未检测或无落地信息"];
   if (view === "country") return [h("span", { class: "group-flag" }, flag(key)), `${countryName(key)} `, h("span", { class: "muted" }, key)];
+  if (view === "server")
+    return [
+      h("span", { class: "group-flag" }, flag(sample.exit_country)),
+      `${operatorOf(sample) || "未知运营商"} ${String(seqOf(sample)).padStart(2, "0")} `,
+      h("span", { class: "muted" }, [key, sample.exit_org, sample.exit_region].filter(Boolean).join(" · ")),
+    ];
   return [sample.asn_label || "AS" + key, h("span", { class: "muted" }, ` AS${key}${sample.exit_asn_org ? " · " + sample.exit_asn_org : ""}`)];
 }
 
@@ -168,14 +178,18 @@ export async function render(root, { params, go }) {
           "button",
           { type: "button", class: "link name-cell", onclick: () => nodeDetail(n.id) },
           h("span", { class: "node-name" }, n.name),
-          h("span", { class: "muted small" }, [n.short_id, n.protocol, n.enabled ? "" : "已停用", n.present_source_count ? "" : "上游已移除"].filter(Boolean).join(" · ")),
+          h(
+            "span",
+            { class: "muted small" },
+            [n.short_id, n.protocol, n.server_node_count > 1 ? `同服务器 ×${n.server_node_count}` : "", n.enabled ? "" : "已停用", n.present_source_count ? "" : "上游已移除"].filter(Boolean).join(" · "),
+          ),
         ),
       ),
       h("td", { "data-label": "状态" }, badge(n.status)),
       h("td", { "data-label": "线路" }, route(n.entry_country, n.exit_country)),
       view === "asn"
         ? h("td", { "data-label": "落地国家" }, n.exit_country ? `${flag(n.exit_country)} ${n.exit_country}` : "—")
-        : h("td", { "data-label": "落地 ASN" }, n.exit_asn ? h("span", {}, n.asn_label || "", h("span", { class: "muted small" }, ` AS${n.exit_asn}`)) : "—"),
+        : h("td", { "data-label": "落地运营商" }, n.exit_asn ? h("span", {}, operatorOf(n), h("span", { class: "muted small" }, ` AS${n.exit_asn}`)) : "—"),
       h("td", { class: "num", "data-label": "累计可用" }, n.checked_days ? `${pct(n.lifetime_availability)}（${n.available_days}/${n.checked_days} 天）` : "—"),
       h("td", { "data-label": "类别" }, h("span", { class: "tag " + (n.node_group === "AIRPORT" ? "air" : "own") }, KIND[n.node_group] || "—")),
       h("td", { "data-label": "最近检测" }, ago(n.last_checked_at)),
@@ -184,20 +198,20 @@ export async function render(root, { params, go }) {
     h(
       "thead",
       {},
-      h("tr", {}, ["", "节点", "状态", "线路", view === "asn" ? "落地国家" : "落地 ASN", "累计可用", "类别", "最近检测"].map((t, i) => h("th", { scope: "col", class: i === 0 ? "pick" : i === 5 ? "num" : "" }, t))),
+      h("tr", {}, ["", "节点", "状态", "线路", view === "asn" ? "落地国家" : "落地运营商", "累计可用", "类别", "最近检测"].map((t, i) => h("th", { scope: "col", class: i === 0 ? "pick" : i === 5 ? "num" : "" }, t))),
     );
 
   // In the country view, a light sub-header per landing ASN when a country has several.
   const withSubheads = (members, mode) => {
-    const asns = new Set(members.map((n) => n.asn_label || ""));
+    const asns = new Set(members.map(operatorOf));
     if (mode !== "country" || asns.size < 2) return members.map(row);
     const rows = [];
     let current;
     for (const n of members) {
-      const label = n.asn_label || "";
+      const label = operatorOf(n);
       if (label !== current) {
         current = label;
-        const size = members.filter((m) => (m.asn_label || "") === label).length;
+        const size = members.filter((m) => operatorOf(m) === label).length;
         rows.push(h("tr", { class: "subhead" }, h("td", { colspan: 8 }, label || "无 ASN 信息", h("span", { class: "muted" }, ` ${size} 个${n.exit_asn ? " · AS" + n.exit_asn : ""}`))));
       }
       rows.push(row(n));
@@ -223,7 +237,13 @@ export async function render(root, { params, go }) {
     }
     const ordered = [...groups.entries()].sort(([a, x], [b, y]) => (!a) - (!b) || y.length - x.length || collator.compare(a, b));
     for (const [key, members] of ordered) {
-      members.sort(view === "country" ? byAsnThenSeq : (a, b) => collator.compare(a.exit_country || "~", b.exit_country || "~") || seqOf(a) - seqOf(b));
+      members.sort(
+        view === "country"
+          ? byAsnThenSeq
+          : view === "server"
+            ? (a, b) => collator.compare(a.protocol, b.protocol) || collator.compare(a.name, b.name)
+            : (a, b) => collator.compare(a.exit_country || "~", b.exit_country || "~") || seqOf(a) - seqOf(b),
+      );
       const up = members.filter((n) => ["UP", "DEGRADED"].includes(n.status)).length;
       const memberIds = members.map((n) => n.id);
       const groupBox = h("input", { type: "checkbox", "aria-label": "选择本组", dataset: { group: JSON.stringify(memberIds) } });

@@ -6,7 +6,7 @@
   "hyperdrive":[{"binding":"HYPERDRIVE","id":"39444e7a3a6c4445b6521e335682f8df",
     "localConnectionString":"postgres://nodema:local_dev_only@127.0.0.1:55432/nodema"}],
   "vars":{"FRESHNESS_HOURS":"36",
-    "NAME_TEMPLATE":"{FLAG}{ROUTE}|{ASN} {SEQ}",
+    "NAME_TEMPLATE":"{FLAG}{ROUTE}|{OPERATOR} {SEQ}{VARIANT}",
     "GITHUB_REPOSITORY":"Samiya321/nodema","GITHUB_WORKFLOW_REF":"main"},
   "secrets":{"required":["ADMIN_PASSWORD","GITHUB_DISPATCH_TOKEN"]}
 }

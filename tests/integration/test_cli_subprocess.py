@@ -188,7 +188,7 @@ def test_concurrent_migration_processes_share_one_schema(db_engine):
         with db_engine.connect() as conn:
             assert (
                 conn.scalar(sa.text(f'SELECT version_num FROM "{schema}".alembic_version'))
-                == "0015_exit_asn_numbering"
+                == "0016_servers_ipinfo_share"
             )
             tables = set(
                 conn.scalars(
@@ -208,7 +208,7 @@ def test_concurrent_migration_processes_share_one_schema(db_engine):
                     {"schema": schema},
                 )
             )
-            assert views == {"nodema_catalog_base", "nodema_node_scope"}
+            assert views == {"nodema_catalog_base", "nodema_node_scope", "nodema_name_keys"}
     finally:
         for child in children:
             if child.poll() is None:

@@ -8,6 +8,7 @@ import { Client } from "pg";
 import { handle, nameFor } from "../dist/index.js";
 import { Cipher } from "../dist/crypto.js";
 import { render } from "../dist/formats.js";
+import { withName } from "../dist/share.js";
 
 const root = fileURLToPath(new URL("../../../", import.meta.url));
 const rawUrl = process.env.TEST_DATABASE_URL;
@@ -21,7 +22,7 @@ const env = {
   ENCRYPTION_KEY_ID: "test-v1",
   ENCRYPTION_KEY_B64: Buffer.alloc(32, "E").toString("base64"),
   ADMIN_PASSWORD: "synthetic-worker-admin-password-long-enough",
-  NAME_TEMPLATE: "{FLAG}{ROUTE}|{ASN} {SEQ}",
+  NAME_TEMPLATE: "{FLAG}{ROUTE}|{OPERATOR} {SEQ}{VARIANT}",
   FRESHNESS_HOURS: "36",
   EXPORT_TTL_HOURS: "24",
   GITHUB_REPOSITORY: "",
@@ -348,6 +349,22 @@ scans.finalize(run['id'])`);
       await request(`/api/nodes/${nodeId}/aliases`)
     ).json();
     assert.deepEqual(aliases[0].aliases, ["Synthetic"]);
+    const pending = await (await request(`/api/nodes/${nodeId}/share`)).json();
+    assert.equal(pending.error_code, "SHARE_PENDING");
+    py(`import os
+from app.database.session import make_engine,session_factory
+from app.share_links import fill_missing
+fill_missing(session_factory(make_engine(os.environ['DATABASE_URL'])))`);
+    const shared = await request(`/api/nodes/${nodeId}/share`);
+    assert.equal(shared.headers.get("cache-control"), "no-store");
+    const link = await shared.json();
+    assert.equal(link.name, node.name);
+    assert.ok(link.uri.endsWith("#" + encodeURIComponent(node.name)));
+    assert.equal(
+      (await request(`/api/nodes/${nodeId}/share`, { authenticated: false }))
+        .status,
+      401,
+    );
     const runs = await (await request("/api/scans")).json();
     assert.equal(
       (await (await request(`/api/scans/${runs[0].id}`)).json()).shards.length,
@@ -452,6 +469,7 @@ from pathlib import Path
 from app.parsers import parse_document,parse_password_uri,parse_shadowsocks
 from app.conversion import to_mihomo,to_singbox,to_uri
 from app.domain import AssetError
+from app.share_links import share_uri
 nodes=[n.identity for n in parse_document(Path('tests/fixtures/protocols_all.txt').read_bytes()).nodes]
 nodes.append(parse_shadowsocks('ss://aes-128-gcm:synthetic@ss.example:443/?plugin=obfs-local%3Bobfs%3Dtls%3Bobfs-host%3Dcdn.example').identity)
 nodes.append(parse_shadowsocks('ss://2022-blake3-aes-128-gcm:'+base64.b64encode(b'S'*16).decode()+'@ss.example:443').identity)
@@ -464,6 +482,7 @@ for d in nodes:
  v={'identity':d,'mihomo':to_mihomo(d,'synthetic-vector'),'singbox':to_singbox(d,'synthetic-vector')}
  try:v['uri']=to_uri(d,'synthetic-vector')
  except AssetError:v['uri']=None
+ v['share']=share_uri(d)[0]
  vectors.append(v)
 print(json.dumps(vectors))`),
   );
@@ -480,6 +499,17 @@ print(json.dumps(vectors))`),
       JSON.parse(render("singbox", [item])).outbounds[0],
       vector.singbox,
     );
+    // Stored share links (no name) plus the Worker's name equal Python's named URI.
+    assert.equal(vector.share === null, vector.uri === null);
+    if (vector.share?.startsWith("vmess://")) {
+      const decode = (u) =>
+        JSON.parse(Buffer.from(u.slice(8), "base64").toString("utf8"));
+      assert.deepEqual(
+        decode(withName(vector.share, "synthetic-vector")),
+        decode(vector.uri),
+      );
+    } else if (vector.share)
+      assert.equal(withName(vector.share, "synthetic-vector"), vector.uri);
     if (vector.uri === null)
       assert.throws(() => render("uri", [item]), /RUNTIME_UNSUPPORTED/);
     else {

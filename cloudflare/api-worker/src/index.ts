@@ -5,6 +5,7 @@ import { usageSummary } from "./usage.js";
 import { importLinks, subscriptionURL } from "./source-bulk.js";
 import { handleManagement, providerName } from "./management.js";
 import { catalogPage, catalogOverview, filtersFromParams } from "./catalog.js";
+import { withName } from "./share.js";
 import {
   annotation,
   annotate,
@@ -299,14 +300,14 @@ export async function handle(
         /^[\w.-]+\/[\w.-]+$/.test(env.GITHUB_REPOSITORY) &&
         Boolean(env.GITHUB_DISPATCH_TOKEN) &&
         Boolean(env.GITHUB_WORKFLOW_REF);
-      if (version !== "0015_exit_asn_numbering")
+      if (version !== "0016_servers_ipinfo_share")
         return json({
           ready: false,
           checks: { schema: false, dispatch: dispatchReady },
         });
       const checks = {
         database: true,
-        schema: version === "0015_exit_asn_numbering",
+        schema: version === "0016_servers_ipinfo_share",
         storage: "PLAINTEXT",
         dispatch: dispatchReady,
       };
@@ -460,6 +461,26 @@ export async function handle(
             : null,
         });
       }
+    }
+    const shareMatch = /^\/api\/nodes\/([^/]+)\/share$/.exec(path);
+    if (shareMatch && method === "GET") {
+      // Credentials: fetched only on an explicit click, never cached (no-store).
+      const id = uuid(shareMatch[1]);
+      const node = (await page({ id }, "short_id:asc", 0, 1)).items[0];
+      if (!node) throw new SafeError("NODE_NOT_FOUND", 404);
+      const link = (
+        await rows(
+          "SELECT uri,error_code FROM node_share_links WHERE node_id=$1",
+          [id],
+        )
+      )[0];
+      const name = String(node.name);
+      if (!link) return json({ name, uri: null, error_code: "SHARE_PENDING" });
+      return json({
+        name,
+        uri: link.uri ? withName(String(link.uri), name) : null,
+        error_code: link.uri ? null : link.error_code,
+      });
     }
     const aliasMatch = /^\/api\/nodes\/([^/]+)\/aliases$/.exec(path);
     if (aliasMatch && method === "GET") {

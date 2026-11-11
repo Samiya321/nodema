@@ -188,6 +188,12 @@ jobs:
       - env:
           RUN_IDS_JSON: ${{ needs.prepare.outputs.run_ids }}
         run: uv run nodema scan finalize-batch --run-ids-json "$RUN_IDS_JSON"
+      - name: Look up landing IP details
+        # ip-api free tier; a failed lookup only delays org names to the next run.
+        if: always() && steps.dependencies.outcome == 'success'
+        continue-on-error: true
+        timeout-minutes: 5
+        run: uv run nodema ipinfo refresh
       - name: Publish current subscriptions
         if: always() && steps.dependencies.outcome == 'success'
         run: uv run nodema export build-pending

@@ -169,10 +169,11 @@ async function asnLabels(rows: Rows) {
       "SELECT asn,label,origin,updated_at FROM asn_labels ORDER BY origin DESC,asn",
     ),
     observed: await rows(
-      `SELECT c.last_exit_asn AS asn,max(c.last_exit_asn_org) AS organization,
-        nodema_asn_label(c.last_exit_asn,max(c.last_exit_asn_org)) AS label,
+      `SELECT c.last_exit_asn AS asn,max(coalesce(c.last_exit_asn_org,i.as_org)) AS organization,
+        nodema_asn_label(c.last_exit_asn,max(coalesce(c.last_exit_asn_org,i.as_org))) AS label,
         bool_or(l.asn IS NOT NULL) AS overridden,count(*)::int AS nodes
        FROM node_current_status c LEFT JOIN asn_labels l ON l.asn=c.last_exit_asn
+       LEFT JOIN ip_info i ON i.ip=c.last_exit_ip AND i.status='SUCCESS'
        WHERE c.last_exit_asn IS NOT NULL GROUP BY c.last_exit_asn ORDER BY nodes DESC,asn LIMIT 500`,
     ),
   };
