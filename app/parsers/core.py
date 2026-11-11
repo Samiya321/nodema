@@ -325,31 +325,80 @@ StrictLoader.add_implicit_resolver(
 )
 
 
+MERGE_TAG = "tag:yaml.org,2002:merge"
+
+
 def _mapping(loader, node):
-    result = {}
+    """Mapping with YAML merge keys (`<<: *base` or `<<: [*a, *b]`), common in Clash
+    files. Merged keys are defaults: explicit keys override them; an explicit key
+    repeated in the same mapping is still an error."""
+    merged, result = {}, {}
     for key, val in node.value:
+        if key.tag == MERGE_TAG:
+            sources = val.value if isinstance(val, yaml.SequenceNode) else [val]
+            for source in sources:
+                base = loader.construct_object(source, deep=True)
+                if not isinstance(base, dict):
+                    raise AssetError("INVALID_YAML_MERGE")
+                for k, v in base.items():
+                    merged.setdefault(k, v)  # earlier sources win, as in YAML 1.1
+            continue
         k = loader.construct_object(key)
         if not isinstance(k, str) or k in result:
             raise AssetError("DUPLICATE_OR_INVALID_FIELD")
         result[k] = loader.construct_object(val)
-    return result
+    return {**merged, **result}
 
 
 StrictLoader.add_constructor("tag:yaml.org,2002:map", _mapping)
 
 
+# Anchors and aliases are allowed (Clash files use them for shared options), but the
+# fully expanded document is measured from the event stream before anything is built:
+# nested aliases ("billion laughs") would otherwise multiply on traversal.
+MAX_YAML_EXPANDED_NODES = 2_000_000
+MAX_YAML_ALIASES = 100_000
+
+
+def _check_yaml_events(payload):
+    depth, aliases = 0, 0
+    sizes = {}  # anchor -> expanded node count of what it names
+    stack = [[None, 0]]  # open collections: [anchor, expanded size so far]
+
+    def add(size):
+        stack[-1][1] += size
+        if sum(entry[1] for entry in stack) > MAX_YAML_EXPANDED_NODES:
+            raise AssetError("YAML_TOO_LARGE")
+
+    for event in yaml.parse(payload, Loader=StrictLoader):
+        if isinstance(event, yaml.AliasEvent):
+            aliases += 1
+            if aliases > MAX_YAML_ALIASES:
+                raise AssetError("YAML_TOO_LARGE")
+            if event.anchor not in sizes:
+                # Unknown, or an ancestor still open: a recursive structure.
+                raise AssetError("YAML_RECURSIVE_ALIAS")
+            add(sizes[event.anchor])
+        elif isinstance(event, yaml.ScalarEvent):
+            if event.anchor is not None:
+                sizes[event.anchor] = 1
+            add(1)
+        elif isinstance(event, (yaml.MappingStartEvent, yaml.SequenceStartEvent)):
+            depth += 1
+            if depth > 64:
+                raise AssetError("STRUCTURE_TOO_DEEP")
+            stack.append([event.anchor, 1])
+        elif isinstance(event, (yaml.MappingEndEvent, yaml.SequenceEndEvent)):
+            depth -= 1
+            anchor, size = stack.pop()
+            if anchor is not None:
+                sizes[anchor] = size
+            add(size)
+
+
 def _yaml(payload):
     try:
-        depth = 0
-        for event in yaml.parse(payload, Loader=StrictLoader):
-            if isinstance(event, yaml.AliasEvent):
-                raise AssetError("YAML_ALIAS_FORBIDDEN")
-            if isinstance(event, (yaml.MappingStartEvent, yaml.SequenceStartEvent)):
-                depth += 1
-                if depth > 64:
-                    raise AssetError("STRUCTURE_TOO_DEEP")
-            if isinstance(event, (yaml.MappingEndEvent, yaml.SequenceEndEvent)):
-                depth -= 1
+        _check_yaml_events(payload)
         value = yaml.load(payload, Loader=StrictLoader)
         _json_value(value)
         return value

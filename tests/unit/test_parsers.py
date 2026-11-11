@@ -119,7 +119,16 @@ def test_invalid_uuid_and_vmess():
     [
         b"proxies: []\nproxies: []",
         b"proxies: !!python/object:secret {}",
-        b"x: &a []\nproxies: *a",
+        b"a: &a [x, x]\nb: &b [*a, *a]\nc: &c [*b, *b]\nd: &d [*c, *c]\n"
+        + b"".join(
+            b"e%d: &e%d [*%s, *%s]\n" % (i, i, prev, prev)
+            for i, prev in zip(
+                range(1, 25), [b"d"] + [b"e%d" % i for i in range(1, 24)], strict=True
+            )
+        )
+        + b"proxies: []",  # "billion laughs": 2^28 expanded nodes from a few lines
+        b"proxies: &p [*p]",  # recursive alias
+        b"base: &b {type: ss}\nproxies:\n  - {<<: *b, name: a, name: b}",  # duplicate key
         b"proxies: [" + b"[" * 65 + b"]" * 65 + b"]",
     ],
 )
@@ -169,3 +178,33 @@ def test_yaml_name_on_stays_string(fixture_bytes):
 def test_synthetic_100(fixture_bytes):
     report = parse_document(fixture_bytes("synthetic_100.txt"))
     assert report.complete and len(report.nodes) == 100
+
+
+def test_clash_yaml_anchors_and_merge_keys_are_accepted():
+    payload = b"""
+common: &common
+  type: ss
+  cipher: aes-128-gcm
+  password: synthetic
+  udp: true
+servers: &servers [sg.example, jp.example]
+proxies:
+  - <<: *common
+    name: SG
+    server: sg.example
+    port: 443
+  - <<: [*common]
+    name: JP
+    server: jp.example
+    port: 8443
+    cipher: chacha20-ietf-poly1305
+proxy-groups:
+  - {name: auto, type: select, proxies: [SG, JP]}
+"""
+    report = parse_clash_yaml(payload)
+    assert report.complete and len(report.nodes) == 2
+    sg, jp = (n.identity for n in report.nodes)
+    assert sg["protocol"] == jp["protocol"] == "shadowsocks"
+    assert sg["protocol_options"]["cipher"] == "aes-128-gcm"
+    assert jp["protocol_options"]["cipher"] == "chacha20-ietf-poly1305"  # explicit key wins
+    assert (sg["server_host"], jp["server_port"]) == ("sg.example", 8443)
