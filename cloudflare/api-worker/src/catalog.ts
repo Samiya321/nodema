@@ -78,7 +78,7 @@ export async function catalogPage(
   sort = "short_id:asc",
   offset = 0,
   limit = 100,
-  projection: "full" | "identity" | "report" | "compact" = "full",
+  projection: "full" | "identity" | "report" = "full",
 ) {
   if (Object.keys(filters).some((key) => !filterKeys.has(key)))
     throw new SafeError("INVALID_NODE_QUERY");
@@ -106,6 +106,30 @@ export async function catalogPage(
       "INVALID_NODE_QUERY",
     )
   )[0].page as { total: number; items: import("./formats.js").PublicNode[] };
+}
+
+// The compact list is passed through as PostgreSQL's JSON text: the Worker neither
+// parses nor re-serializes megabytes of rows (free-plan CPU budget).
+export async function catalogPageText(
+  rows: Rows,
+  template: string,
+  freshness: number,
+  filters: Row,
+  sort: string,
+  offset: number,
+  limit: number,
+): Promise<string> {
+  if (Object.keys(filters).some((key) => !filterKeys.has(key)))
+    throw new SafeError("INVALID_NODE_QUERY");
+  return String(
+    (
+      await rows(
+        "SELECT nodema_node_page($1::jsonb,$2,$3,$4,$5,$6,'compact')::text AS page",
+        [JSON.stringify(filters), sort, offset, limit, freshness, template],
+        "INVALID_NODE_QUERY",
+      )
+    )[0].page,
+  );
 }
 
 export async function catalogOverview(
