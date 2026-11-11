@@ -351,19 +351,10 @@ class AsnLabel(Base):
 
 
 class NodeName(Base):
-    """Stable per-(entry, exit, ASN label) sequence numbers; maintained in SQL."""
+    """Per-node name parts copied from its landing server; maintained in SQL."""
 
     __tablename__ = "node_names"
-    __table_args__ = (
-        sa.Index(
-            "uq_node_names_group",
-            sa.text("coalesce(entry_country, '')"),
-            sa.text("coalesce(exit_country, '')"),
-            sa.text("coalesce(asn_label, '')"),
-            "seq",
-            unique=True,
-        ),
-    )
+    __table_args__ = (sa.Index("idx_node_names_server", "server_key"),)
     node_id: Mapped[UUID] = mapped_column(
         sa.ForeignKey("nodes.id", ondelete="CASCADE"), primary_key=True
     )
@@ -372,6 +363,65 @@ class NodeName(Base):
     asn_label: Mapped[str | None] = mapped_column(sa.Text)
     seq: Mapped[int]
     assigned_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), server_default=sa.func.now()
+    )
+    server_key: Mapped[str | None] = mapped_column(sa.Text)
+    org_label: Mapped[str | None] = mapped_column(sa.Text)
+    variant: Mapped[str | None] = mapped_column(sa.Text)
+
+
+class NameServer(Base):
+    """One stable number per landing server inside a country + operator group."""
+
+    __tablename__ = "name_servers"
+    __table_args__ = (
+        sa.Index(
+            "uq_name_servers_group",
+            sa.text("coalesce(exit_country, '')"),
+            sa.text("coalesce(org_label, '')"),
+            sa.text("coalesce(asn_label, '')"),
+            "seq",
+            unique=True,
+        ),
+    )
+    server_key: Mapped[str] = mapped_column(sa.Text, primary_key=True)
+    exit_country: Mapped[str | None] = mapped_column(sa.Text)
+    org_label: Mapped[str | None] = mapped_column(sa.Text)
+    asn_label: Mapped[str | None] = mapped_column(sa.Text)
+    seq: Mapped[int]
+    assigned_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), server_default=sa.func.now()
+    )
+
+
+class IpInfo(Base):
+    """Landing-IP details from ip-api, cached by Actions."""
+
+    __tablename__ = "ip_info"
+    ip: Mapped[str] = mapped_column(sa.Text, primary_key=True)
+    status: Mapped[str] = mapped_column(sa.Text)
+    country_code: Mapped[str | None] = mapped_column(sa.Text)
+    region: Mapped[str | None] = mapped_column(sa.Text)
+    city: Mapped[str | None] = mapped_column(sa.Text)
+    isp: Mapped[str | None] = mapped_column(sa.Text)
+    org: Mapped[str | None] = mapped_column(sa.Text)
+    as_number: Mapped[int | None] = mapped_column(sa.BigInteger)
+    as_org: Mapped[str | None] = mapped_column(sa.Text)
+    queried_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), server_default=sa.func.now()
+    )
+
+
+class NodeShareLink(Base):
+    """Share URI without a name (or why none exists), computed once per node."""
+
+    __tablename__ = "node_share_links"
+    node_id: Mapped[UUID] = mapped_column(
+        sa.ForeignKey("nodes.id", ondelete="CASCADE"), primary_key=True
+    )
+    uri: Mapped[str | None] = mapped_column(sa.Text)
+    error_code: Mapped[str | None] = mapped_column(sa.Text)
+    created_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), server_default=sa.func.now()
     )
 

@@ -4,15 +4,18 @@ import { PROTOCOLS } from "../filters.js";
 const TOKENS = [
   ["{FLAG}", "落地国旗"],
   ["{ROUTE}", "入口->落地，相同时只写一个"],
+  ["{OPERATOR}", "IP 归属|ASN，如 Greencloud|xTom；两者相同时只写一个"],
   ["{ASN}", "落地 ASN 简称"],
-  ["{SEQ}", "落地国家+ASN 内的序号（01、02…）"],
+  ["{ORG}", "落地 IP 归属（org）简称，与 ASN 相同时为空"],
+  ["{SEQ}", "落地服务器序号（01、02…），同一落地 IP 共用"],
+  ["{VARIANT}", "同服务器多个节点时的协议后缀，如 “ VLESS”"],
   ["{ENTRY_FLAG}", "入口国旗"],
   ["{ENTRY_COUNTRY}", "入口地区代码"],
   ["{EXIT_COUNTRY}", "落地地区代码"],
   ["{PROTOCOL}", "协议"],
   ["{SHORT_ID}", "节点编号"],
 ];
-const DEFAULT_TEMPLATE = "{FLAG}{ROUTE}|{ASN} {SEQ}";
+const DEFAULT_TEMPLATE = "{FLAG}{ROUTE}|{OPERATOR} {SEQ}{VARIANT}";
 
 function schedule(settings) {
   const form = h(
@@ -44,7 +47,7 @@ function naming(rules) {
   const form = h(
     "form",
     { class: "stack" },
-    field("命名模板", input, "例：🇸🇬HK->SG|Webbing 01。序号按“落地国家 + ASN”递增且保持稳定，节点失效也不会让其他节点改号；还没检测过的节点用编号代替序号。"),
+    field("命名模板", input, "例：🇯🇵JP|Greencloud|xTom 01 VLESS。序号按落地服务器（落地 IP）在“落地国家 + 运营商”内递增并保持稳定；同一服务器的多个节点共用序号、用协议区分；还没检测过的节点用编号代替序号。"),
     h("div", { class: "chips" }, TOKENS.map(([token, text]) => h("button", { type: "button", class: "chip", title: text, onclick: () => { input.setRangeText(token, input.selectionStart, input.selectionEnd, "end"); input.focus(); } }, token))),
     h(
       "div",

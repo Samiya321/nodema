@@ -179,6 +179,8 @@ export const ERRORS = {
   NODE_COOLDOWN: "连续失败，冷却中",
   ENTRY_NETWORK_UNAVAILABLE: "检测环境无此网络（如 IPv6）",
   RUNTIME_UNSUPPORTED: "核心不支持该配置",
+  SHARE_UNSUPPORTED: "分享链接格式无法表示该配置",
+  SHARE_TOO_LONG: "分享链接过长",
 };
 export const errorText = (code) => ERRORS[code] || code || "未知错误";
 

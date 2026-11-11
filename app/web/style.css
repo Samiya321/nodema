@@ -333,3 +333,9 @@ a.button { display: inline-block; text-decoration: none; }
 a.button.primary { background: var(--action); border: 1px solid var(--action); color: var(--action-ink); font-weight: 600; border-radius: var(--radius-s); padding: 5px 12px; }
 tr.subhead td { background: var(--sunken); font-weight: 600; font-size: 12px; padding: 4px 14px; }
 tr.subhead:hover { background: none; }
+
+/* Share dialog: the QR stays black-on-white in both themes so phones can scan it. */
+.share { align-items: center; text-align: center; }
+.share canvas.qr { width: min(280px, 100%); height: auto; image-rendering: pixelated; border-radius: var(--radius-s); background: #fff; }
+.share .share-uri { width: 100%; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; word-break: break-all; resize: vertical; }
+dd .tag { margin-left: 6px; }

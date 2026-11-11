@@ -1,5 +1,6 @@
 import { KIND, ago, api, badge, busy, date, dialog, errorText, field, h, ms, pct, route, select, table, toast } from "../core.js";
 import { testNodes } from "../strip.js";
+import { showShare } from "../share.js";
 
 const MEASURE = { FULL: "完整代理验证", PREFLIGHT: "入口预检", SKIPPED: "本轮跳过" };
 const OPERATORS = [["GENERAL", "通用"], ["CT", "电信"], ["CU", "联通"], ["CM", "移动"]];
@@ -32,8 +33,10 @@ export async function nodeDetail(id) {
         ["入口", h("code", {}, `${n.server_host}:${n.server_port}`)],
         ["入口解析", obs?.entry_ips?.join("、")],
         ["入口地区 / ASN", `${n.entry_country || "—"} / ${n.entry_asn ? "AS" + n.entry_asn : "—"}`],
-        ["出口 IP", n.exit_ip],
-        ["落地", `${n.exit_country || "—"} ${obs?.exit_city || ""}`],
+        ["落地 IP", n.exit_ip ? h("span", {}, h("code", {}, n.exit_ip), n.server_node_count > 1 ? h("span", { class: "tag" }, `同服务器 ×${n.server_node_count}`) : null) : null],
+        ["落地位置", [n.exit_country, n.exit_region, n.exit_ip_city || obs?.exit_city].filter(Boolean).join(" · ") || null],
+        ["IP 归属（org）", n.exit_org],
+        ["ISP", n.exit_isp],
         ["落地 ASN", n.exit_asn ? `AS${n.exit_asn} ${n.exit_asn_org || ""}` : "—"],
       ]),
       pairs([
@@ -51,6 +54,7 @@ export async function nodeDetail(id) {
       "div",
       { class: "row" },
       h("button", { type: "button", class: "primary", onclick: async () => { if (await testNodes([n.id])) sheet.close(); } }, "检测此节点"),
+      h("button", { type: "button", onclick: (e) => showShare(n, e.target) }, "二维码 / 分享"),
       h("button", { type: "button", onclick: (e) => toggleEnabled(e.target, n) }, n.enabled ? "停用此节点" : "启用此节点"),
       h("button", { type: "button", onclick: () => annotate(n.id, sheet) }, "编辑人工资料"),
       h(
@@ -77,6 +81,7 @@ export async function nodeDetail(id) {
       ),
     ),
     aliases,
+    n.server_node_count > 1 ? siblings(n) : null,
     h("h3", {}, "来源"),
     table(
       [
@@ -100,6 +105,27 @@ export async function nodeDetail(id) {
       n.history,
     ),
   );
+}
+
+// Other nodes landing on the same server (same exit IP), usually other protocols.
+function siblings(n) {
+  const box = h("div", {}, h("p", { class: "muted small" }, "加载中…"));
+  api(`/nodes?exit_ip=${encodeURIComponent(n.exit_ip)}&limit=50`)
+    .then((page) =>
+      box.replaceChildren(
+        table(
+          [
+            { label: "节点", render: (s) => (s.id === n.id ? h("strong", {}, s.name) : h("button", { type: "button", class: "link", onclick: () => nodeDetail(s.id) }, s.name)) },
+            { label: "协议", render: (s) => `${s.protocol} / ${s.transport || "—"} / ${s.security || "—"}` },
+            { label: "入口", render: (s) => h("code", {}, `${s.server_host}:${s.server_port}`) },
+            { label: "状态", render: (s) => badge(s.status) },
+          ],
+          page.items,
+        ),
+      ),
+    )
+    .catch(() => box.replaceChildren(h("p", { class: "muted small" }, "无法加载同服务器节点。")));
+  return h("section", {}, h("h3", {}, `同一落地服务器（${n.server_node_count} 个节点）`), h("p", { class: "hint" }, "这些节点落地 IP 相同，通常是同一台服务器上的不同协议或入口，共用一个序号。"), box);
 }
 
 async function toggleEnabled(button, node) {

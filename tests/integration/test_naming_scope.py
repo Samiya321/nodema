@@ -37,6 +37,7 @@ def nodes(service, count):
 
 class Checker:
     exit = {}
+    ips = {}  # host -> landing IP; by default every host lands on its own server
 
     def preflight(self):
         pass
@@ -52,7 +53,10 @@ class Checker:
             exit_country=country,
             exit_asn=asn,
             exit_asn_org=org,
-            exit_ip="8.8.8.8",
+            exit_ip=self.ips.get(
+                identity["server_host"],
+                "192.0.2." + identity["server_host"].split(".")[0].rsplit("-", 1)[1],
+            ),
             http_duration_ms=10,
         )
 
@@ -165,7 +169,8 @@ def test_export_names_are_unique_even_without_sequence():
 def test_sequence_numbers_above_99_are_not_truncated(db_engine):
     with db_engine.connect() as conn:
         render = (
-            "SELECT nodema_render_name('{ASN} {SEQ}','N1','vless',NULL,NULL,'HK','SG','X',:seq)"
+            "SELECT nodema_render_name("
+            "'{ASN} {SEQ}','N1','vless',NULL,NULL,'HK','SG','X',NULL,:seq,NULL)"
         )
         assert [conn.scalar(sa.text(render), {"seq": s}) for s in (7, 42, 108, 1234)] == [
             "X 07",
@@ -214,3 +219,76 @@ def test_selected_nodes_get_their_own_run(service, monitor_settings):
     assert len(runs) == 1 and runs[0]["node_count"] == 2 and runs[0]["kind"] == "MANUAL"
     with pytest.raises(AssetError, match="INVALID_SELECTION"):
         scans.request(node_ids=[])
+
+
+def mixed_nodes(service):
+    lines = [
+        b"trojan://secret-1@host-1.example:443#n1",
+        b"trojan://secret-2@host-2.example:443#n2",
+        b"ss://YWVzLTEyOC1nY206c2VjcmV0@host-3.example:8388#n3",
+        b"trojan://secret-4@host-4.example:443#n4",
+    ]
+    source = service.create_source(
+        name="vps", source_type=SourceType.RAW_TEXT, payload=b"\n".join(lines)
+    )
+    service.sync_source(source["id"])
+
+
+def test_nodes_on_one_landing_server_share_a_number_with_protocol_suffix(
+    service, monitor_settings, monkeypatch
+):
+    mixed_nodes(service)
+    shared = {f"host-{i}.example": "198.51.100.7" for i in (1, 2, 3)}
+    monkeypatch.setattr(Checker, "ips", shared)
+    scan(service, monitor_settings)
+    result = names(service, monitor_settings)
+    assert result == {
+        "host-1": "🇸🇬HK->SG|Webbing 01 Trojan",
+        "host-2": "🇸🇬HK->SG|Webbing 01 Trojan-2",
+        "host-3": "🇸🇬HK->SG|Webbing 01 SS",
+        "host-4": "🇸🇬HK->SG|Webbing 02",
+    }
+    items = Catalog(service, monitor_settings).page({}, sort="short_id:asc", limit=10)["items"]
+    counts = {n["server_host"].split(".")[0]: n["server_node_count"] for n in items}
+    assert counts == {"host-1": 3, "host-2": 3, "host-3": 3, "host-4": 1}
+    # host-3 moves to its own server: the shared server keeps 01, the newcomer takes 03.
+    monkeypatch.setattr(Checker, "ips", {k: v for k, v in shared.items() if k != "host-3.example"})
+    scan(service, monitor_settings)
+    moved = names(service, monitor_settings)
+    assert moved["host-1"] == "🇸🇬HK->SG|Webbing 01 Trojan"
+    assert moved["host-3"] == "🇸🇬HK->SG|Webbing 03"
+    assert moved["host-4"] == "🇸🇬HK->SG|Webbing 02"
+
+
+def test_operator_combines_netblock_org_and_asn(service, monitor_settings, monkeypatch):
+    nodes(service, 2)
+    monkeypatch.setattr(
+        Checker,
+        "exit",
+        {
+            "host-1.example": ("JP", 64500, "xTom Japan Corporation"),
+            "host-2.example": ("JP", 64501, "Oracle Corporation"),
+        },
+    )
+    scan(service, monitor_settings)
+    with service.sessions.begin() as session:
+        session.execute(
+            sa.text(
+                "INSERT INTO ip_info(ip,status,org,isp,as_org) VALUES "
+                "('192.0.2.1','SUCCESS','Greencloud LLC',"
+                "'xTom Japan Corporation','xTom Japan Corporation'),"
+                "('192.0.2.2','SUCCESS','Oracle Public Cloud',"
+                "'Oracle Corporation','Oracle Corporation')"
+            )
+        )
+        assert session.scalar(sa.text("SELECT nodema_assign_names()")) == 1
+        # Nothing changed: no rows are rewritten (subscriptions are not rebuilt).
+        assert session.scalar(sa.text("SELECT nodema_assign_names()")) == 0
+    result = names(service, monitor_settings)
+    assert result == {"host-1": "🇯🇵HK->JP|Greencloud|xTom 01", "host-2": "🇯🇵HK->JP|Oracle 01"}
+    item = Catalog(service, monitor_settings).page({"exit_ip": "192.0.2.1"}, limit=1)["items"][0]
+    assert (item["exit_org"], item["exit_isp"], item["org_label"]) == (
+        "Greencloud LLC",
+        "xTom Japan Corporation",
+        "Greencloud",
+    )

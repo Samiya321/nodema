@@ -41,6 +41,12 @@ class Settings(BaseSettings):
     failure_cooldown_base_hours: int = Field(default=6, ge=1, le=24)
     failure_cooldown_max_hours: int = Field(default=72, ge=1, le=168)
     echo_url: str = ""
+    # Landing-IP details: ip-api.com free tier (HTTP only, non-commercial, 15 batches/min).
+    ipinfo_enabled: bool = True
+    ipinfo_url: str = Field(default="http://ip-api.com/batch", pattern=r"^https?://[^\s]+$")
+    ipinfo_refresh_days: int = Field(default=30, ge=1, le=365)
+    ipinfo_max_ips: int = Field(default=1000, ge=1, le=5000)
+    ipinfo_timeout_seconds: float = Field(default=15, gt=0, le=60)
     echo_token: SecretStr = SecretStr("")
     dns_timeout_seconds: float = Field(default=3, gt=0, le=30)
     tcp_timeout_seconds: float = Field(default=5, gt=0, le=30)

@@ -24,3 +24,5 @@
 2026-11-11 增量：Dashboard / Worker / Python API / CLI 支持每批 100 个订阅 URL 与 Sub-Store API，逐行校验、去重、并发批次保护和单次调度；GeoIP 默认从 GitHub Release 下载并校验，无需另配 MaxMind 账号。说明与数据许可见 [BULK_IMPORT_AND_GEOIP.md](BULK_IMPORT_AND_GEOIP.md)。
 
 2026-11-11 第二轮（**已合并并发布**，main `b477963`，迁移 `0015`，见 [CLOUD_DEPLOYMENT.md](CLOUD_DEPLOYMENT.md)）：修复单节点 DNS 超时导致整片中止（生产 run 42907816991）、滑动窗口并发检测；导入不再自动启动 Actions，改为手动“同步来源”和按范围检测；机场识别与流量/到期、Sub-Store 子来源、自建节点保留语义、`🇸🇬HK->SG|Webbing 01` 命名；Dashboard 全部重写。迁移 head `0014_sources_airports_naming`；本地 328 Python + 32 Worker + 3 Echo 通过，loopback 握手和 100 节点合成链路通过。说明见 [SOURCES_AIRPORTS_NAMING.md](SOURCES_AIRPORTS_NAMING.md)，上线顺序见 [HANDOFF.md](HANDOFF.md)。尚未在真实节点和生产 Runner 上验证速度。
+
+2026-11-11 第三轮（迁移 `0016_servers_ipinfo_share`）：同一落地 IP 的节点共用序号并加协议后缀（`🇯🇵JP|Greencloud|xTom 01 VLESS`），落地 IP 归属/ISP 由 Actions 查询 ip-api.com，节点详情可显示 Shadowrocket 可扫的分享二维码，节点页新增“按落地服务器”视图。详见 [SOURCES_AIRPORTS_NAMING.md](SOURCES_AIRPORTS_NAMING.md) 第 8 节。

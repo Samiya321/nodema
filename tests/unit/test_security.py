@@ -169,5 +169,19 @@ def test_keys_and_naming():
     assert render_name(
         "N1", "vless", None, None, entry_country="SG", exit_country="SG", seq=12
     ) == ("🇸🇬SG|Unknown 12")
+    assert (
+        render_name(
+            "N1",
+            "vless",
+            None,
+            None,
+            exit_country="JP",
+            asn_label="xTom",
+            org_label="Greencloud",
+            seq=1,
+            variant="VLESS",
+        )
+        == "🇯🇵JP|Greencloud|xTom 01 VLESS"
+    )
     with pytest.raises(AssetError, match="INVALID_NAME_TEMPLATE"):
         render_name("N000001", "vless", None, None, "{SHORT_ID.__class__}")
