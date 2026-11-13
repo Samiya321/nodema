@@ -14,7 +14,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 
-USER_AGENT = "nodema-probe/1"
+USER_AGENT = "probe-client/1"
 CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f​-‏ -‮⁦-⁩]")
 MEASUREMENT_ID = re.compile(r"^[A-Za-z0-9]{1,64}$")
 
