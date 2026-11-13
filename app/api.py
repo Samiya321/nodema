@@ -4,6 +4,7 @@ import hmac
 from typing import Annotated
 from uuid import UUID
 
+import sqlalchemy as sa
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
@@ -16,6 +17,7 @@ from app.database.session import make_engine, session_factory
 from app.dispatch import dispatch_export_build, dispatch_scan, dispatch_source_sync
 from app.domain import AssetError, InputFormat, SourceType
 from app.exports import ExportService
+from app.grading import VANTAGES
 from app.ingestion.fetcher import Fetcher
 from app.ingestion.service import AssetService
 from app.scans import ScanService
@@ -160,6 +162,37 @@ def create_app(settings=None, *, assets=None):
             raise AssetError("INVALID_QUALITY_POLICY")
         return quality.set_policy(body["policy"], body.get("expected_version"))
 
+    from app.probes.policy import GradingPolicyService
+    from app.probes.policy import load_policy as load_grading
+
+    grading = GradingPolicyService(assets.sessions)
+
+    @app.get("/api/grading-policy", dependencies=auth)
+    def grading_policy():
+        return grading.get()
+
+    @app.put("/api/grading-policy", dependencies=auth)
+    def update_grading_policy(body: dict):
+        if not isinstance(body.get("policy"), dict):
+            raise AssetError("INVALID_GRADING_POLICY")
+        return grading.set(body["policy"], body.get("expected_version"))
+
+    @app.get("/api/probe-status", dependencies=auth)
+    def probe_status(vantage: str = ""):
+        with assets.sessions() as session:
+            chosen = vantage or load_grading(session)["default_vantage"]
+            if chosen not in VANTAGES:
+                raise AssetError("INVALID_NODE_QUERY")
+            return session.scalar(sa.text("SELECT nodema_probe_status(:v)"), {"v": chosen})
+
+    @app.get("/api/nodes/{node_id}/access", dependencies=auth)
+    def node_access(node_id: UUID):
+        with assets.sessions() as session:
+            result = session.scalar(sa.text("SELECT nodema_node_access(:id)"), {"id": node_id})
+        if result is None:
+            raise AssetError("NODE_NOT_FOUND")
+        return result
+
     @app.get("/api/nodes/{node_id}/annotations", dependencies=auth)
     def annotations(node_id: UUID):
         return quality.annotation(node_id)
@@ -181,7 +214,12 @@ def create_app(settings=None, *, assets=None):
             if error.code in ("SCAN_ARCHIVED", "SCAN_DATE_ARCHIVED")
             else 409
             if error.code
-            in ("QUALITY_POLICY_CONFLICT", "EXPORT_TOKEN_LEGACY", "EXPORT_REVISION_CONFLICT")
+            in (
+                "QUALITY_POLICY_CONFLICT",
+                "GRADING_POLICY_CONFLICT",
+                "EXPORT_TOKEN_LEGACY",
+                "EXPORT_REVISION_CONFLICT",
+            )
             else 404
             if error.code.endswith("NOT_FOUND") or error.code == "EXPORT_NOT_AVAILABLE"
             else 400
@@ -277,8 +315,8 @@ def create_app(settings=None, *, assets=None):
         )
 
     @app.get("/api/nodes/{node_id}", dependencies=auth)
-    def node(node_id: UUID):
-        return catalog.node(node_id)
+    def node(node_id: UUID, vantage: str = ""):
+        return catalog.node(node_id, vantage=vantage or None)
 
     @app.patch("/api/nodes/{node_id}", dependencies=auth)
     def update_node(node_id: UUID, body: EnableUpdate):

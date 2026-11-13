@@ -1,0 +1,43 @@
+name: Entry probes and grades
+on:
+  schedule:
+    # Every hour at :30. Beijing 19:30-23:30 is the carriers' peak window (see grading
+    # rules); other hours buy HK/SG, reachability and route samples. GitHub may delay.
+    - cron: '30 * * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: nodema-probe
+  cancel-in-progress: false
+jobs:
+  probe:
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      FINGERPRINT_KEY_B64: ${{ secrets.FINGERPRINT_KEY_B64 }}
+      ENCRYPTION_KEY_B64: ${{ secrets.ENCRYPTION_KEY_B64 }}
+      ENCRYPTION_KEY_ID: ${{ vars.ENCRYPTION_KEY_ID || 'local-v1' }}
+      FRESHNESS_HOURS: ${{ vars.FRESHNESS_HOURS || '36' }}
+      # Optional single registered token; without it the anonymous limit is used.
+      GLOBALPING_TOKEN: ${{ secrets.GLOBALPING_TOKEN }}
+      PROBE_CONCURRENCY: ${{ vars.PROBE_CONCURRENCY || '6' }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
+        with:
+          python-version: '3.12'
+      - id: dependencies
+        run: uv sync --frozen
+      - name: Measure entries (counts only in the log)
+        continue-on-error: true
+        timeout-minutes: 30
+        run: uv run nodema probe run
+      - name: Recompute grades
+        if: always() && steps.dependencies.outcome == 'success'
+        run: uv run nodema grade refresh --if-due
+      - name: Rebuild subscriptions that filter by grade
+        if: always() && steps.dependencies.outcome == 'success'
+        run: uv run nodema export build-pending

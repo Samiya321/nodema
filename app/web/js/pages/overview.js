@@ -1,5 +1,70 @@
 import { KIND, SCAN_KIND, ago, api, badge, bytes, daysUntil, empty, errorText, flag, h } from "../core.js";
 import { openTestDialog, syncSources } from "../strip.js";
+import { defaultVantage, distribution, gradeBadge, vantageName, vantageSwitch } from "../grades.js";
+
+const PROBE_ERRORS = { NETWORK: "无法连接 Globalping", TIMEOUT: "测量超时", INVALID_RESPONSE: "Globalping 返回异常" };
+
+function qualityPanel(status, vantage, go) {
+  const counts = status?.grades || {};
+  const link = (g) =>
+    `#/nodes?view=grade&vantage=${vantage}&` + (g === "D" ? "unreachable=true" : g === "PENDING" ? "quality_grade=PENDING" : `min_quality_grade=${g}`);
+  const total = Object.values(counts).reduce((a, b) => a + b, 0);
+  return h(
+    "section",
+    { class: "panel" },
+    h("header", { class: "panel-head" }, h("h2", {}, "质量分布 · " + vantageName(vantage)), vantageSwitch(vantage, (v) => go("overview", new URLSearchParams({ vantage: v })))),
+    total
+      ? h(
+          "div",
+          { class: "stack" },
+          distribution(counts, { link }),
+          h(
+            "ul",
+            { class: "tally" },
+            ["S", "A", "B", "C", "D", "PENDING"].map((g) =>
+              h("li", {}, h("a", { href: link(g) }, gradeBadge(g, vantage, { withVantage: false })), h("strong", {}, counts[g] || 0)),
+            ),
+          ),
+          h("p", { class: "muted small" }, `只统计当前可用的节点；定档于 ${ago(status.graded_at)}。`),
+        )
+      : h("p", { class: "muted" }, "还没有定档。完成至少 3 天检测后出现等级；接入测量每小时运行一次。"),
+  );
+}
+
+function probePanel(status) {
+  const latest = status?.latest;
+  return h(
+    "section",
+    { class: "panel" },
+    h("header", { class: "panel-head" }, h("h2", {}, "接入测量"), h("a", { href: "#/scans?tab=probes" }, "运行记录")),
+    latest
+      ? h(
+          "dl",
+          { class: "pairs" },
+          h("dt", {}, "最近一次"),
+          h("dd", {}, `${ago(latest.started_at)}${latest.peak ? "（晚高峰）" : ""} · ${latest.tests} 次测试`),
+          h("dt", {}, "今天已用"),
+          h("dd", {}, `${status.tests_today} 次（${latest.authenticated ? "账号额度每小时 500" : "匿名额度每小时 250"}）`),
+          h("dt", {}, "已覆盖网段"),
+          h("dd", {}, `${status.prefixes_graded} 个（7 天内）；三网晚高峰 ${status.prefixes_peak} 个；HK/SG ${status.prefixes_overseas} 个`),
+          h("dt", {}, "在线家宽探针"),
+          h("dd", {}, ["CN-CT", "CN-CU", "CN-CM"].map((c) => `${vantageName(c)} ${latest.probes?.[c] ?? "?"}`).join(" · ")),
+        )
+      : h("p", { class: "muted" }, "还没有运行过。部署后每小时自动运行一次（北京时间 19:30–23:30 只测三网晚高峰）。"),
+    h("p", { class: "hint" }, "数据来自 Globalping 社区探针的 TCP 握手，测量记录在 Globalping 上公开可查。"),
+  );
+}
+
+function probeNotes(status) {
+  const notes = [];
+  const latest = status?.latest;
+  if (!latest) return notes;
+  if (latest.error_code) notes.push(["bad", `接入测量失败：${PROBE_ERRORS[latest.error_code] || latest.error_code}`, "#/scans?tab=probes"]);
+  if (status.rate_limited_7d) notes.push(["warn", `接入测量 7 天内 ${status.rate_limited_7d} 次触达 Globalping 额度`, "#/scans?tab=probes"]);
+  for (const c of ["CN-CT", "CN-CU", "CN-CM"])
+    if ((latest.probes?.[c] ?? 2) < 2) notes.push(["warn", `${vantageName(c)}在线家宽探针少于 2 个，该运营商的等级会停在待定或最高 B`, "#/scans?tab=probes"]);
+  return notes;
+}
 
 // One suggestion that follows the workflow: add sources -> sync -> test -> export.
 function nextStep(sources, overview, pipeline, exportsCount) {
@@ -80,18 +145,20 @@ function attention(airports, substores, sources) {
   return items;
 }
 
-export async function render(root) {
-  const [overview, airports, substores, sources, pipeline, exportsList] = await Promise.all([
+export async function render(root, { params, go }) {
+  const vantage = params.get("vantage") || (await defaultVantage());
+  const [overview, airports, substores, sources, pipeline, exportsList, probe] = await Promise.all([
     api("/overview"),
     api("/airports"),
     api("/substores"),
     api("/sources"),
     api("/pipeline"),
     api("/exports"),
+    api("/probe-status?vantage=" + encodeURIComponent(vantage)).catch(() => null),
   ]);
   const step = nextStep(sources, overview, pipeline, exportsList.length);
   const latest = overview.latest_scan;
-  const notes = attention(airports, substores, sources);
+  const notes = [...attention(airports, substores, sources), ...probeNotes(probe)];
   const countries = Object.entries(overview.countries || {})
     .filter(([c]) => c !== "UNK")
     .sort((a, b) => b[1] - a[1])
@@ -102,6 +169,7 @@ export async function render(root) {
       ? h("section", { class: "next-step" }, h("div", {}, h("h2", {}, step[0]), h("p", { class: "muted" }, step[1])), step[2])
       : null,
     h("div", { class: "grid-2" }, GROUPS.map((key) => groupPanel(key, overview.groups?.[key]))),
+    h("div", { class: "grid-2" }, qualityPanel(probe, vantage, go), probePanel(probe)),
     h(
       "div",
       { class: "grid-2" },

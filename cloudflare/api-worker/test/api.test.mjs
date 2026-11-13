@@ -1568,3 +1568,127 @@ test("selections and imports have no count limit", async () => {
     },
   });
 });
+
+test("grades, grading rules and probe status agree across Worker, Python and SQL", async () => {
+  const response = await request("/api/sources", {
+    method: "POST",
+    data: {
+      name: "Synthetic graded entries",
+      type: "RAW_TEXT",
+      payload:
+        "vless://00000000-0000-4000-8000-000000009101@graded-one.example:443?type=tcp&security=none\n" +
+        "vless://00000000-0000-4000-8000-000000009102@graded-two.example:443?type=tcp&security=none",
+    },
+  });
+  assert.equal(response.status, 201);
+  const source = await response.json();
+  const settings = `Settings(_env_file=None,database_url=os.environ['DATABASE_URL'],encryption_key_b64='${env.ENCRYPTION_KEY_B64}',fingerprint_key_b64='${Buffer.alloc(32, "H").toString("base64")}',retry_delay_seconds=0)`;
+  py(`import os
+from datetime import timedelta
+from uuid import UUID
+from app.database.session import make_engine,session_factory
+from app.ingestion.service import AssetService
+from app.scans import ScanService,now
+from app.config import Settings
+from app.checker.health import Observation
+assets=AssetService(session_factory(make_engine(os.environ['DATABASE_URL'])),b'H'*32)
+assets.sync_source(UUID('${source.id}'))
+class Checker:
+ def preflight(self):pass
+ def close(self):pass
+ def check(self,identity,short_id):
+  return Observation(status='UP',entry_country='HK',entry_asn=64511,entry_ips=['198.51.100.77'],exit_country='JP',exit_asn=64521,exit_ip='203.0.113.77',http_duration_ms=20,probe_key='synthetic-grade')
+scans=ScanService(assets,${settings},checker_factory=Checker)
+for i in range(3):
+ run=scans.create(now().date()-timedelta(days=i))
+ for shard in scans.get(run['id'])['shards']:scans.run_shard(run['id'],shard['shard_no'])
+ scans.finalize(run['id'])`);
+  const db = await connect();
+  try {
+    for (const vantage of ["CN-CT", "CN-CU", "CN-CM", "HK", "SG"])
+      for (const probe of [1, 2])
+        await db.query(
+          "INSERT INTO entry_probe_results(target,prefix,purpose,vantage,protocol,peak,probe_asn,probe_city,sent,received,rtt_avg,jitter) VALUES('198.51.100.77:443','198.51.100','QUALITY',$1,'TCP',$2,$3,'Synthetic',16,16,$4,1)",
+          [vantage, vantage.startsWith("CN"), 64600 + probe, vantage.startsWith("CN") ? 120 : 25],
+        );
+  } finally {
+    await db.end();
+  }
+  const refreshed = JSON.parse(
+    py(`import json,os
+from app.config import Settings
+from app.database.session import make_engine,session_factory
+from app.probes import planner,refresh
+planner.ALLOW_NON_GLOBAL=True
+print(json.dumps(refresh.refresh(session_factory(make_engine(os.environ['DATABASE_URL'])),${settings})))`),
+  );
+  assert.ok(refreshed.changed);
+  const compact = await (
+    await request(`/api/nodes?view=compact&source_id=${source.id}&vantage=CN-CT&sort=quality_grade:asc&limit=10`)
+  ).json();
+  const at = (name) => compact.fields.indexOf(name);
+  assert.equal(compact.vantage, "CN-CT");
+  assert.deepEqual(
+    compact.items.map((row) => [row[at("quality_grade")], row[at("peak_rtt_ms")], row[at("server_best_grade")]]),
+    [["A", 120, "A"], ["A", 120, "A"]],
+  );
+  const hk = await (await request(`/api/nodes?source_id=${source.id}&vantage=HK&min_quality_grade=S`)).json();
+  assert.equal(hk.total, 2);
+  assert.equal(hk.items[0].quality_grade, "S");
+  assert.ok(hk.items[0].grade_reasons.length > 0);
+  // Scans in this shared test schema re-check every node, so filter by landing server.
+  assert.equal(
+    (await (await request("/api/nodes?exit_ip=203.0.113.77&best_per_server=true")).json()).total,
+    1,
+  );
+  assert.equal((await request("/api/nodes?best_per_server=maybe")).status, 400);
+  assert.equal((await request("/api/nodes?vantage=US")).status, 400);
+  const access = await (await request(`/api/nodes/${hk.items[0].id}/access`)).json();
+  assert.equal(access.prefix, "198.51.100");
+  assert.deepEqual(Object.keys(access.grades).sort(), ["CN", "CN-CM", "CN-CT", "CN-CU", "HK", "SG"]);
+  assert.equal((await request(`/api/nodes/${crypto.randomUUID()}/access`)).status, 404);
+  const status = await (await request("/api/probe-status?vantage=HK")).json();
+  assert.ok(status.grades.S >= 2);
+  assert.equal((await request("/api/probe-status?vantage=XX")).status, 400);
+
+  const policy = await (await request("/api/grading-policy")).json();
+  assert.equal(policy.policy.default_vantage, "CN");
+  const saved = await request("/api/grading-policy", {
+    method: "PUT",
+    data: { expected_version: policy.version, policy: { ...policy.policy, default_vantage: "CN-CU" } },
+  });
+  assert.equal(saved.status, 200);
+  assert.equal((await saved.json()).version, policy.version + 1);
+  assert.equal(
+    (await request("/api/grading-policy", { method: "PUT", data: { expected_version: policy.version, policy: {} } })).status,
+    409,
+  );
+  // Default vantage now follows the saved rules when the request names none.
+  const defaulted = await (await request(`/api/nodes?view=compact&source_id=${source.id}&limit=1`)).json();
+  assert.equal(defaulted.vantage, "CN-CU");
+  const cases = [
+    {},
+    { default_vantage: "US" },
+    { min_probes: 0 },
+    { peak_start: "24:00" },
+    { stability_pct: { S: 50, A: 80, B: 60 } },
+    { bands: { CN: { S: { rtt_ms: 80, loss_pct: 1 }, A: { rtt_ms: 70, loss_pct: 3 }, B: { rtt_ms: 250, loss_pct: 8 } }, OVERSEAS: policy.defaults.bands.OVERSEAS } },
+    { secret: true },
+  ];
+  const pythonVerdicts = JSON.parse(
+    py(`import json
+from app.grading import validate_grading
+cases=json.loads(${JSON.stringify(JSON.stringify(cases))})
+out=[]
+for c in cases:
+ try:
+  validate_grading(c);out.append(True)
+ except Exception:
+  out.append(False)
+print(json.dumps(out))`),
+  );
+  for (const [i, value] of cases.entries()) {
+    const status = (await request("/api/grading-policy", { method: "PUT", data: { policy: value } })).status;
+    assert.equal(status === 200, pythonVerdicts[i], `case ${i}`);
+  }
+});

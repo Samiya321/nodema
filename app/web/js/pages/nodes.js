@@ -1,12 +1,22 @@
 import { ago, api, busy, debounce, empty, field, h, pager, select, toast } from "../core.js";
 import { ADVANCED, PROTOCOLS, SORTS, advancedFields, readFilters } from "../filters.js";
 import { testNodes } from "../strip.js";
-import { CHUNK, collator, groupKey, groupTitle, headRow, lazyBody, memberOrder, nodeRow } from "./node-rows.js";
+import { CHUNK, collator, gradeOrder, groupKey, groupTitle, headRow, lazyBody, memberOrder, nodeRow, setRowVantage } from "./node-rows.js";
+import { defaultVantage, distribution, vantageSwitch } from "../grades.js";
 
-const QUICK = ["q", "node_group", "status", "exit_country", "protocol", "provider_id", "eligible", "enabled", "source_id"];
+const QUICK = ["q", "node_group", "status", "exit_country", "protocol", "provider_id", "eligible", "enabled", "source_id", "quality_grade"];
 const KEYS = [...QUICK, ...ADVANCED.map(([key]) => key)];
-const PERCENT = ["min_success_rate", "max_timeout_rate", "min_lifetime_availability"];
-const VIEWS = [["country", "按落地国家"], ["asn", "按落地 ASN"], ["server", "按落地服务器"], ["list", "列表"]];
+const PERCENT = ["min_success_rate", "max_timeout_rate", "min_lifetime_availability", "max_peak_loss", "min_avail_7d"];
+const VIEWS = [["grade", "按等级"], ["country", "按落地国家"], ["asn", "按落地 ASN"], ["server", "按落地服务器"], ["list", "列表"]];
+// Quick grade choice -> API filters (the advanced form exposes the same keys).
+const GRADE_QUICK = [
+  ["", "全部", {}],
+  ["S", "S", { min_quality_grade: "S" }],
+  ["A", "A 及以上", { min_quality_grade: "A" }],
+  ["B", "B 及以上", { min_quality_grade: "B" }],
+  ["PENDING", "待定", { quality_grade: "PENDING" }],
+  ["D", "该地区不通", { unreachable: "true" }],
+];
 const FETCH_PAGE = 10000; // compact rows per request; there is no overall cap
 const OPEN_ALL_BELOW = 300; // small libraries open every group; large ones start collapsed
 // Database transfer is metered (Neon Free: 5 GB a month), so a loaded list is kept until
@@ -33,24 +43,29 @@ async function load(filters, sort) {
   return data;
 }
 export const invalidateNodes = () => (cache = null);
+const quickGrade = (filters) =>
+  filters.unreachable === "true" ? "D" : filters.quality_grade === "PENDING" ? "PENDING" : filters.min_quality_grade || "";
 // Node edits elsewhere (detail dialog, tests finishing) announce themselves.
 window.addEventListener("nodema:nodes-changed", invalidateNodes);
 
 export async function render(root, { params, go }) {
-  const view = params.get("view") || "country";
-  const sort = params.get("sort") || "name:asc";
+  const view = params.get("view") || "grade";
+  const sort = params.get("sort") || "quality_grade:asc";
+  const vantage = params.get("vantage") || (await defaultVantage());
+  setRowVantage(vantage);
   const page = Math.max(0, Number(params.get("page") || 0) || 0);
   const filters = {};
   for (const key of KEYS) if (params.get(key)) filters[key] = params.get(key);
   const apiFilters = { ...filters };
   for (const key of PERCENT) if (apiFilters[key]) apiFilters[key] = String(Number(apiFilters[key]) / 100);
+  apiFilters.vantage = vantage;
   const [{ items, total, at: loadedAt }, { providers }] = await Promise.all([load(apiFilters, sort), api("/airports")]);
 
   // ---- filters (URL-backed) ----
   const form = h("form", { class: "toolbar", role: "search" });
   const apply = () => {
     const values = readFilters(form, KEYS);
-    const next = new URLSearchParams({ view });
+    const next = new URLSearchParams({ view, vantage });
     for (const [k, v] of Object.entries(values)) next.set(k, Array.isArray(v) ? v.join(",") : String(v));
     for (const key of PERCENT) if (values[key] !== undefined) next.set(key, String(values[key] * 100));
     if (form.elements.sort) next.set("sort", form.elements.sort.value);
@@ -69,6 +84,29 @@ export async function render(root, { params, go }) {
         { class: "segmented", role: "radiogroup", "aria-label": "节点类别" },
         [["", "全部"], ["SELF_HOSTED", "自建"], ["AIRPORT", "机场"]].map(([value, text]) =>
           h("label", { class: "seg" }, h("input", { type: "radio", name: "node_group", value, checked: (filters.node_group || "") === value, onchange: apply }), text),
+        ),
+      ),
+      h(
+        "div",
+        { class: "segmented", role: "radiogroup", "aria-label": "等级" },
+        GRADE_QUICK.map(([value, text, mapped]) =>
+          h(
+            "label",
+            { class: "seg" },
+            h("input", {
+              type: "radio",
+              name: "grade_quick",
+              value,
+              checked: quickGrade(filters) === value,
+              onchange: () => {
+                for (const key of ["min_quality_grade", "quality_grade", "unreachable"]) params.delete(key);
+                for (const [key, v] of Object.entries(mapped)) params.set(key, v);
+                params.delete("page");
+                go("nodes", params);
+              },
+            }),
+            text,
+          ),
         ),
       ),
       select("status", [["", "全部状态"], ["UP", "可用"], ["DEGRADED", "较慢"], ["DOWN", "不可用"], ["UNKNOWN", "未检测"], ["STALE", "结果过期"], ["UNSUPPORTED", "不支持"]], filters.status),
@@ -91,7 +129,7 @@ export async function render(root, { params, go }) {
         field("参与检测", select("eligible", [["", "全部"], ["true", "是"], ["false", "否"]], filters.eligible)),
         field("启用", select("enabled", [["", "全部"], ["true", "已启用"], ["false", "已停用"]], filters.enabled)),
       ),
-      h("div", { class: "row" }, h("button", { type: "submit", class: "primary" }, "应用筛选"), h("button", { type: "button", onclick: () => go("nodes", new URLSearchParams({ view })) }, "清除筛选")),
+      h("div", { class: "row" }, h("button", { type: "submit", class: "primary" }, "应用筛选"), h("button", { type: "button", onclick: () => go("nodes", new URLSearchParams({ view, vantage })) }, "清除筛选")),
     ),
   );
   form.addEventListener("submit", (e) => {
@@ -173,7 +211,9 @@ export async function render(root, { params, go }) {
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key).push(n);
     }
-    const ordered = [...groups.entries()].sort(([a, x], [b, y]) => (!a) - (!b) || y.length - x.length || collator.compare(a, b));
+    const ordered = [...groups.entries()].sort(([a, x], [b, y]) =>
+      view === "grade" ? gradeOrder(a) - gradeOrder(b) : (!a) - (!b) || y.length - x.length || collator.compare(a, b),
+    );
     const openAll = items.length <= OPEN_ALL_BELOW || ordered.length === 1;
     // Thousands of landing servers are possible: groups appear 100 at a time too.
     const moreGroups = h("button", { type: "button", class: "quiet more-groups" });
@@ -190,6 +230,8 @@ export async function render(root, { params, go }) {
     function groupFor(key, members) {
       members.sort(memberOrder(view));
       const up = members.filter((n) => ["UP", "DEGRADED"].includes(n.status)).length;
+      const counts = {};
+      for (const n of members) if (n.quality_grade) counts[n.quality_grade] = (counts[n.quality_grade] || 0) + 1;
       const memberIds = members.map((n) => n.id);
       const groupBox = h("input", { type: "checkbox", "aria-label": "选择本组" });
       groupBoxes.set(groupBox, memberIds);
@@ -198,7 +240,14 @@ export async function render(root, { params, go }) {
       const group = h(
         "details",
         { class: "node-group" },
-        h("summary", {}, groupBox, h("span", { class: "group-title" }, groupTitle(view, key, members[0])), h("span", { class: "group-count" }, h("strong", {}, up), ` / ${members.length} 可用`)),
+        h(
+          "summary",
+          {},
+          groupBox,
+          h("span", { class: "group-title" }, groupTitle(view, key, members[0])),
+          view === "grade" ? null : distribution(counts),
+          h("span", { class: "group-count" }, view === "grade" ? `${members.length} 个` : [h("strong", {}, up), ` / ${members.length} 可用`]),
+        ),
       );
       // Rows are built the first time a group opens.
       let built = false;
@@ -225,6 +274,7 @@ export async function render(root, { params, go }) {
         { type: "button", class: "quiet", title: "重新从数据库读取节点列表", onclick: () => { invalidateNodes(); go("nodes", params); } },
         `刷新（${ago(new Date(loadedAt).toISOString())}载入）`,
       ),
+      vantageSwitch(vantage, (value) => setParam("vantage", value)),
       h("div", { class: "segmented", role: "group", "aria-label": "显示方式" }, VIEWS.map(([key, text]) => h("button", { type: "button", class: "seg", "aria-pressed": String(view === key), onclick: () => setParam("view", key) }, text))),
     ),
     form,

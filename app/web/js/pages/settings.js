@@ -1,5 +1,5 @@
 import { api, busy, date, field, h, select, table, toast } from "../core.js";
-import { PROTOCOLS } from "../filters.js";
+import { VANTAGES, forgetGradingPolicy } from "../grades.js";
 
 const TOKENS = [
   ["{FLAG}", "落地国旗"],
@@ -94,46 +94,111 @@ function asnLabels(data, refresh) {
   );
 }
 
-function quality(data, refresh) {
+const BAND_LABEL = { S: "优（S）", A: "良（A 起）", B: "中（B 起）" };
+
+function bandTable(prefix, table) {
+  const input = (band, key, min, step) =>
+    h("input", { name: `${prefix}.${band}.${key}`, type: "number", min, step, value: table[band][key] ?? "", "aria-label": `${band} ${key}` });
+  return h(
+    "div",
+    { class: "table-wrap" },
+    h(
+      "table",
+      {},
+      h("thead", {}, h("tr", {}, ["档", "RTT 至多（ms）", "丢包至多（%）", "抖动至多（ms）", "晚高峰涨幅至多（%）"].map((t) => h("th", { scope: "col" }, t)))),
+      h(
+        "tbody",
+        {},
+        ["S", "A", "B"].map((band) =>
+          h(
+            "tr",
+            {},
+            h("th", { scope: "row" }, BAND_LABEL[band]),
+            h("td", {}, input(band, "rtt_ms", 1, 1)),
+            h("td", {}, input(band, "loss_pct", 0, "any")),
+            h("td", {}, input(band, "jitter_ms", 0, "any")),
+            h("td", {}, band === "S" && prefix === "CN" ? input(band, "peak_rise_pct", 0, "any") : "—"),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+function grading(data, refresh) {
   const p = data.policy;
-  const list = (name, value) => h("input", { name, value: (value || []).join(","), placeholder: "逗号分隔" });
   const form = h(
     "form",
-    { class: "form-grid" },
-    field("同测点最少样本（近 7 天）", h("input", { name: "min_samples", type: "number", min: 1, max: 7, value: p.min_samples })),
-    field("Runner 成功率低于（%）列为备用", h("input", { name: "poor_success_rate", type: "number", min: 0, max: 100, step: "any", value: p.poor_success_rate * 100 })),
-    field("人工资料有效期（天）", h("input", { name: "evidence_max_age_days", type: "number", min: 1, max: 365, value: p.evidence_max_age_days })),
-    field("优先入口地区", list("preferred_entry_countries", p.preferred_entry_countries)),
-    field("优先落地地区", list("preferred_exit_countries", p.preferred_exit_countries)),
-    field("优先入口 ASN", list("preferred_entry_asns", p.preferred_entry_asns)),
-    field("优先落地 ASN", list("preferred_exit_asns", p.preferred_exit_asns)),
-    h("fieldset", { class: "wide checks" }, h("legend", {}, "优先协议"), PROTOCOLS.map((x) => h("label", {}, h("input", { type: "checkbox", name: "preferred_protocols", value: x, checked: (p.preferred_protocols || []).includes(x) }), x))),
-    h("div", { class: "row end wide" }, h("button", { type: "submit", class: "primary" }, "保存规则")),
+    { class: "stack" },
+    h(
+      "div",
+      { class: "form-grid" },
+      field("默认视角", select("default_vantage", VANTAGES, p.default_vantage), "节点页、总览和新订阅默认按它显示等级"),
+      field("定档最少检测天数（7 天内）", h("input", { name: "min_checked_days", type: "number", min: 1, max: 7, value: p.min_checked_days })),
+      field("每家运营商至少探针数", h("input", { name: "min_probes", type: "number", min: 1, max: 5, value: p.min_probes }), "不足时接入记为样本不足，最高 B"),
+      field("稳定优（S）7 天可用率至少（%）", h("input", { name: "stability.S", type: "number", min: 0, max: 100, step: "any", value: p.stability_pct.S })),
+      field("稳定良（A）至少（%）", h("input", { name: "stability.A", type: "number", min: 0, max: 100, step: "any", value: p.stability_pct.A })),
+      field("稳定中（B）至少（%）", h("input", { name: "stability.B", type: "number", min: 0, max: 100, step: "any", value: p.stability_pct.B })),
+    ),
+    h("h3", {}, "大陆三网接入（晚高峰中位数）"),
+    bandTable("CN", p.bands.CN),
+    h("h3", {}, "香港 / 新加坡接入（全天中位数）"),
+    bandTable("OVERSEAS", p.bands.OVERSEAS),
+    h("label", { class: "check" }, h("input", { type: "checkbox", name: "s_requires_clean_exit", checked: p.s_requires_clean_exit }), "S 要求落地 IP 没有 ip-api 代理标记"),
+    h("h3", {}, "接入测量"),
+    h(
+      "div",
+      { class: "form-grid" },
+      h("label", { class: "check" }, h("input", { type: "checkbox", name: "probe_enabled", checked: p.probe_enabled }), "启用每小时的 Globalping 接入测量"),
+      field("晚高峰开始（北京时间）", h("input", { name: "peak_start", type: "time", value: p.peak_start })),
+      field("晚高峰结束", h("input", { name: "peak_end", type: "time", value: p.peak_end })),
+      field("覆盖范围", select("coverage", [["ALL", "全部可用节点"], ["EXPORTS", "只覆盖订阅方案里的节点"]], p.coverage), "额度不够时选后者"),
+    ),
+    h("p", { class: "hint" }, "Globalping token 存在 GitHub 仓库 Secret（GLOBALPING_TOKEN），不能在这里填写或查看；没有 token 时使用匿名额度（每小时 250 次）。规则保存后，下一次测量运行（每小时）会按新规则重新定档。"),
+    h("div", { class: "row end" }, h("button", { type: "button", class: "quiet", onclick: () => fill(data.defaults) }, "恢复默认值"), h("button", { type: "submit", class: "primary" }, "保存规则")),
   );
+  function fill(values) {
+    for (const el of form.elements) {
+      if (!el.name) continue;
+      const [a, b, c] = el.name.split(".");
+      const value = c ? values.bands[a][b][c] : b ? values.stability_pct[b] : values[a];
+      if (el.type === "checkbox") el.checked = Boolean(value);
+      else el.value = value ?? "";
+    }
+  }
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     const d = new FormData(form);
-    const split = (k, fn = (v) => v) => String(d.get(k) || "").split(",").map((v) => v.trim()).filter(Boolean).map(fn);
+    const n = (k) => Number(d.get(k));
+    const band = (prefix, b) => {
+      const out = { rtt_ms: n(`${prefix}.${b}.rtt_ms`), loss_pct: n(`${prefix}.${b}.loss_pct`) };
+      if (d.get(`${prefix}.${b}.jitter_ms`)) out.jitter_ms = n(`${prefix}.${b}.jitter_ms`);
+      if (d.get(`${prefix}.${b}.peak_rise_pct`)) out.peak_rise_pct = n(`${prefix}.${b}.peak_rise_pct`);
+      return out;
+    };
     const policy = {
-      ...p,
-      min_samples: Number(d.get("min_samples")),
-      poor_success_rate: Number(d.get("poor_success_rate")) / 100,
-      evidence_max_age_days: Number(d.get("evidence_max_age_days")),
-      preferred_entry_countries: split("preferred_entry_countries", (v) => v.toUpperCase()),
-      preferred_exit_countries: split("preferred_exit_countries", (v) => v.toUpperCase()),
-      preferred_entry_asns: split("preferred_entry_asns", Number),
-      preferred_exit_asns: split("preferred_exit_asns", Number),
-      preferred_protocols: d.getAll("preferred_protocols"),
+      default_vantage: d.get("default_vantage"),
+      min_checked_days: n("min_checked_days"),
+      min_probes: n("min_probes"),
+      stability_pct: { S: n("stability.S"), A: n("stability.A"), B: n("stability.B") },
+      bands: Object.fromEntries(["CN", "OVERSEAS"].map((x) => [x, Object.fromEntries(["S", "A", "B"].map((b) => [b, band(x, b)]))])),
+      s_requires_clean_exit: d.get("s_requires_clean_exit") === "on",
+      probe_enabled: d.get("probe_enabled") === "on",
+      peak_start: d.get("peak_start"),
+      peak_end: d.get("peak_end"),
+      coverage: d.get("coverage"),
     };
     await busy(e.submitter, async () => {
-      await api("/quality-policy", { method: "PUT", body: { policy, expected_version: data.version } });
-      toast("参考规则已更新。", "ok");
+      await api("/grading-policy", { method: "PUT", body: { policy, expected_version: data.version } });
+      forgetGradingPolicy();
+      window.dispatchEvent(new CustomEvent("nodema:nodes-changed"));
+      toast("分级规则已保存，下一次测量运行时重新定档。", "ok");
       refresh();
     });
   });
   return section(
-    "大陆参考规则",
-    `当前第 ${data.version} 版，更新于 ${date(data.history?.[0]?.created_at)}。P1/P2/P3 只是根据 GitHub Runner 测量和你的偏好排出的理论候选，不代表大陆实测或线路类型。运营商细分规则保持不变。`,
+    "质量分级规则",
+    `当前第 ${data.version} 版，更新于 ${date(data.updated_at)}。等级 = 接入档与稳定档中较差的一项；只使用实测数据，不判断线路类型。`,
     form,
     true,
   );
@@ -147,12 +212,12 @@ function section(title, hint, content, collapsed = false) {
 }
 
 export async function render(root, { refresh }) {
-  const [pipeline, rules, labels, policy] = await Promise.all([api("/pipeline"), api("/naming-rules"), api("/asn-labels"), api("/quality-policy")]);
+  const [pipeline, rules, labels, policy] = await Promise.all([api("/pipeline"), api("/naming-rules"), api("/asn-labels"), api("/grading-policy")]);
   root.append(
     h("h1", { class: "page-title" }, "设置"),
     schedule(pipeline.settings),
     naming(rules),
     asnLabels(labels, refresh),
-    quality(policy, refresh),
+    grading(policy, refresh),
   );
 }

@@ -42,7 +42,54 @@ async function detail(id) {
   );
 }
 
-export async function render(root, { refresh, refreshStrip }) {
+const PROBE_ERRORS = { NETWORK: "无法连接 Globalping", TIMEOUT: "测量超时", INVALID_RESPONSE: "返回异常" };
+
+async function probeRuns() {
+  const status = await api("/probe-status");
+  const daily = status.daily || [];
+  return h(
+    "div",
+    { class: "stack" },
+    h(
+      "dl",
+      { class: "stats" },
+      h("div", {}, h("dt", {}, "今天已用测试"), h("dd", {}, status.tests_today)),
+      h("div", {}, h("dt", {}, "7 天测试"), h("dd", {}, status.tests_7d)),
+      h("div", {}, h("dt", {}, "已覆盖网段（7 天）"), h("dd", {}, status.prefixes_graded)),
+      h("div", {}, h("dt", {}, "三网晚高峰覆盖"), h("dd", {}, status.prefixes_peak)),
+      h("div", {}, h("dt", {}, "去程路由"), h("dd", {}, status.traces)),
+    ),
+    daily.length ? h("p", { class: "muted small" }, "每日测试数：" + daily.map((d) => `${d.date.slice(5)} ${d.tests}`).join(" · ")) : null,
+    table(
+      [
+        { label: "开始", render: (r) => date(r.started_at) },
+        { label: "时段", render: (r) => (r.peak ? "晚高峰（三网）" : "其他时段") },
+        { label: "测量 / 测试", class: "num", render: (r) => `${r.measurements} / ${r.tests}` },
+        { label: "写入", class: "num", render: (r) => r.stored },
+        { label: "失败", class: "num", render: (r) => r.failed },
+        { label: "额度用尽", class: "num", render: (r) => r.rate_limited },
+        { label: "问题", render: (r) => (r.error_code ? PROBE_ERRORS[r.error_code] || r.error_code : "—") },
+      ],
+      status.runs || [],
+      { empty: empty("还没有接入测量", "部署后每小时自动运行一次。") },
+    ),
+    h("p", { class: "hint" }, "Globalping 免费额度按小时计算（账号 500 次、匿名 250 次）；每个探针执行一次测量算 1 次测试。只记录计数，不记录目标。"),
+  );
+}
+
+export async function render(root, { params, go, refresh, refreshStrip }) {
+  const tab = params.get("tab") === "probes" ? "probes" : "scans";
+  const tabs = h(
+    "div",
+    { class: "segmented", role: "group", "aria-label": "记录类型" },
+    [["scans", "节点检测"], ["probes", "接入测量"]].map(([key, text]) =>
+      h("button", { type: "button", class: "seg", "aria-pressed": String(tab === key), onclick: () => go("scans", new URLSearchParams(key === "probes" ? { tab: key } : {})) }, text),
+    ),
+  );
+  if (tab === "probes") {
+    root.append(h("div", { class: "title-row" }, h("h1", { class: "page-title" }, "检测记录"), tabs), await probeRuns());
+    return;
+  }
   const runs = await api("/scans");
   const retry = (run) => async (e) =>
     busy(e.target, async () => {
@@ -52,7 +99,7 @@ export async function render(root, { refresh, refreshStrip }) {
       refresh();
     });
   root.append(
-    h("h1", { class: "page-title" }, "检测记录"),
+    h("div", { class: "title-row" }, h("h1", { class: "page-title" }, "检测记录"), tabs),
     table(
       [
         { label: "日期", render: (r) => h("button", { type: "button", class: "link", onclick: () => detail(r.id) }, r.scan_date) },

@@ -2,7 +2,11 @@
 
 本系统继续使用 Cloudflare Pages + TypeScript Worker API + Neon/PostgreSQL + Python/Actions + Mihomo。当前优化针对数据库往返、重复 DNS/TCP、逐节点启动核心和串行等待，不迁移为 Go。网络超时和核心进程成本需要在实际 Runner 上测量；更换调度语言不会改变这些网络条件。
 
-## 大陆参考等级
+## 节点等级（2026-11-13 起的主要分级）
+
+界面与订阅使用按视角的 S/A/B/C/D/待定 等级，见 [NODE_GRADING_DESIGN.md](NODE_GRADING_DESIGN.md)。下面的 P1/P2/P3/U 理论候选仍由 SQL 计算并保留在 API/报告字段中，但界面已不再显示，也不再接受人工线路声明的编辑。
+
+## 大陆参考等级（旧，界面已隐藏）
 
 P1/P2/P3/U 是可解释的候选优先级，面向没有大陆探针的使用方式。任何等级都不证明中国大陆可达、三网直连或 IPLC/IEPL/CN2；数据库 `line_type` 和 `mainland_reachability` 始终为 `UNKNOWN`。`line_claim` 仅是管理员录入的声明，不能替代观测。
 

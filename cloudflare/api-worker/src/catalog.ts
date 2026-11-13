@@ -50,7 +50,26 @@ export const filterKeys = new Set([
   "min_lifetime_availability",
   "last_checked_after",
   "last_success_after",
+  // Grades (node_grades) for one vantage.
+  "vantage",
+  "quality_grade",
+  "min_quality_grade",
+  "max_peak_rtt_ms",
+  "max_peak_loss",
+  "min_avail_7d",
+  "route_asn",
+  "cross_border",
+  "unreachable",
+  "best_per_server",
 ]);
+const booleanKeys = [
+  "eligible",
+  "enabled",
+  "exit_ip_proxy",
+  "cross_border",
+  "unreachable",
+  "best_per_server",
+];
 
 export function filtersFromParams(params: URLSearchParams): Row {
   const result: Row = {};
@@ -58,7 +77,7 @@ export function filtersFromParams(params: URLSearchParams): Row {
     if (["offset", "limit", "sort", "view"].includes(key)) continue;
     if (!filterKeys.has(key)) throw new SafeError("INVALID_NODE_QUERY");
     if (!value) continue;
-    if (["eligible", "enabled", "exit_ip_proxy"].includes(key)) {
+    if (booleanKeys.includes(key)) {
       if (!["true", "false"].includes(value))
         throw new SafeError("INVALID_NODE_QUERY");
       result[key] = value === "true";

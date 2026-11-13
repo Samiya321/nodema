@@ -30,7 +30,7 @@
 | 来源 | URI/Base64/Clash-Mihomo/sing-box，以及 Loon/Surge/QX 节点列表；Sub-Store /api/subs 提取本地、远程、混合原始订阅，不执行脚本 |
 | 批量链接 | 普通订阅和 Sub-Store API 可混合，每行一个，每批 100 个/128 KiB，单 URL 8 KiB；逐行结果、去重、一次调度 |
 | 检测 | DNS/TCP 预检、缓存、失败冷却和必要的完整代理 HTTPS；无下载测速、不做任意网段扫描 |
-| 大陆参考 | GitHub Runner 只能提供理论 P1/P2/P3/U 候选排序；真实线路/大陆可达性 UNKNOWN，禁止猜 IPLC/IEPL/CN2 |
+| 节点分级（2026-11-13，覆盖旧“大陆参考”） | 只记录能实测证明的东西。按视角（三网/电信/联通/移动/香港/新加坡）给 S/A/B/C/D/待定：等级 = 接入档（Globalping 社区探针 TCP ping 入口，三网用北京时间晚高峰）与稳定档（7 天日可用率）中较差的一项。线路只记录三网去程实测经过的 ASN；`line_type` 仍为 UNKNOWN，不判断 IPLC/IEPL/CN2，不推断回程，不提取机场自称线路名。界面不再显示 P1/P2/P3 理论等级和人工线路声明（数据保留）。用户接受把入口 IP 发给 Globalping（测量数据公开）；只用一个账号的 token，不注册多个账号、不叠加匿名额度；不做本机测量 |
 | 触发方式（2026-11-11） | 导入/编辑/删除不启动 Actions；用户点“同步来源”或按范围“检测”；每日定时默认只测自建，可在设置页修改 |
 | 来源与节点保留（2026-11-11） | 上游失效/移除/来源删除不删除或停测自建节点；机场节点随订阅暂停/过期/流量用完停测；删除来源默认保留节点 |
 | 机场与 Sub-Store（2026-11-11） | subscription-userinfo 识别机场并归组；Sub-Store 条目物化为独立子来源；机场与自建分开检测 |
@@ -50,13 +50,15 @@
 | app/ingestion/service.py、bulk.py | 来源 CRUD、批量 URL、资产去重和关联生命周期 |
 | app/ingestion/fetcher.py、subscriptions.py | 有界拉取、DNS/重定向/连接边界 SSRF 检查、Sub-Store 递归与预算 |
 | app/checker/、app/scans.py | Mihomo 运行、预检/代理 HTTPS、租约分片、快照和发布；不在 HTTP 请求内长跑 |
-| app/catalog.py、quality.py、naming.py | 节点组合查询、理论规则和展示命名 |
+| app/catalog.py、quality.py、naming.py | 节点组合查询、旧理论规则（界面已隐藏）和展示命名 |
+| app/grading.py、app/probes/ | 节点分级纯规则；Globalping 客户端、每小时测量计划与执行、按视角重算 node_grades（`nodema probe run` / `nodema grade refresh`） |
 | app/exports.py、export_render.py、conversion.py、password_conversion.py | Actions 导出构建、转换、成员/版本、租约/条件发布 |
 | app/geoip_update.py | 官方/GitHub MMDB 下载验证、私密临时包 |
 | app/backup.py、usage.py、actions_usage.py | 加密备份/恢复、数值用量与可信 Actions 统计 |
 | app/api.py、cli.py | 本地 FastAPI、生产 Actions 调用的 CLI；不是生产常驻后端 |
 | cloudflare/api-worker/src/index.ts、source-bulk.ts | 生产认证 API、来源保存和一次调度 |
 | cloudflare/api-worker/src/catalog.ts、quality.ts、export-api.ts | 生产查询、规则、导出控制及成品读取；与 Python 语义保持一致 |
+| cloudflare/api-worker/src/grading.ts | 分级规则校验（与 app/grading.py 一致）、`/api/grading-policy`、`/api/probe-status`、`/api/nodes/:id/access` |
 | cloudflare/api-worker/src/formats.ts | 转换兼容性测试参照；生产下载入口不应调用它做即时转换 |
 | app/web/ | 中文界面 JS/HTML/CSS 的源文件；不要只修改生成 dist |
 | web/dashboard/ | Pages 构建、Functions 代理与 API 服务绑定 |
@@ -73,7 +75,9 @@
 | scan_runs、scan_shards、scan_items | 日期批次、不变快照、租约与进度；不能为重试随意重开旧日期 |
 | test_results、node_current_status | 历史检测与当前状态；环境失败不能变成整批节点 DOWN |
 | node_daily_stats、runner_node_summaries、nodes 的累计字段 | 每日统计和累计计数；清理历史不能使已收录/累计检测天数倒退 |
-| node_annotations、quality_policies、quality_policy_revisions | 人工证据与理论分级规则，不能生成真实线路结论 |
+| node_annotations、quality_policies、quality_policy_revisions | 旧人工证据与理论分级规则（界面只保留标签），不能生成真实线路结论 |
+| entry_probe_results、entry_route_traces、entry_probe_runs | Globalping 测量（保留 14 天）、三网去程 ASN、每次运行的计数；不写目标到日志 |
+| node_grades、grading_policy、grading_policy_revisions | 按视角的节点等级（Actions 计算，Worker 只读）与分级规则版本 |
 | naming_rules、naming_revisions | 命名模板和修订 |
 | catalog_state | 目录 epoch、导出预算、历史日期关闭水位；不要手改数值绕过失效或归档保护 |
 | export_artifacts、export_members、export_versions | 一个方案仅保存当前成品，历史是摘要；token/成品是凭据，不查 SELECT * 到日志 |

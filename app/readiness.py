@@ -5,7 +5,7 @@ import sqlalchemy as sa
 from app.checker.health import HealthChecker
 from app.domain import AssetError
 
-SCHEMA_REVISION = "0017_scale_ip_type"
+SCHEMA_REVISION = "0018_entry_probes_grading"
 
 
 def readiness(assets, settings, *, network=False, checker_factory=None):
