@@ -198,6 +198,8 @@ def refresh(sessions, settings, *, if_due: bool = False, clock=None) -> dict:
     rows = compute(nodes, stability, quality, reach, traces, policy)
     now = datetime.now(UTC)
     with sessions.begin() as session:
+        # Daily finalize and an hourly round may overlap: serialize delete-all/insert.
+        session.execute(sa.text("SELECT pg_advisory_xact_lock(hashtext('nodema_grade_refresh'))"))
         before = {
             (r.node_id, r.vantage): r.grade
             for r in session.execute(
