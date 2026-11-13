@@ -106,3 +106,12 @@ UI 额外验证逐行结果、重复提交、390px 布局，以及慢网络下�
 - 第七次发布的待观察项已在第二次全量检测中复核（见 STATUS 第七轮）：原“不支持”节点 984 个可用；机场 61 组，剩余按域名分组确为同一机场。
 - 待观察：下一次同步中原超过 10,000 条的子订阅能否入库，及超时来源重试后的结果（标 `retried`）。
 
+
+## 2026-11-14 第九次发布：节点质量分级（Globalping 接入测量）
+
+- 代码 `7306266`（main，快进合并，[PR #1](https://github.com/Samiya321/nodema/pull/1)），main [CI 43459412230](https://github.com/Samiya321/nodema/actions/runs/43459412230)：396 Python、34 Worker、3 Echo 通过。迁移 head `0018_entry_probes_grading`。
+- 发布前：无运行中的工作流、无扫描租约、无订阅方案。加密备份 `backup-2026-11-13-pre-0018.nma` 在隔离 PG 恢复（38,308 节点 / 8,434 可用）后升级到 0018（约 3 秒）；精简列表 1 万条 0.8–1.3 秒（与 0017 相当），全量重算等级约 4 秒（47,424 行）。用公共目标（非节点）验证了 Globalping 实时接口：三网/HK/SG 的 TCP ping、大陆可达检查、mtr 均能解析。
+- 生产迁移到 0018；API Worker 版本 `db942186-6be8-4278-8337-11cd8b66d543`；Pages https://27e19949.nodema-dashboard.pages.dev；Echo 未变。
+- 验证（经 Pages 域名）：health 200、未认证 401、readiness 为真；`/api/grading-policy`、`/api/probe-status`、`/api/nodes/:id/access` 200；精简列表带 9 个等级字段。手动触发 [entry-probe 43460423446](https://github.com/Samiya321/nodema/actions/runs/43460423446)：匿名额度，157 次测量 / 245 次测试 / 0 失败，写入 240 条；重算 7,904 个节点，三网视角 B 3,511、待定 4,344、C 49（尚无晚高峰样本，S/A 需要若干晚上的测量和 3 天以上检测）。
+- 仓库尚未配置 `GLOBALPING_TOKEN`，当前按匿名额度（每 IP 每小时 250 次）运行。
+- 待观察：晚高峰三网覆盖（总览“接入测量”的三网晚高峰网段数，3–4 晚后核对）；`entry_probe_results` 占用；Neon 每月传输。可在设置 → 质量分级规则 → 接入测量关闭。
