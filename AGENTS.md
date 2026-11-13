@@ -16,7 +16,7 @@
 
 - 生产：Cloudflare Pages + TypeScript Worker API + PostgreSQL（目前 Neon Free）+ Python GitHub Actions。严格免费，接受休眠/额度限制，不使用用户服务器，不增加付费服务。
 - 拉取、解析、实际代理检测、订阅转换在 Actions。Worker 保存/查询/调度并提供已生成订阅；Python FastAPI 是可选本地入口。
-- 不做下载速度测试、网段扫描、IPLC/IEPL/CN2 自动判断。大陆分级仅为理论候选，不能冒充大陆实测。
+- 不做下载速度测试、网段扫描、IPLC/IEPL/CN2 自动判断。只记录能实测证明的东西：节点等级来自 Globalping 社区探针对入口的 TCP 实测（三网/HK/SG）和每日完整检测，标明来源与局限；不推断回程、不提取机场自称的线路名。设计见 docs/NODE_GRADING_DESIGN.md。
 - 数据库按用户选择明文保存；保留 HMAC 去重、鉴权，AES 用于备份、MMDB 临时包和旧库转换。不要重新生成或更换生产密钥来解决连库/测试问题。
 - 真实节点、订阅 URL/token、数据库连接、管理员密钥、备份、MMDB 不进 Git、日志或聊天；公开仓库只放源码、文档和合成 fixtures。先看文件名/键名，按需读取，禁止 `cat private/*.env`、`printenv`、带密钥 argv 或 `set -x`。
 - 测试只使用隔离本地 PostgreSQL/临时 schema。不要把生产连接填入 `TEST_DATABASE_URL`，不要在生产跑 pytest、benchmark、restore、cleanup 验证脚本。

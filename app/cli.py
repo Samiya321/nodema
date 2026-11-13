@@ -39,6 +39,8 @@ export_app = typer.Typer(no_args_is_help=True)
 usage_app = typer.Typer(no_args_is_help=True)
 quality_app = typer.Typer(no_args_is_help=True)
 ipinfo_app = typer.Typer(no_args_is_help=True)
+probe_app = typer.Typer(no_args_is_help=True)
+grade_app = typer.Typer(no_args_is_help=True)
 app.add_typer(source_app, name="source")
 app.add_typer(node_app, name="node")
 app.add_typer(keys_app, name="keys")
@@ -48,6 +50,8 @@ app.add_typer(export_app, name="export")
 app.add_typer(usage_app, name="usage")
 app.add_typer(quality_app, name="quality")
 app.add_typer(ipinfo_app, name="ipinfo")
+app.add_typer(probe_app, name="probe")
+app.add_typer(grade_app, name="grade")
 
 
 def output(value):
@@ -527,6 +531,24 @@ def ipinfo_refresh():
     output(ipinfo.refresh(service().sessions, Settings()))
 
 
+@probe_app.command("run")
+@safe_command
+def probe_run():
+    """One Globalping round within this hour's remaining budget (counts only)."""
+    from app.probes import runner
+
+    output(runner.run(service().sessions, Settings()))
+
+
+@grade_app.command("refresh")
+@safe_command
+def grade_refresh(if_due: bool = False):
+    """Recompute per-vantage node grades from measurements and daily stats."""
+    from app.probes import refresh
+
+    output(refresh.refresh(service().sessions, Settings(), if_due=if_due))
+
+
 @node_app.command("share-links")
 @safe_command
 def node_share_links():
@@ -580,6 +602,7 @@ def scan_local():
 @safe_command
 def cleanup():
     assets, settings = service(), Settings()
+    from app.probes.runner import cleanup as probe_cleanup
     from app.usage import Usage
 
     output(
@@ -587,6 +610,7 @@ def cleanup():
             **ScanService(assets, settings).cleanup(),
             "deleted_exports": ExportService(assets, settings).cleanup(),
             "deleted_usage": Usage(assets.sessions).cleanup(settings.stats_retention_days),
+            "deleted_probe_results": probe_cleanup(assets.sessions),
         }
     )
 

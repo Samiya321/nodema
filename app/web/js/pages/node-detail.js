@@ -1,21 +1,30 @@
 import { IP_TYPE, KIND, ago, api, badge, busy, date, dialog, errorText, field, h, ms, pct, route, select, table, toast } from "../core.js";
 import { testNodes } from "../strip.js";
 import { showShare } from "../share.js";
+import { VANTAGES, gradeBadge, vantageName } from "../grades.js";
+import { rowVantage } from "./node-rows.js";
 
 const MEASURE = { FULL: "完整代理验证", PREFLIGHT: "入口预检", SKIPPED: "本轮跳过" };
-const OPERATORS = [["GENERAL", "通用"], ["CT", "电信"], ["CU", "联通"], ["CM", "移动"]];
+const BAND = { S: "优", A: "良", B: "中", C: "差" };
+const lossText = (v) => (v === null || v === undefined ? "—" : (v * 100).toFixed(1) + "%");
 
 function pairs(entries) {
   return h("dl", { class: "pairs" }, entries.flatMap(([k, v]) => [h("dt", {}, k), h("dd", {}, v ?? "—")]));
 }
 
 export async function nodeDetail(id) {
-  const n = await api("/nodes/" + id);
+  const vantage = rowVantage();
+  const [n, access] = await Promise.all([
+    api(`/nodes/${id}?vantage=${encodeURIComponent(vantage)}`),
+    api(`/nodes/${id}/access`).catch(() => null),
+  ]);
   const obs = n.published_observation;
   const body = h("div", { class: "stack" });
   const sheet = dialog(n.name, body, { wide: true });
   const aliases = h("div");
-  body.append(
+  // Native append() would print "null" for skipped sections; drop them first.
+  const add = (...items) => body.append(...items.filter((x) => x !== null && x !== undefined && x !== false));
+  add(
     h(
       "div",
       { class: "detail-head" },
@@ -24,6 +33,7 @@ export async function nodeDetail(id) {
       h("span", { class: "tag " + (n.node_group === "AIRPORT" ? "air" : "own") }, KIND[n.node_group]),
       h("span", { class: "muted" }, `最近检测 ${ago(n.last_checked_at)}`),
     ),
+    accessSection(n, access, vantage),
     obs?.echo_source === "fallback"
       ? h("p", { class: "callout" }, "节点可用，但它的出口访问不了检测用的 Echo（Cloudflare），已通过备用地址确认连通，所以落地国家、ASN 暂时未知，名称不编号。")
       : null,
@@ -40,18 +50,16 @@ export async function nodeDetail(id) {
         ["落地位置", [n.exit_country, n.exit_region, n.exit_ip_city || obs?.exit_city].filter(Boolean).join(" · ") || null],
         ["IP 归属（org）", n.exit_org],
         ["ISP", n.exit_isp],
-        ["IP 类型", n.exit_ip_type ? `${IP_TYPE[n.exit_ip_type]}${n.exit_ip_proxy ? "，已被标记为 VPN/代理" : ""}（ip-api 判断）` : null],
+        ["IP 类型", n.exit_ip_type ? `${IP_TYPE[n.exit_ip_type]}${n.exit_ip_proxy ? "，被标记为 VPN/代理" : ""}（ip-api 数据库标记，非实测）` : null],
         ["落地 ASN", n.exit_asn ? `AS${n.exit_asn} ${n.exit_asn_org || ""}` : "—"],
       ]),
       pairs([
-        ["延迟", ms(n.http_duration_ms)],
+        ["美国 Runner 代理延迟", ms(n.http_duration_ms)],
         ["首次加入", `${date(n.first_seen_at)}（第 ${n.age_days} 天）`],
         ["累计可用", `${n.available_days} / ${n.checked_days} 天，${pct(n.lifetime_availability)}`],
-        ["Runner 成功率 / P95", `${pct(n.success_rate)} / ${ms(n.http_p95_ms)}`],
+        ["美国 Runner 成功率 / P95", `${pct(n.success_rate)} / ${ms(n.http_p95_ms)}`],
         ["检测方式", MEASURE[n.measurement_kind] || "—"],
         ["下次完整复查", n.next_full_check_at ? date(n.next_full_check_at) : "按计划"],
-        ["大陆参考", `${n.grade || "U"}（理论候选，非实测）`],
-        ["人工线路声明", n.line_claim === "UNKNOWN" ? "未知" : n.line_claim],
       ]),
     ),
     h(
@@ -60,7 +68,7 @@ export async function nodeDetail(id) {
       h("button", { type: "button", class: "primary", onclick: async () => { if (await testNodes([n.id])) sheet.close(); } }, "检测此节点"),
       h("button", { type: "button", onclick: (e) => showShare(n, e.target) }, "二维码 / 分享"),
       h("button", { type: "button", onclick: (e) => toggleEnabled(e.target, n) }, n.enabled ? "停用此节点" : "启用此节点"),
-      h("button", { type: "button", onclick: () => annotate(n.id, sheet) }, "编辑人工资料"),
+      h("button", { type: "button", onclick: () => annotate(n.id, sheet) }, "编辑标签"),
       h(
         "button",
         {
@@ -114,7 +122,7 @@ export async function nodeDetail(id) {
 // Other nodes landing on the same server (same exit IP), usually other protocols.
 function siblings(n) {
   const box = h("div", {}, h("p", { class: "muted small" }, "加载中…"));
-  api(`/nodes?exit_ip=${encodeURIComponent(n.exit_ip)}&limit=50`)
+  api(`/nodes?exit_ip=${encodeURIComponent(n.exit_ip)}&vantage=${encodeURIComponent(rowVantage())}&sort=quality_grade:asc&limit=50`)
     .then((page) =>
       box.replaceChildren(
         table(
@@ -123,6 +131,7 @@ function siblings(n) {
             { label: "协议", render: (s) => `${s.protocol} / ${s.transport || "—"} / ${s.security || "—"}` },
             { label: "入口", render: (s) => h("code", {}, `${s.server_host}:${s.server_port}`) },
             { label: "状态", render: (s) => badge(s.status) },
+            { label: "等级 · " + vantageName(rowVantage()), render: (s) => gradeBadge(s.quality_grade, rowVantage(), { withVantage: false }) || "—" },
           ],
           page.items,
         ),
@@ -147,41 +156,95 @@ async function annotate(id, sheet) {
   const form = h(
     "form",
     { class: "form-grid" },
-    h("p", { class: "hint wide" }, "人工资料只影响参考排序，不代表实测线路。已保存的依据不会回显，留空即保留。"),
+    h("p", { class: "hint wide" }, "标签只用于筛选和整理，不影响等级。"),
     field("标签（逗号分隔）", h("input", { name: "tags", value: a.tags.join(",") })),
-    field("线路声明", select("line_claim", [["UNKNOWN", "未知"], ["IPLC", "IPLC（声明）"], ["IEPL", "IEPL（声明）"], ["CN2", "CN2（声明）"], ["OTHER", "其他"]], a.line_claim)),
-    field("资料类型", select("evidence_level", [["NONE", "无"], ["DECLARED", "仅声明"], ["DOCUMENTED", "有资料"]], a.evidence_level)),
-    field("人工优先级", select("manual_priority", [["NONE", "按规则"], ["P1", "P1"], ["P2", "P2"], ["P3", "P3"]], a.manual_priority)),
-    h(
-      "fieldset",
-      { class: "wide checks" },
-      h("legend", {}, "适用运营商"),
-      OPERATORS.map(([v, t]) => h("label", {}, h("input", { type: "checkbox", name: "operators", value: v, checked: a.operators.includes(v) }), t)),
-    ),
-    field(a.has_evidence ? "替换依据（留空保留）" : "依据", h("textarea", { name: "reference", rows: 3 })),
-    a.has_evidence ? h("label", { class: "check" }, h("input", { type: "checkbox", name: "clear_reference" }), "移除已保存的依据") : null,
     h("div", { class: "row end wide" }, h("button", { class: "primary", type: "submit" }, "保存")),
   );
-  const box = dialog("人工资料", form);
+  const box = dialog("编辑标签", form);
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     const data = new FormData(form);
-    const payload = {
-      tags: String(data.get("tags")).split(",").map((t) => t.trim()).filter(Boolean),
-      line_claim: data.get("line_claim"),
-      evidence_level: data.get("evidence_level"),
-      manual_priority: data.get("manual_priority"),
-      operators: data.getAll("operators"),
-    };
-    if (data.get("reference")) payload.reference = data.get("reference");
-    if (data.get("clear_reference")) payload.reference = null;
+    const payload = { tags: String(data.get("tags")).split(",").map((t) => t.trim()).filter(Boolean) };
     await busy(e.submitter, async () => {
       await api(`/nodes/${id}/annotations`, { method: "PATCH", body: payload });
-      toast("人工资料已保存。", "ok");
+      toast("标签已保存。", "ok");
       window.dispatchEvent(new CustomEvent("nodema:nodes-changed"));
       box.close();
       sheet.close();
       nodeDetail(id);
     });
   });
+}
+
+// Entry quality per vantage: measured facts only, with their source and limits.
+function accessSection(n, access, current) {
+  const grades = access?.grades || {};
+  const chosen = grades[current] || {};
+  const head = n.quality_grade
+    ? h(
+        "div",
+        { class: "stack tight" },
+        h("p", { class: "row tight" }, gradeBadge(n.quality_grade, current), weekStrip(n)),
+        chosen.reasons?.length ? h("ul", { class: "reasons" }, chosen.reasons.map((r) => h("li", {}, r))) : null,
+      )
+    : h("p", { class: "muted" }, "节点当前不可用或未检测，不定档。");
+  const why = (v) => {
+    if (access?.icmp_only) return "Hysteria2 走 UDP：按同网段 TCP 测得";
+    if (access?.cloudflare) return "Cloudflare 入口：共用 CF 类结果";
+    if (!access?.target) return "无 IPv4 入口，未测";
+    return v.startsWith("CN-") ? "等待晚高峰测量" : "等待测量";
+  };
+  const trace = (v) => {
+    const t = access?.traces?.[v];
+    return t ? h("span", { class: "route-asns", title: `测于 ${date(t.measured_at)}` }, t.hop_asns.map((x) => "AS" + x).join(" → ")) : "—";
+  };
+  const rows = VANTAGES.map(([v, name]) => ({ v, name, g: grades[v] }));
+  const measurements = access?.measurements || [];
+  const raw = h("details", {}, h("summary", {}, `单次测量记录（${measurements.length}）`),
+    table(
+      [
+        { label: "时间", render: (m) => date(m.measured_at) },
+        { label: "视角", render: (m) => (m.purpose === "REACH" ? "大陆可达检查" : vantageName(m.vantage)) + (m.peak ? "（晚高峰）" : "") },
+        { label: "探针", render: (m) => [m.probe_city, m.probe_asn ? "AS" + m.probe_asn : null].filter(Boolean).join(" · ") || "—" },
+        { label: "收到/发送", class: "num", render: (m) => `${m.received}/${m.sent}` },
+        { label: "平均 RTT", class: "num", render: (m) => ms(m.rtt_avg) },
+        { label: "测量 ID", render: (m) => (m.measurement_id ? h("a", { href: `https://api.globalping.io/v1/measurements/${encodeURIComponent(m.measurement_id)}`, target: "_blank", rel: "noreferrer" }, m.measurement_id) : "—") },
+      ],
+      measurements,
+    ),
+  );
+  return h(
+    "section",
+    { class: "stack" },
+    h("h3", {}, "接入质量"),
+    head,
+    table(
+      [
+        { label: "视角", render: (r) => r.name },
+        { label: "等级", render: (r) => (r.g ? gradeBadge(r.g.grade, r.v, { withVantage: false }) : "—") },
+        { label: "RTT（晚高峰/中位）", class: "num", render: (r) => (r.g?.peak_rtt_ms != null ? ms(r.g.peak_rtt_ms) : h("span", { class: "muted small" }, why(r.v))) },
+        { label: "空闲 RTT", class: "num", render: (r) => ms(r.g?.idle_rtt_ms) },
+        { label: "丢包", class: "num", render: (r) => lossText(r.g?.loss) },
+        { label: "抖动", class: "num", render: (r) => ms(r.g?.jitter_ms) },
+        { label: "样本（探针）", class: "num", render: (r) => (r.g ? `${r.g.samples}（${r.g.probes}）` : "—") },
+        { label: "接入/稳定", render: (r) => (r.g ? `${BAND[r.g.access_band] || "未测"} / ${BAND[r.g.stability_band] || "不足"}` : "—") },
+        { label: "去程经过", render: (r) => (r.v.startsWith("CN-") ? trace(r.v) : "—") },
+      ],
+      rows,
+    ),
+    h(
+      "p",
+      { class: "hint" },
+      "接入数据来自 Globalping 社区探针对入口的 TCP 握手（三网为家宽探针、北京时间晚高峰），只说明 TCP 能否连通及延迟丢包；不代表代理协议一定可用，不测带宽，也不判断线路类型。去程只记录实测经过的 ASN，回程无法从国内测得。稳定性来自每日完整检测（美国 Runner）。",
+    ),
+    raw,
+  );
+}
+
+function weekStrip(n) {
+  const days = n.checked_7d || 0;
+  const ok = n.avail_7d || 0;
+  const strip = h("span", { class: "week", title: `7 天内检测 ${days} 天，可用 ${ok} 天` });
+  for (let i = 0; i < 7; i++) strip.append(h("span", { class: i < ok ? "ok" : i < days ? "bad" : "" }));
+  return h("span", { class: "muted small" }, strip, ` 7 天可用 ${ok}/${days}`);
 }

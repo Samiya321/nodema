@@ -705,3 +705,138 @@ class ActionRun(Base):
     job_count: Mapped[int]
     failed_jobs: Mapped[int]
     unmeasured_jobs: Mapped[int]
+
+
+VANTAGES = ("CN-CT", "CN-CU", "CN-CM", "CN", "HK", "SG")
+
+
+class EntryProbeResult(Base):
+    """One Globalping test (one probe) against an entry ip:port or ip."""
+
+    __tablename__ = "entry_probe_results"
+    __table_args__ = (
+        sa.Index(
+            "idx_entry_probe_prefix",
+            "prefix",
+            "vantage",
+            sa.text("measured_at DESC"),
+            postgresql_where=sa.text("purpose = 'QUALITY'"),
+        ),
+        sa.Index(
+            "idx_entry_probe_target",
+            "target",
+            sa.text("measured_at DESC"),
+            postgresql_where=sa.text("purpose = 'REACH'"),
+        ),
+        sa.Index("idx_entry_probe_time", "measured_at"),
+    )
+    id: Mapped[int] = mapped_column(sa.BigInteger, sa.Identity(), primary_key=True)
+    target: Mapped[str] = mapped_column(sa.Text)
+    prefix: Mapped[str] = mapped_column(sa.Text)
+    purpose: Mapped[str] = mapped_column(sa.Text)
+    vantage: Mapped[str] = mapped_column(sa.Text)
+    protocol: Mapped[str] = mapped_column(sa.Text)
+    peak: Mapped[bool]
+    measured_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), server_default=sa.func.now()
+    )
+    probe_asn: Mapped[int | None] = mapped_column(sa.BigInteger)
+    probe_city: Mapped[str | None] = mapped_column(sa.Text)
+    probe_network: Mapped[str | None] = mapped_column(sa.Text)
+    sent: Mapped[int] = mapped_column(sa.SmallInteger)
+    received: Mapped[int] = mapped_column(sa.SmallInteger)
+    rtt_min: Mapped[float | None] = mapped_column(sa.REAL)
+    rtt_avg: Mapped[float | None] = mapped_column(sa.REAL)
+    rtt_max: Mapped[float | None] = mapped_column(sa.REAL)
+    jitter: Mapped[float | None] = mapped_column(sa.REAL)
+    measurement_id: Mapped[str | None] = mapped_column(sa.Text)
+
+
+class EntryRouteTrace(Base):
+    """Latest outbound route (hop ASNs) from one Chinese carrier to an entry prefix."""
+
+    __tablename__ = "entry_route_traces"
+    prefix: Mapped[str] = mapped_column(sa.Text, primary_key=True)
+    vantage: Mapped[str] = mapped_column(sa.Text, primary_key=True)
+    measured_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), server_default=sa.func.now()
+    )
+    probe_asn: Mapped[int | None] = mapped_column(sa.BigInteger)
+    probe_city: Mapped[str | None] = mapped_column(sa.Text)
+    hop_asns: Mapped[list[int]] = mapped_column(
+        sa.ARRAY(sa.BigInteger), server_default=sa.text("'{}'::bigint[]")
+    )
+    reached: Mapped[bool] = mapped_column(server_default=sa.false())
+    measurement_id: Mapped[str | None] = mapped_column(sa.Text)
+
+
+class EntryProbeRun(Base):
+    __tablename__ = "entry_probe_runs"
+    __table_args__ = (sa.Index("idx_entry_probe_runs_time", sa.text("started_at DESC")),)
+    id: Mapped[UUID] = mapped_column(primary_key=True, server_default=sa.text("gen_random_uuid()"))
+    started_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), server_default=sa.func.now()
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    peak: Mapped[bool] = mapped_column(server_default=sa.false())
+    authenticated: Mapped[bool] = mapped_column(server_default=sa.false())
+    measurements: Mapped[int] = mapped_column(server_default="0")
+    tests: Mapped[int] = mapped_column(server_default="0")
+    stored: Mapped[int] = mapped_column(server_default="0")
+    failed: Mapped[int] = mapped_column(server_default="0")
+    rate_limited: Mapped[int] = mapped_column(server_default="0")
+    remaining: Mapped[int | None]
+    probes: Mapped[dict] = mapped_column(JSONB, server_default=sa.text("'{}'::jsonb"))
+    error_code: Mapped[str | None] = mapped_column(sa.Text)
+
+
+class NodeGrade(Base):
+    """Grade of one currently available node seen from one vantage (Actions-computed)."""
+
+    __tablename__ = "node_grades"
+    __table_args__ = (sa.Index("idx_node_grades_vantage", "vantage", "grade"),)
+    node_id: Mapped[UUID] = mapped_column(
+        sa.ForeignKey("nodes.id", ondelete="CASCADE"), primary_key=True
+    )
+    vantage: Mapped[str] = mapped_column(sa.Text, primary_key=True)
+    grade: Mapped[str] = mapped_column(sa.Text)
+    score: Mapped[float | None] = mapped_column(sa.REAL)
+    access_band: Mapped[str | None] = mapped_column(sa.Text)
+    stability_band: Mapped[str | None] = mapped_column(sa.Text)
+    peak_rtt_ms: Mapped[float | None] = mapped_column(sa.REAL)
+    idle_rtt_ms: Mapped[float | None] = mapped_column(sa.REAL)
+    loss: Mapped[float | None] = mapped_column(sa.REAL)
+    jitter_ms: Mapped[float | None] = mapped_column(sa.REAL)
+    samples: Mapped[int] = mapped_column(server_default="0")
+    probes: Mapped[int] = mapped_column(server_default="0")
+    avail_7d: Mapped[int] = mapped_column(server_default="0")
+    checked_7d: Mapped[int] = mapped_column(server_default="0")
+    unreachable: Mapped[bool] = mapped_column(server_default=sa.false())
+    route_asns: Mapped[list[int] | None] = mapped_column(sa.ARRAY(sa.BigInteger))
+    route_measured_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    server_best_grade: Mapped[str | None] = mapped_column(sa.Text)
+    last_measured_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    reasons: Mapped[list] = mapped_column(JSONB, server_default=sa.text("'[]'::jsonb"))
+    computed_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), server_default=sa.func.now()
+    )
+
+
+class GradingPolicy(Base):
+    __tablename__ = "grading_policy"
+    __table_args__ = (sa.CheckConstraint("id = 1", name="singleton"),)
+    id: Mapped[int] = mapped_column(sa.Integer, primary_key=True, autoincrement=False)
+    version: Mapped[int] = mapped_column(sa.Integer, server_default="1")
+    policy: Mapped[dict] = mapped_column(JSONB)
+    updated_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), server_default=sa.func.now()
+    )
+
+
+class GradingPolicyRevision(Base):
+    __tablename__ = "grading_policy_revisions"
+    version: Mapped[int] = mapped_column(sa.Integer, primary_key=True, autoincrement=False)
+    policy: Mapped[dict] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), server_default=sa.func.now()
+    )

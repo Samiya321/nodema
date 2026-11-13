@@ -4,7 +4,10 @@ const KINDS = { CHECK: "检测", SOURCE: "来源同步", SUBSCRIPTION: "订阅�
 
 export async function render(root, { params, go }) {
   const days = params.get("days") || "30";
-  const data = await api("/usage?days=" + encodeURIComponent(days));
+  const [data, probe] = await Promise.all([
+    api("/usage?days=" + encodeURIComponent(days)),
+    api("/probe-status").catch(() => null),
+  ]);
   const t = data.totals;
   const range = select("days", [["7", "近 7 天"], ["30", "近 30 天"], ["90", "近 90 天"], ["365", "近 365 天"]], days);
   range.addEventListener("change", () => go("usage", new URLSearchParams({ days: range.value })));
@@ -17,6 +20,12 @@ export async function render(root, { params, go }) {
     ["完整验证 / 抽样", `${t.full_checks} / ${t.full_samples}`],
     ["预检跳过 / 冷却跳过", `${t.preflight_skips} / ${t.cooldown_skips}`],
     ["订阅下载", `${t.subscription_downloads} 次，${bytes(t.subscription_bytes)}`],
+    ...(probe
+      ? [
+          ["Globalping 今日 / 7 天", `${probe.tests_today} / ${probe.tests_7d} 次测试`],
+          ["接入测量占用", bytes(probe.storage_bytes)],
+        ]
+      : []),
   ];
   const latest = data.database_samples[0];
   root.append(

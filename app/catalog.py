@@ -56,14 +56,33 @@ FILTER_KEYS = {
     "min_lifetime_availability",
     "last_checked_after",
     "last_success_after",
+    # Grades (node_grades) for one vantage; see docs/NODE_GRADING_DESIGN.md.
+    "vantage",
+    "quality_grade",
+    "min_quality_grade",
+    "max_peak_rtt_ms",
+    "max_peak_loss",
+    "min_avail_7d",
+    "route_asn",
+    "cross_border",
+    "unreachable",
+    "best_per_server",
 }
+BOOLEAN_KEYS = (
+    "enabled",
+    "eligible",
+    "exit_ip_proxy",
+    "cross_border",
+    "unreachable",
+    "best_per_server",
+)
 
 
 def filters_from_params(params):
     if set(params) - FILTER_KEYS - {"offset", "limit", "sort"}:
         raise AssetError("INVALID_NODE_QUERY")
     result = {k: v for k, v in params.items() if k in FILTER_KEYS and v != ""}
-    for key in ("enabled", "eligible", "exit_ip_proxy"):
+    for key in BOOLEAN_KEYS:
         if key in result:
             if result[key] not in ("true", "false"):
                 raise AssetError("INVALID_NODE_QUERY")
@@ -201,13 +220,17 @@ class Catalog:
                 "evidence_updated_at",
                 "metrics_updated_at",
                 "evaluated_at",
+                "route_measured_at",
+                "access_measured_at",
+                "grade_computed_at",
             ):
                 if node.get(key):
                     node[key] = datetime.fromisoformat(node[key])
         return result
 
-    def node(self, node_id):
-        items = self.nodes(id=str(node_id), limit=1)["items"]
+    def node(self, node_id, vantage=None):
+        extra = {"vantage": vantage} if vantage else {}
+        items = self.nodes(id=str(node_id), limit=1, **extra)["items"]
         node = items[0] if items else None
         if node is None:
             raise AssetError("NODE_NOT_FOUND")

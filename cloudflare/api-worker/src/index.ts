@@ -12,6 +12,12 @@ import {
 } from "./catalog.js";
 import { withName } from "./share.js";
 import {
+  gradingPolicy,
+  nodeAccess,
+  probeStatus,
+  saveGradingPolicy,
+} from "./grading.js";
+import {
   annotation,
   annotate,
   qualityPolicy,
@@ -259,7 +265,7 @@ export async function handle(
         throw new SafeError(code, code === "DATABASE_QUERY_FAILED" ? 503 : 400);
       }
       if (
-        /^(UPDATE|DELETE FROM|INSERT INTO) (nodes|sources|quality_policies|naming_rules|node_annotations)\b/i.test(
+        /^(UPDATE|DELETE FROM|INSERT INTO) (nodes|sources|quality_policies|grading_policy|naming_rules|node_annotations)\b/i.test(
           sql.trim(),
         )
       )
@@ -305,14 +311,14 @@ export async function handle(
         /^[\w.-]+\/[\w.-]+$/.test(env.GITHUB_REPOSITORY) &&
         Boolean(env.GITHUB_DISPATCH_TOKEN) &&
         Boolean(env.GITHUB_WORKFLOW_REF);
-      if (version !== "0017_scale_ip_type")
+      if (version !== "0018_entry_probes_grading")
         return json({
           ready: false,
           checks: { schema: false, dispatch: dispatchReady },
         });
       const checks = {
         database: true,
-        schema: version === "0017_scale_ip_type",
+        schema: version === "0018_entry_probes_grading",
         storage: "PLAINTEXT",
         dispatch: dispatchReady,
       };
@@ -443,6 +449,21 @@ export async function handle(
         );
       return json(await page(filters, sort, offset, limit));
     }
+    if (path === "/api/grading-policy" && method === "GET")
+      return json(await gradingPolicy(rows));
+    if (path === "/api/grading-policy" && method === "PUT")
+      return json(
+        await saveGradingPolicy(
+          rows,
+          (sql) => db!.query(sql),
+          await body(request),
+        ),
+      );
+    if (path === "/api/probe-status" && method === "GET")
+      return json(await probeStatus(rows, url.searchParams.get("vantage")));
+    const accessMatch = /^\/api\/nodes\/([^/]+)\/access$/.exec(path);
+    if (accessMatch && method === "GET")
+      return json(await nodeAccess(rows, uuid(accessMatch[1])));
     if (path === "/api/quality-policy" && method === "GET")
       return json(await qualityPolicy(rows));
     if (path === "/api/quality-policy" && method === "PUT")
@@ -540,7 +561,10 @@ export async function handle(
         return json({ status: "UPDATED" });
       }
       if (method === "GET") {
-        const node = (await page({ id }, "short_id:asc", 0, 1)).items[0];
+        const vantage = url.searchParams.get("vantage");
+        const node = (
+          await page(vantage ? { id, vantage } : { id }, "short_id:asc", 0, 1)
+        ).items[0];
         if (!node) throw new SafeError("NODE_NOT_FOUND", 404);
         return json({
           ...node,

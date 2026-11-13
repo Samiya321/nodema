@@ -57,6 +57,14 @@ class Settings(BaseSettings):
     ipinfo_time_budget_seconds: int = Field(default=720, ge=0, le=3600)
     ipinfo_timeout_seconds: float = Field(default=15, gt=0, le=60)
     echo_token: SecretStr = SecretStr("")
+    # Entry measurements: Globalping public probes. One registered token when set,
+    # otherwise the anonymous per-IP limit (never both in one run).
+    globalping_url: str = Field(default="https://api.globalping.io/v1", pattern=r"^https://[^\s]+$")
+    globalping_token: SecretStr = SecretStr("")
+    probe_concurrency: int = Field(default=6, ge=1, le=16)
+    probe_max_tests_per_run: int = Field(default=500, ge=0, le=5000)
+    probe_time_budget_seconds: int = Field(default=1500, ge=60, le=3300)
+    probe_timeout_seconds: float = Field(default=20, gt=0, le=60)
     dns_timeout_seconds: float = Field(default=3, gt=0, le=30)
     tcp_timeout_seconds: float = Field(default=5, gt=0, le=30)
     http_timeout_seconds: float = Field(default=10, gt=0, le=30)
