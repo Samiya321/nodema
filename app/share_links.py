@@ -20,6 +20,8 @@ from app.domain import AssetError
 
 BATCH = 2000
 BANDWIDTH = ("up_mbps", "down_mbps", "hop_seconds")
+# AnyTLS session-pool tuning: client-side only, absent from share links.
+SESSION_TUNING = ("idle_check_seconds", "idle_timeout_seconds", "min_idle_session")
 
 
 def relaxed(identity: dict) -> tuple[dict, list[str]]:
@@ -32,6 +34,22 @@ def relaxed(identity: dict) -> tuple[dict, list[str]]:
         for key in BANDWIDTH:
             options.pop(key, None)
         omitted.append("BANDWIDTH")
+    transport = node.get("transport_options", {})
+    headers = transport.pop("headers", None) or {}
+    # Sub-Store/Clash add a User-Agent to WebSocket nodes; a share link has no field
+    # for headers. A Host header still has one: keep it as the transport host.
+    extra = {k: v for k, v in headers.items() if k.lower() != "host"}
+    host = next((v for k, v in headers.items() if k.lower() == "host"), None)
+    if host and "host" not in transport:
+        transport["host"] = host
+    if extra:
+        omitted.append("HEADERS")
+    if node["protocol"] == "anytls" and any(k in options for k in SESSION_TUNING):
+        for key in SESSION_TUNING:
+            options.pop(key, None)
+        omitted.append("SESSION_OPTIONS")
+    if node.get("security") in (None, "none") and node["protocol"] == "shadowsocks":
+        node.pop("tls", None)  # certificate settings mean nothing without TLS
     tls = node.get("tls", {})
     if node["protocol"] == "vmess" and "insecure" in tls:
         # The VMess share format has no agreed field for skipping certificate checks.
@@ -58,7 +76,7 @@ def share_uri(identity: dict) -> tuple[str | None, str | None, list[str]]:
     if uri:
         return uri, None, []
     node, omitted = relaxed(identity)
-    if not omitted:
+    if node == identity:
         return None, error, []
     uri, relaxed_error = _convert(node)
     return (uri, None, omitted) if uri else (None, relaxed_error, [])

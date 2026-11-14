@@ -220,3 +220,43 @@ def test_ips_looked_up_before_type_flags_are_queried_once_more(
     assert ipinfo.refresh(service.sessions, monitor_settings, client)["saved"] == 1
     again = FakeClient([])
     assert ipinfo.refresh(service.sessions, monitor_settings, again)["pending"] == 0
+
+
+def test_share_links_drop_headers_session_tuning_and_tls_without_tls():
+    vless = {
+        "protocol": "vless",
+        "server_host": "198.51.100.9",
+        "server_port": 443,
+        "uuid": "11111111-2222-4333-8444-555555555555",
+        "transport": "ws",
+        "security": "tls",
+        "transport_options": {
+            "path": "/ws",
+            "headers": {"User-Agent": "Mozilla/5.0", "Host": "cdn.example"},
+        },
+        "tls": {"sni": "cdn.example"},
+    }
+    uri, error, omitted = share_links.share_uri(vless)
+    assert error is None and omitted == ["HEADERS"] and "host=cdn.example" in uri
+    assert vless["transport_options"]["headers"]  # stored identity untouched
+    anytls = {
+        "protocol": "anytls",
+        "server_host": "198.51.100.10",
+        "server_port": 443,
+        "password": "synthetic-secret",
+        "security": "tls",
+        "tls": {"sni": "a.example"},
+        "protocol_options": {"idle_check_seconds": 30, "min_idle_session": 2},
+    }
+    assert share_links.share_uri(anytls)[2] == ["SESSION_OPTIONS"]
+    ss = {
+        "protocol": "shadowsocks",
+        "server_host": "198.51.100.11",
+        "server_port": 8388,
+        "password": "synthetic-secret",
+        "security": "none",
+        "tls": {"insecure": True},
+        "protocol_options": {"cipher": "aes-128-gcm"},
+    }
+    uri, error, omitted = share_links.share_uri(ss)
+    assert uri.startswith("ss://") and omitted == []
