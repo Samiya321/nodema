@@ -107,6 +107,14 @@ UI 额外验证逐行结果、重复提交、390px 布局，以及慢网络下�
 - 待观察：下一次同步中原超过 10,000 条的子订阅能否入库，及超时来源重试后的结果（标 `retried`）。
 
 
+## 2026-11-15 第十四次发布：UDP 检测、中转规则、Neon 流量、节点页重做（迁移 0021）
+
+- 代码 `3b68418`（main，CI [43618081596](https://github.com/Samiya321/nodema/actions/runs/43618081596) 通过，含真实 mihomo 的 UDP 回环冒烟）：414 Python、35 Worker。迁移 head `0021_udp_relay`。
+- 发布前：无运行中的工作流和扫描租约。临时加密备份（35 MB，本机 270 秒，接近备份命令 300 秒上限）在隔离 PG17 恢复（删除 Neon `pg_attver` 列选项后），迁移 1 秒；中转规则在副本上把 182 个自建节点改为机场（自建 10,566 → 10,384）。按用户要求，备份用完已移到废纸篓。
+- 生产迁移到 0021，doctor ready；API Worker 版本 `19fd1c5b-5c86-46ce-a7db-f59623d93b39`（cron 不变）；Pages https://04fe86f5.nodema-dashboard.pages.dev。readiness 为真；精简列表含 `udp`/`udp_ms`；`udp=true` 筛选可用（当时 0，等每日检测）。
+- `backup.yml` 重新启用（每月 1、15 日 UTC 21:41）；仓库变量 `NEON_PROJECT_ID` 已设置，`NEON_API_KEY` 未创建。
+- 注意：在 worktree 里发布 Worker 时 `--secrets-file` 要用主目录 private 的绝对路径。
+
 ## 2026-11-14 第十三次变更：数据库搬到新的 Neon 项目
 
 - 原因：旧项目本计费周期（11-10 到 12-01）公网传输已用 4.23 / 5 GB，按日常用量撑不到重置；用户决定搬到同账号新的 Neon 项目（Free 额度按项目计算）并删除旧项目。
@@ -114,7 +122,7 @@ UI 额外验证逐行结果、重复提交、390px 布局，以及慢网络下�
 - **数据取舍**：为不让复制本身把旧项目推过 5 GB，`test_results` 只复制了 `node_current_status` 引用的最新结果（40,026 / 223,517 行）；其余 36 张表逐表行数一致（共 574,813 行）。丢的是 7 天保留期内较早的单次检测明细（本来 7 天内也会被清理）；每日统计、等级、接入测量、当前状态都完整。新库 194 MB（旧 557 MB）。
 - 验证：schema `0020_shared_credentials`；31 个函数、11 个触发器、70 个索引、135 个约束、3 个视图与旧库一致；`nodema_api` 对全部表/函数/序列有权限；Worker 经 Hyperdrive 查询（可用 8,865 个 UP 节点）且连接只出现在新库；readiness 为真；手动运行 entry-probe（[run 43609618984](https://github.com/Samiya321/nodema/actions/runs/43609618984)）成功写入新库。
 - 备份：搬家前从本机取整库备份失败（`pg_dump` 跨洋 271 秒后退出，原因未记录）；搬家后备份 `backup-2026-11-14-post-move.nma`（35 MB）在本机 PG17 隔离恢复通过（需删除 Neon 写入的 393 条 `pg_attver` 列选项）。旧项目的完整内容（含全部检测明细）只在 `backup-2026-11-14-pre-0020.nma` 里。
-- 用户决定（2026-11-14）：`backup.yml` 保持停用，不做每周云端备份。需要恢复点时在本机手动备份（见 PRODUCTION_OPERATIONS.md），或 `gh workflow enable backup.yml` 重新打开（新库每次约 0.2 GB 传输）。同日按用户要求把本机 `private/*.nma` 全部 11 个备份移到废纸篓：**目前没有任何数据库备份**，上文提到的备份文件都已不在 private/ 中。
+- 用户决定（2026-11-14，11-15 改为每月两次，见第十四次发布）：`backup.yml` 保持停用，不做每周云端备份。需要恢复点时在本机手动备份（见 PRODUCTION_OPERATIONS.md），或 `gh workflow enable backup.yml` 重新打开（新库每次约 0.2 GB 传输）。同日按用户要求把本机 `private/*.nma` 全部 11 个备份移到废纸篓：**目前没有任何数据库备份**，上文提到的备份文件都已不在 private/ 中。
 
 ## 2026-11-14 第十二次发布：按落地国家查看、削减 Neon 传输（无迁移）
 
