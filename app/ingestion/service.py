@@ -617,6 +617,9 @@ class AssetService:
                 )
             )
         session.execute(sa.text("SELECT nodema_assign_names()"))
+        if created:
+            # New nodes can complete a shared-credential group (airport nodes, 0020).
+            session.execute(sa.text("SELECT nodema_mark_shared_credentials()"))
         if report.complete:
             session.execute(
                 sa.update(NodeSource)

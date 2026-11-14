@@ -56,3 +56,21 @@ def test_shared_credentials_make_airport_nodes(service, monitor_settings):
     assert catalog.page({"node_group": "AIRPORT"})["total"] == 5
     assert catalog.page({"node_group": "SELF_HOSTED"})["total"] == 11
     assert credential_key({"protocol": "trojan"}) is None
+
+
+def test_a_later_import_completes_a_shared_group(service, monitor_settings):
+    first = service.create_source(
+        name="first",
+        source_type=SourceType.RAW_TEXT,
+        payload="\n".join(vless(FEW, "198.51.100.50", 443 + i, f"a{i}") for i in range(4)).encode(),
+    )
+    service.sync_source(first["id"])
+    catalog = Catalog(service, monitor_settings)
+    assert catalog.page({"node_group": "AIRPORT"})["total"] == 0  # 4 nodes, one server
+    second = service.create_source(
+        name="second",
+        source_type=SourceType.RAW_TEXT,
+        payload=vless(FEW, "198.51.100.51", 443, "b0").encode(),
+    )
+    service.sync_source(second["id"])
+    assert catalog.page({"node_group": "AIRPORT"})["total"] == 5

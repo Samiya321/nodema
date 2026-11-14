@@ -158,6 +158,8 @@ class Node(Base):
     config_data: Mapped[bytes] = mapped_column(sa.LargeBinary)
     # MD5 of the UUID (VLESS/VMess) or password; groups one operator's nodes.
     credential_key: Mapped[str | None] = mapped_column(sa.Text)
+    # Set by nodema_mark_shared_credentials(): >=5 nodes on >=2 servers share the key.
+    credential_shared: Mapped[bool] = mapped_column(server_default=sa.false())
     line_type: Mapped[str] = mapped_column(sa.Text, server_default="UNKNOWN")
     enabled: Mapped[bool] = mapped_column(server_default=sa.true())
     checked_days: Mapped[int] = mapped_column(server_default="0")
