@@ -94,6 +94,8 @@ gh workflow run export-build.yml --repo Samiya321/nodema --ref main
 # 恢复指定 run 使用 daily-check.yml 的 run_id 输入，不把示例 ID 当真实 ID
 ```
 
+等级重算（`nodema grade refresh`）每次重写约 4 万行，只在 Actions 内运行（`daily-check.yml` 收尾、`entry-probe.yml` 到期时）。从国内本机对 Neon 执行会因上传慢而持续数十分钟并长期持有事务，2026-11-14 实测超过 40 分钟后中止。
+
 ## 备份、恢复与数据库搬家
 
 数据库明文不表示备份可公开。每周加密 artifact 仅保留 7 天；GeoIP 密文包保留 1 天。GitHub artifact 不是无限期灾备；如果需要长期恢复点，应另行私下保存加密备份与对应密钥，分开保管。失去 AES 密钥就无法解密对应备份。
@@ -103,6 +105,7 @@ gh workflow run export-build.yml --repo Samiya321/nodema --ref main
 - 新备份：用上面的安全 env 模板，将命令改为 `python -m app.cli backup --output-file private/<新文件名>.nma --docker-client`；DATABASE_URL 优先选本机 MIGRATION_DATABASE_URL 的直连 owner 地址。输出文件拒绝覆盖已有路径。
 - 自动备份：已授权时触发 `backup.yml`，记录 run ID、artifact 保留期和下载校验；不把 key 与 artifact 打包保存。
 - 恢复演练：新建隔离 PostgreSQL 17，显式让 DATABASE_URL 指向测试目标，再用 `nodema restore --input-file <私密文件> --confirm-restore --docker-client`。该命令内部 pg_restore --clean，会覆盖目标对象，绝不能指向在线库当作演练。
+- **Neon 专有列选项**：2026-11-14 起，Neon 给 0018 新建的表（如 `entry_probe_results`）写了 `ALTER TABLE ... ALTER COLUMN ... SET (pg_attver=...)` 列选项，标准 PostgreSQL 17 不认识，`pg_restore` 会报 `unrecognized parameter "pg_attver"` 并整体回滚（`nodema restore` 显示 DATABASE_RESTORE_FAILED）。恢复到非 Neon 的 PostgreSQL 时，先用 `pg_restore -f -` 解密转成 SQL，删除这些 `SET (pg_attver=…)` 语句（2026-11-14 的备份有 67 条），再用 `psql -v ON_ERROR_STOP=1 --single-transaction` 导入；这是隔离恢复 `backup-2026-11-14-pre-0019.nma` 时验证过的做法。恢复回 Neon 时不受影响。
 - 验证 schema、函数/触发器/索引、行数、HMAC 一致性、读写和订阅失效语义。备份不包含 owner/ACL，目标需重新授予业务角色权限。
 - 迁移到另一完整 PostgreSQL：协调暂停 Actions/其他写入口，最终备份，隔离恢复与验证，建立 API 角色，更新 Actions 的数据库 Secrets 和 Hyperdrive origin（继续禁用查询缓存），核对 TLS/CA，再恢复任务。保留 HMAC/AES、资产 ID、订阅 ID/token、日期水位与累计计数；保留原库用于回退。
 

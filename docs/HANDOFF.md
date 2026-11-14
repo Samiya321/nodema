@@ -8,6 +8,7 @@
 - 公开源码：Samiya321/nodema，main。**2026-11-11 已发布 `b477963`**：检测稳定性/速度、手动同步与检测、机场/Sub-Store 子来源、保留语义、新命名与前端重写；迁移 head `0015_exit_asn_numbering`（同日追加：按落地国家+ASN 编号、检测所选节点），27 张业务表。[CI 42933849350](https://github.com/Samiya321/nodema/actions/runs/42933849350)：331 Python + 32 Worker + 3 Echo。设计见 [SOURCES_AIRPORTS_NAMING.md](SOURCES_AIRPORTS_NAMING.md)，发布记录见 [CLOUD_DEPLOYMENT.md](CLOUD_DEPLOYMENT.md)。
 - Cloudflare API version `8156a79e-b9b6-4192-8e77-609d04fac6d2`；Pages 预览 https://5bdfc055.nodema-dashboard.pages.dev。后续部署以实际资源状态为准。
 - **2026-11-14 已发布 `7306266`**：节点质量分级与 Globalping 接入测量，迁移 head `0018_entry_probes_grading`，新工作流 `entry-probe.yml`（每小时 :30）。设计与实现见 [NODE_GRADING_DESIGN.md](NODE_GRADING_DESIGN.md)，发布记录见 [CLOUD_DEPLOYMENT.md](CLOUD_DEPLOYMENT.md)。
+- **2026-11-14 已发布 `b23585e`**：CF 落地不测不分级、CF 入口不再用港新样本、港新家宽探针、前端与节点页重做；迁移 head `0019_grade_exclusions`。发布记录见 [CLOUD_DEPLOYMENT.md](CLOUD_DEPLOYMENT.md)。
 - 当前没有已知待补的本轮代码缺口。用户真实节点、大陆体验、长期配额、生产恢复不属于已完成的合成验收证明。不得把“基础链路通过”写成所有公网参数都已保证可用。
 
 先看 git 与实际云端状态。历史记录中的“尚未导入真实节点”和表行数不代表此刻数据库为空；用户可以随时从 Dashboard 导入，禁止据此清库。
@@ -32,6 +33,7 @@
 | 批量链接 | 普通订阅和 Sub-Store API 可混合，每行一个，每批 100 个/128 KiB，单 URL 8 KiB；逐行结果、去重、一次调度 |
 | 检测 | DNS/TCP 预检、缓存、失败冷却和必要的完整代理 HTTPS；无下载测速、不做任意网段扫描 |
 | 节点分级（2026-11-13，覆盖旧“大陆参考”） | 只记录能实测证明的东西。按视角（三网/电信/联通/移动/香港/新加坡）给 S/A/B/C/D/待定：等级 = 接入档（Globalping 社区探针 TCP ping 入口，三网用北京时间晚高峰）与稳定档（7 天日可用率）中较差的一项。线路只记录三网去程实测经过的 ASN；`line_type` 仍为 UNKNOWN，不判断 IPLC/IEPL/CN2，不推断回程，不提取机场自称线路名。界面不再显示 P1/P2/P3 理论等级和人工线路声明（数据保留）。用户接受把入口 IP 发给 Globalping（测量数据公开）；只用一个账号的 token，不注册多个账号、不叠加匿名额度；不做本机测量 |
+| Cloudflare 落地（2026-11-14） | 用户不需要落地在 Cloudflare（AS13335）的节点：不做接入测量、不定档，界面显示“不分级”。不自动停用或删除这些节点，每日检测照旧；入口在 CF 的节点只用三网探针测 CF 接入，不用港新样本 |
 | 触发方式（2026-11-11） | 导入/编辑/删除不启动 Actions；用户点“同步来源”或按范围“检测”；每日定时默认只测自建，可在设置页修改 |
 | 来源与节点保留（2026-11-11） | 上游失效/移除/来源删除不删除或停测自建节点；机场节点随订阅暂停/过期/流量用完停测；删除来源默认保留节点 |
 | 机场与 Sub-Store（2026-11-11） | subscription-userinfo 识别机场并归组；Sub-Store 条目物化为独立子来源；机场与自建分开检测 |
