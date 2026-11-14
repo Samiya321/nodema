@@ -120,10 +120,13 @@ export function openTestDialog() {
   });
 }
 
-function runView(run) {
+function runView(run, testable = {}) {
   const done = Number(run.done || 0),
     total = Number(run.node_count || 0);
-  const label = run.scope === "ALL" ? "全部" : KIND[run.scope] || "全部";
+  // Node selections run with scope ALL; fewer nodes than the whole library means "selected".
+  const everything = (testable.SELF_HOSTED || 0) + (testable.AIRPORT || 0);
+  const label =
+    run.scope === "ALL" ? (everything && total < everything ? "所选节点" : "全部") : KIND[run.scope] || "全部";
   if (RUNNING.includes(run.status))
     return h(
       "a",
@@ -150,7 +153,7 @@ function draw(state) {
   const testButton = h("button", { type: "button", class: "primary" }, "开始检测");
   testButton.addEventListener("click", openTestDialog);
   const requested = state.requested_scans || [];
-  root.replaceChildren(
+  const parts = [
     h(
       "div",
       { class: "strip-group" },
@@ -182,10 +185,12 @@ function draw(state) {
       requested.map((r) =>
         h("p", { class: "strip-text", title: "等待 GitHub Actions 开始" }, `已请求：${r.scope === "NODES" ? `所选 ${r.nodes} 个节点` : KIND[r.scope]}`),
       ),
-      state.active_scans.slice(0, 2).map(runView),
+      state.active_scans.slice(0, 2).map((run) => runView(run, state.testable)),
       !requested.length && !state.active_scans.length ? h("p", { class: "strip-text muted" }, "没有进行中的检测") : null,
     ),
-  );
+  ];
+  // replaceChildren() would print a null part as the text "null".
+  root.replaceChildren(...parts.filter(Boolean));
 }
 
 // Neon Free suspends the database for the rest of the month at 100% transfer.

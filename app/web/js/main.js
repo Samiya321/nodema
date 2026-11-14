@@ -15,6 +15,7 @@ const PAGES = [
 
 const page = document.getElementById("page");
 let rendering = 0;
+let shown = ""; // page name on screen: a new page starts at the top, a re-render keeps its place
 
 function currentRoute() {
   const [name, query = ""] = location.hash.replace(/^#\/?/, "").split("?");
@@ -44,6 +45,11 @@ async function render() {
     await module.render(root, { params, go, refresh: render, refreshStrip });
     if (ticket !== rendering) return;
     page.replaceChildren(root);
+    if (shown !== name) {
+      window.scrollTo(0, 0);
+      page.scrollTop = 0;
+    }
+    shown = name;
   } catch (error) {
     if (ticket !== rendering) return;
     page.replaceChildren(

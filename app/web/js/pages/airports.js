@@ -10,10 +10,10 @@ const STATES = {
   paused: ["已暂停", "mute"],
 };
 const SORTS = [
+  ["up:desc", "可用节点 多→少"],
   ["remaining:asc", "剩余流量 少→多"],
   ["remaining:desc", "剩余流量 多→少"],
   ["expiry:asc", "到期时间 近→远"],
-  ["up:desc", "可用节点 多→少"],
   ["name:asc", "名称"],
 ];
 
@@ -47,6 +47,13 @@ function gauge(s) {
     meter(ratio, { tone, label: `已用 ${(ratio * 100).toFixed(0)}%` }),
     h("span", { class: "small" }, h("strong", {}, bytes(s.remaining)), ` 剩余 / 共 ${bytes(s.total)}`),
   );
+}
+
+// Remaining traffic of an airport's usable subscriptions; "未提供总量" when none reports one.
+function leftText(list) {
+  const known = list.filter((x) => x.usable && x.remaining != null);
+  if (!known.length) return list.some((x) => x.usable) ? "未提供总量" : "已不可用";
+  return "剩余 " + bytes(known.reduce((n, x) => n + x.remaining, 0));
 }
 
 function expiry(s) {
@@ -151,7 +158,7 @@ export async function render(root, { params, go, refresh, refreshStrip }) {
   };
   const state = params.get("state") || "";
   const providerId = params.get("provider") || "";
-  const sort = params.get("sort") || "remaining:asc";
+  const sort = params.get("sort") || "up:desc";
   const q = (params.get("q") || "").toLowerCase();
   const items = sources.map(describe).filter(
     (s) =>
@@ -180,6 +187,11 @@ export async function render(root, { params, go, refresh, refreshStrip }) {
   const remainingTotal = usable.reduce((n, s) => n + (s.remaining || 0), 0);
   const groups = new Map([...providers.map((p) => [p.id, { provider: p, items: [] }]), ["none", { provider: null, items: [] }]]);
   for (const s of items) groups.get(s.provider_id && groups.has(s.provider_id) ? s.provider_id : "none").items.push(s);
+  // Airports you can still use first (most usable nodes), then the ones that ended.
+  const upOf = (g) => g.items.reduce((n, x) => n + (x.usable ? x.up_count || 0 : 0), 0);
+  const ordered = [...groups.values()]
+    .filter((g) => g.items.length)
+    .sort((a, b) => (b.items.some((x) => x.usable) - a.items.some((x) => x.usable)) || upOf(b) - upOf(a));
 
   root.append(
     h("h1", { class: "page-title" }, "机场"),
@@ -201,9 +213,7 @@ export async function render(root, { params, go, refresh, refreshStrip }) {
     ),
     h("p", { class: "hint" }, "过期、流量用完或暂停的订阅，其节点不会参与检测和导出。同一机场的多条订阅会按官网或名称自动归到一起，也可以手动移动。"),
     items.length
-      ? [...groups.values()]
-          .filter((g) => g.items.length)
-          .map(({ provider, items: list }, _i, shown) => {
+      ? ordered.map(({ provider, items: list }, _i, shown) => {
             const problems = list.filter((x) => ["expired", "exhausted", "soon", "low"].includes(x.state)).length;
             // Few airports (or an active filter) open everything; many start collapsed.
             const open = shown.length <= 6 || Boolean(q || state || providerId);
@@ -217,7 +227,7 @@ export async function render(root, { params, go, refresh, refreshStrip }) {
                 h(
                   "span",
                   { class: "muted" },
-                  `${list.filter((x) => x.usable).length}/${list.length} 条可用 · 剩余 ${bytes(list.reduce((n, x) => n + (x.usable ? x.remaining || 0 : 0), 0))} · ${list.reduce((n, x) => n + (x.up_count || 0), 0)} 个可用节点`,
+                  `${list.filter((x) => x.usable).length}/${list.length} 条可用 · ${leftText(list)} · ${list.reduce((n, x) => n + (x.up_count || 0), 0)} 个可用节点`,
                 ),
                 problems ? h("span", { class: "warn-text small" }, `${problems} 条需要注意`) : null,
               ),

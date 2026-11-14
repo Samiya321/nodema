@@ -30,7 +30,9 @@ function groupBy(items, keyOf) {
   const groups = new Map();
   for (const item of items) {
     const key = keyOf(item);
-    groups.set(key, [...(groups.get(key) || []), item]);
+    const list = groups.get(key);
+    if (list) list.push(item); // copying per item was quadratic: seconds for 3,000 US nodes
+    else groups.set(key, [item]);
   }
   return groups;
 }

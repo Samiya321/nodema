@@ -67,13 +67,22 @@ function probeNotes(status) {
 
 // One suggestion that follows the workflow: add sources -> sync -> test -> export.
 function nextStep(sources, overview, pipeline, exportsCount) {
-  const untested = Object.values(overview.groups || {}).reduce((n, g) => n + (g.statuses?.UNKNOWN || 0), 0);
+  // Only nodes the daily check covers: airports outside its scope stay untested on purpose.
+  const scope = pipeline.settings?.daily_scan_scope || "SELF_HOSTED";
+  const groups = scope === "ALL" ? GROUPS : [scope];
+  const untested = pipeline.active_scans?.length
+    ? 0
+    : groups.reduce((n, g) => n + (overview.groups?.[g]?.statuses?.UNKNOWN || 0), 0);
   if (!sources.length)
     return ["还没有来源", "添加订阅链接、Sub-Store API 或节点文本。", h("a", { class: "button primary", href: "#/sources" }, "添加来源")];
   if (pipeline.pending_sources || !sources.some((s) => s.last_success_at))
     return [`${pipeline.pending_sources || sources.length} 个来源等待同步`, "同步只拉取和解析，不会检测节点。", h("button", { type: "button", class: "primary", onclick: (e) => syncSources(null, e.target) }, "同步全部来源")];
   if (untested)
-    return [`${untested} 个节点还没有检测`, "选择自建、机场或全部开始检测；也可以在节点页只勾选一部分。", h("button", { type: "button", class: "primary", onclick: openTestDialog }, "开始检测")];
+    return [
+      `${untested} 个${scope === "ALL" ? "" : KIND[scope]}节点还没有检测`,
+      "每日定时检测会覆盖它们；也可以现在开始，或在节点页只勾选一部分。",
+      h("button", { type: "button", class: "primary", onclick: openTestDialog }, "开始检测"),
+    ];
   if (!exportsCount)
     return ["生成你的订阅链接", "按落地国家、类别等条件保存方案，节点检测后会自动更新。", h("a", { class: "button primary", href: "#/exports" }, "创建订阅")];
   return null;
@@ -121,27 +130,49 @@ function groupPanel(key, data) {
   );
 }
 
+const SHOWN = 3; // per kind; the rest is one summary line linking to its page
+
+function capped(items, summary, href) {
+  if (items.length <= SHOWN + 1) return items;
+  const tone = items.some(([t]) => t === "bad") ? "bad" : "warn";
+  return [...items.slice(0, SHOWN), [tone, summary(items.length - SHOWN), href]];
+}
+
 function attention(airports, substores, sources) {
-  const items = [];
+  const ended = [], soon = [];
   for (const s of airports.sources) {
     const days = daysUntil(s.expires_at);
     const used = Number(s.traffic_upload || 0) + Number(s.traffic_download || 0);
     const total = Number(s.traffic_total || 0);
-    if (s.expires_at && new Date(s.expires_at) <= new Date()) items.push(["bad", `${s.name} 已过期`, "#/airports"]);
-    else if (total && used >= total) items.push(["bad", `${s.name} 流量已用完`, "#/airports"]);
-    else if (days !== null && days <= 7) items.push(["warn", `${s.name} ${days} 天后到期`, "#/airports"]);
+    if (s.expires_at && new Date(s.expires_at) <= new Date()) ended.push(["bad", `${s.name} 已过期`, "#/airports"]);
+    else if (total && used >= total) ended.push(["bad", `${s.name} 流量已用完`, "#/airports"]);
+    else if (days !== null && days <= 7)
+      soon.push(["warn", days <= 0 ? `${s.name} 今天到期` : `${s.name} ${days} 天后到期`, "#/airports"]);
     else if (total && (total - used) / total < 0.1)
-      items.push(["warn", `${s.name} 剩余 ${bytes(total - used)}`, "#/airports"]);
+      soon.push(["warn", `${s.name} 剩余 ${bytes(total - used)}`, "#/airports"]);
   }
-  for (const s of substores)
-    if (s.last_sync_status === "FAILED")
-      items.push(["bad", `Sub-Store「${s.name}」无法访问：${errorText(s.last_error_code)}`, "#/substore"]);
+  // Ending soon is actionable; already ended only needs cleaning up, so it comes second.
+  const items = [
+    ...capped(soon, (n) => `另有 ${n} 个机场订阅即将到期或流量不足`, "#/airports"),
+    ...capped(ended, (n) => `另有 ${n} 个机场订阅已过期或流量用完，它们的节点不再检测和导出`, "#/airports"),
+  ];
+  const down = substores
+    .filter((s) => s.last_sync_status === "FAILED")
+    .map((s) => ["bad", `Sub-Store「${s.name}」无法访问：${errorText(s.last_error_code)}`, "#/substore"]);
+  items.push(...capped(down, (n) => `另有 ${n} 个 Sub-Store 无法访问`, "#/substore?state=failed"));
   const failing = sources.filter((s) => s.last_sync_status === "FAILED" && s.effective_kind !== "SUBSTORE");
   const broken = failing.filter((s) => s.last_success_at);
   if (broken.length) items.push(["warn", `${broken.length} 个来源之前正常、最近拉取失败，已解析的节点仍保留`, "#/sources?status=FAILED&sort=recent"]);
   if (failing.length > broken.length)
     items.push(["mute", `${failing.length - broken.length} 个链接从未拉取成功（多为上游失效），可在来源页清理`, "#/sources?status=FAILED"]);
   return items;
+}
+
+// Node selections run with scope ALL: fewer nodes than everything testable means "selected".
+function scopeLabel(run, overview) {
+  if (run.scope !== "ALL") return KIND[run.scope] || "全部";
+  const everything = GROUPS.reduce((n, g) => n + (overview.groups?.[g]?.eligible || 0), 0);
+  return everything && run.node_count < everything ? `所选 ${run.node_count} 个节点` : "全部";
 }
 
 export async function render(root, { params, go }) {
@@ -193,7 +224,7 @@ export async function render(root, { params, go }) {
               "dl",
               { class: "pairs" },
               h("dt", {}, "批次"),
-              h("dd", {}, `${latest.scan_date} ${SCAN_KIND[latest.kind] || latest.kind} · ${KIND[latest.scope] || "全部"}`),
+              h("dd", {}, `${latest.scan_date} ${SCAN_KIND[latest.kind] || latest.kind} · ${scopeLabel(latest, overview)}`),
               h("dt", {}, "状态"),
               h("dd", {}, badge(latest.status)),
               h("dt", {}, "节点"),

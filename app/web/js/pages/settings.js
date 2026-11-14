@@ -77,20 +77,39 @@ function asnLabels(data, refresh) {
       toast("已更新，节点名称随之刷新。", "ok");
       refresh();
     });
-  const rows = data.observed.map((o) => ({ ...o, input: h("input", { value: o.overridden ? o.label : "", placeholder: o.label, size: 14, "aria-label": `AS${o.asn} 简称` }) }));
+  const rows = data.observed.map((o) => {
+    const input = h("input", { value: o.overridden ? o.label : "", placeholder: o.label, size: 14, "aria-label": `AS${o.asn} 简称` });
+    // Save is offered only once the name was edited: hundreds of rows, one button each.
+    const button = h("button", { type: "button", class: "quiet", disabled: true, onclick: save(o.asn, input) }, "保存");
+    input.addEventListener("input", () => (button.disabled = input.value === (o.overridden ? o.label : "")));
+    return { ...o, input, button };
+  });
+  const SHOWN = 20;
+  let limit = SHOWN;
+  const columns = [
+    { label: "ASN", render: (o) => "AS" + o.asn },
+    { label: "运营商名称", render: (o) => o.organization || h("span", { class: "muted" }, "未知") },
+    { label: "节点", class: "num", render: (o) => o.nodes },
+    { label: "简称", render: (o) => o.input },
+    { label: "", render: (o) => o.button },
+  ];
+  const holder = h("div", { class: "stack tight" });
+  const search = h("input", { type: "search", placeholder: "搜索 ASN、运营商或简称", "aria-label": "搜索 ASN" });
+  const draw = () => {
+    const q = search.value.trim().toLowerCase().replace(/^as/, "");
+    const hits = rows.filter((o) => !q || `${o.asn} ${o.organization || ""} ${o.label || ""}`.toLowerCase().includes(q));
+    const more =
+      hits.length > limit
+        ? h("button", { type: "button", class: "quiet table-more", onclick: () => ((limit = Infinity), draw()) }, `显示全部 ${hits.length} 个`)
+        : null;
+    holder.replaceChildren(table(columns, hits.slice(0, limit), { empty: h("p", { class: "muted" }, "没有匹配的 ASN") }), ...(more ? [more] : []));
+  };
+  search.addEventListener("input", draw);
+  draw();
   return section(
     "落地 ASN 简称",
-    "自动从运营商名称提取简称（如 WEBBING HONG KONG LIMITED → Webbing）。不满意可以在这里改，留空恢复自动。",
-    table(
-      [
-        { label: "ASN", render: (o) => "AS" + o.asn },
-        { label: "运营商名称", render: (o) => o.organization || h("span", { class: "muted" }, "未知") },
-        { label: "节点", class: "num", render: (o) => o.nodes },
-        { label: "简称", render: (o) => o.input },
-        { label: "", render: (o) => h("button", { type: "button", class: "quiet", onclick: save(o.asn, o.input) }, "保存") },
-      ],
-      rows,
-    ),
+    "自动从运营商名称提取简称（如 WEBBING HONG KONG LIMITED → Webbing）。不满意可以在这里改，留空恢复自动。按节点数排列。",
+    h("div", { class: "stack" }, h("div", { class: "toolbar" }, search), holder),
   );
 }
 

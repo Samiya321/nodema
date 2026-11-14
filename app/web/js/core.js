@@ -95,6 +95,7 @@ export const STATUS = {
   PARTIAL: ["部分完成", "warn"],
   FAILED: ["失败", "bad"],
   SUCCESS: ["成功", "ok"],
+  CANCELLED: ["已取消", "mute"],
   NEVER: ["未同步", "mute"],
   RETRYABLE: ["待重试", "warn"],
 };

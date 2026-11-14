@@ -373,9 +373,33 @@ export async function render(root, { params, go, refresh, refreshStrip }) {
     );
     picked.refresh();
   };
+  // "添加来源" lives in the title row; the form opens below it instead of a bare disclosure.
+  const adder = importPanel(reload, all.length === 0);
+  const failedCount = all.filter((s) => s.last_sync_status === "FAILED").length;
+  const addButton = h("button", { type: "button", class: "primary", "aria-expanded": String(adder.open) }, adder.open ? "收起" : "添加来源");
+  addButton.addEventListener("click", () => {
+    adder.open = !adder.open;
+    if (adder.open) adder.querySelector("textarea, input")?.focus();
+  });
+  adder.addEventListener("toggle", () => {
+    addButton.textContent = adder.open ? "收起" : "添加来源";
+    addButton.setAttribute("aria-expanded", String(adder.open));
+  });
   root.append(
-    h("h1", { class: "page-title" }, "来源"),
-    importPanel(reload, all.length === 0),
+    h(
+      "div",
+      { class: "page-head" },
+      h(
+        "div",
+        {},
+        h("h1", { class: "page-title" }, "来源"),
+        all.length
+          ? h("p", { class: "page-sub" }, `${all.length} 个来源${failedCount ? ` · ${failedCount} 个最近同步失败` : " · 全部同步正常"}`)
+          : null,
+      ),
+      addButton,
+    ),
+    adder,
     h(
       "div",
       { class: "toolbar" },
