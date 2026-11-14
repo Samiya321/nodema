@@ -1,5 +1,5 @@
 // The only place that starts GitHub Actions: sync sources, or test nodes.
-import { KIND, ago, api, busy, confirm, dialog, h, meter, toast } from "./core.js";
+import { KIND, ago, api, busy, confirm, date, dialog, h, meter, toast } from "./core.js";
 
 // Poll only while work is pending or just requested, so an idle tab lets the free
 // database suspend. Navigation, focus and actions refresh it otherwise.
@@ -175,6 +175,7 @@ function draw(state) {
       ),
     ),
     h("div", { class: "strip-group" }, testButton),
+    transferWarning(state.neon_transfer),
     h(
       "div",
       { class: "strip-group runs", "aria-live": "polite" },
@@ -184,5 +185,17 @@ function draw(state) {
       state.active_scans.slice(0, 2).map(runView),
       !requested.length && !state.active_scans.length ? h("p", { class: "strip-text muted" }, "没有进行中的检测") : null,
     ),
+  );
+}
+
+// Neon Free suspends the database for the rest of the month at 100% transfer.
+function transferWarning(transfer) {
+  if (!transfer || !transfer.limit) return null;
+  const ratio = transfer.used / transfer.limit;
+  if (ratio < 0.7) return null;
+  return h(
+    "a",
+    { class: "strip-warn" + (ratio >= 0.9 ? " bad" : ""), href: "#/usage", title: `${(transfer.used / 1e9).toFixed(2)} / ${(transfer.limit / 1e9).toFixed(2)} GB，${transfer.period_end ? date(transfer.period_end) + " 重置" : ""}` },
+    `数据库流量已用 ${Math.round(ratio * 100)}%`,
   );
 }

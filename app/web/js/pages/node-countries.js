@@ -82,6 +82,17 @@ function fastest(nodes) {
   return values.length ? Math.min(...values) : null;
 }
 
+// "UDP 8/10", "家宽 3": the two things a landing network is chosen for besides grade.
+function facts(nodes) {
+  const tested = nodes.filter((n) => n.udp === "SUCCESS" || n.udp === "FAILED");
+  const ok = tested.filter((n) => n.udp === "SUCCESS").length;
+  const home = nodes.filter((n) => n.exit_ip_type === "RESIDENTIAL").length;
+  return [
+    tested.length ? [`UDP ${ok}/${tested.length}`, "UDP 测通 / 已测"] : null,
+    home ? [`家宽 ${home}`, "落地 IP 为家宽的节点数"] : null,
+  ].filter(Boolean);
+}
+
 function rail(list, current, onCountry) {
   return h(
     "nav",
@@ -186,6 +197,11 @@ function groupCard(group, { open, sortKey, sortDir, onSort, onPick, scope }) {
           title: `${vantageName(rowVantage())}${isCarrier(rowVantage()) ? "晚高峰" : ""}最低延迟`,
         },
         best == null ? "" : ms(best),
+      ),
+      h(
+        "span",
+        { class: "asn-facts" },
+        facts(group.nodes).map(([text, hint]) => h("span", { title: hint }, text)),
       ),
       h("span", { class: "asn-n" }, `${count(group.nodes.length)} 个`),
     ),

@@ -1,5 +1,7 @@
-import { api, badge, bytes, date, empty, h, pct, select, table } from "../core.js";
+import { api, badge, bytes, date, empty, h, meter, pct, select, table } from "../core.js";
 
+// Neon bills transfer in decimal units (5 GB = 5,000,000,000 bytes).
+const gb = (value) => (value / 1e9).toFixed(2) + " GB";
 const KINDS = { CHECK: "检测", SOURCE: "来源同步", SUBSCRIPTION: "订阅下载", JOB: "任务采样" };
 
 export async function render(root, { params, go }) {
@@ -28,8 +30,32 @@ export async function render(root, { params, go }) {
       : []),
   ];
   const latest = data.database_samples[0];
+  const transfer = data.neon_transfer;
+  const ratio = transfer ? transfer.transfer_bytes / transfer.transfer_limit_bytes : null;
+  const transferPanel = h(
+    "section",
+    { class: "panel transfer" },
+    h("header", { class: "panel-head" }, h("h2", {}, "数据库流量（Neon 公网传输）")),
+    transfer
+      ? [
+          h(
+            "p",
+            { class: "big-figure" },
+            h("span", { class: "figure" }, pct(ratio)),
+            h("span", { class: "of" }, `  ${gb(transfer.transfer_bytes)} / ${gb(transfer.transfer_limit_bytes)}`),
+          ),
+          meter(ratio, { tone: ratio >= 0.9 ? "bad" : ratio >= 0.7 ? "warn" : "" }),
+          h(
+            "p",
+            { class: "hint" },
+            `${transfer.transfer_period_end ? date(transfer.transfer_period_end) + " 重置" : "按月重置"}；用满后数据库会暂停到重置日（数据不丢）。${date(transfer.taken_at)} 读取。`,
+          ),
+        ]
+      : h("p", { class: "muted" }, "还没有读数。在 GitHub 仓库添加 Secret NEON_API_KEY（项目级只读也可）和变量 NEON_PROJECT_ID 后，每次工作流结束都会记录一次。"),
+  );
   root.append(
     h("div", { class: "title-row" }, h("h1", { class: "page-title" }, "运行用量"), range),
+    transferPanel,
     h("dl", { class: "stats" }, stats.map(([k, v]) => h("div", {}, h("dt", {}, k), h("dd", {}, v)))),
     h("p", { class: "hint" }, "按 UTC 日期统计。字节数为应用层载荷，不是运营商流量账单；Actions 分钟来自已完成的 Job 时长，不等同于计费分钟。"),
     h(

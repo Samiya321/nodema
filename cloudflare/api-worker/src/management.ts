@@ -101,7 +101,10 @@ async function pipeline(rows: Rows) {
       (SELECT jsonb_build_object('daily_scan_enabled',daily_scan_enabled,'daily_scan_scope',daily_scan_scope)
         FROM app_settings WHERE id=1) AS settings,
       (SELECT jsonb_object_agg(node_group,n) FROM (SELECT node_group,count(*) n FROM nodema_node_scope
-        WHERE eligible GROUP BY node_group) g) AS testable`,
+        WHERE eligible GROUP BY node_group) g) AS testable,
+      -- Latest Neon transfer reading (needs a Neon API key in the usage job).
+      (SELECT jsonb_build_object('used',transfer_bytes,'limit',transfer_limit_bytes,'period_end',transfer_period_end)
+        FROM database_samples WHERE transfer_bytes IS NOT NULL ORDER BY taken_at DESC LIMIT 1) AS neon_transfer`,
   );
   const active = await rows(
     `SELECT r.id,r.scan_date::text AS scan_date,r.kind,r.scope,r.status,r.node_count,r.started_at,
