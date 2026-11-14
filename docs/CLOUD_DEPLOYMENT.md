@@ -112,7 +112,7 @@ UI 额外验证逐行结果、重复提交、390px 布局，以及慢网络下�
 - 代码 `3b68418`（main，CI [43618081596](https://github.com/Samiya321/nodema/actions/runs/43618081596) 通过，含真实 mihomo 的 UDP 回环冒烟）：414 Python、35 Worker。迁移 head `0021_udp_relay`。
 - 发布前：无运行中的工作流和扫描租约。临时加密备份（35 MB，本机 270 秒，接近备份命令 300 秒上限）在隔离 PG17 恢复（删除 Neon `pg_attver` 列选项后），迁移 1 秒；中转规则在副本上把 182 个自建节点改为机场（自建 10,566 → 10,384）。按用户要求，备份用完已移到废纸篓。
 - 生产迁移到 0021，doctor ready；API Worker 版本 `19fd1c5b-5c86-46ce-a7db-f59623d93b39`（cron 不变）；Pages https://04fe86f5.nodema-dashboard.pages.dev。readiness 为真；精简列表含 `udp`/`udp_ms`；`udp=true` 筛选可用（当时 0，等每日检测）。
-- `backup.yml` 重新启用（每月 1、15 日 UTC 21:41）；仓库变量 `NEON_PROJECT_ID` 已设置，`NEON_API_KEY` 未创建。
+- `backup.yml` 重新启用（每月 1、15 日 UTC 21:41）；仓库变量 `NEON_PROJECT_ID` 已设置。经用户同意，同日创建只能访问本项目的 Neon API Key `nodema-usage-readings`（id 3537435），存为 Secret `NEON_API_KEY`；撤销用 `npx neon@9.3.2 api-keys revoke 3537435`。
 - 补丁 `2d25ebf`（CI 43619254555；Pages https://2635542d.nodema-dashboard.pages.dev）：`daily-check.yml` 支持仓库变量 `UDP_CHECK_ENABLED=false` 关闭 UDP 检测；备份 artifact 保留 20 天（每月两次运行时始终有一份）；订阅方案可选“只要 UDP 可用”。中转规则在生产改判 182 个节点（2 台服务器，当时 32 个可用），按“只测自建”的既有决定，它们约 36 小时后退出每日检测、等级和订阅。
 - 注意：在 worktree 里发布 Worker 时 `--secrets-file` 要用主目录 private 的绝对路径。
 

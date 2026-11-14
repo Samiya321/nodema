@@ -52,7 +52,7 @@
 2026-11-15 UDP、中转规则与节点页重做（迁移 `0021_udp_relay`，main `3b68418`，见 [CLOUD_DEPLOYMENT.md](CLOUD_DEPLOYMENT.md) 第十四次发布）：
 - **UDP（Wi-Fi Calling）**：`app/checker/udp.py`。每个 HTTPS 通过的节点经自己的 mihomo 监听发 STUN（Cloudflare、Google），失败再用 DNS（1.1.1.1:53），共 4 次尝试，每次新建 SOCKS5 UDP 关联；全部失败才记 FAILED。配置声明仅 TCP 的节点记 NOT_SUPPORTED。结果存 `test_results`/`node_current_status`（含最近一次成功时间和 UDP 出口 IP），节点列表 `udp` 字段与 `{"udp": true}` 筛选。真实 mihomo 回环冒烟（`scripts/smoke_protocols.py`）对全部协议和批量运行验证 UDP。
 - **中转入口算机场**、**失败来源每周重试**、**冷却上限 168 小时**、**备份每月 1/15 日**：见 HANDOFF.md 决策表。
-- **Neon 流量**：用量任务在配置 `NEON_API_KEY` Secret 与 `NEON_PROJECT_ID` 变量后读取 Neon API 的本周期公网传输，写入 `database_samples`；用量页显示，≥70% 时顶部状态栏提醒。`NEON_PROJECT_ID` 已设置，API Key 尚未创建（需用户同意）。
+- **Neon 流量**：用量任务在配置 `NEON_API_KEY` Secret 与 `NEON_PROJECT_ID` 变量后读取 Neon API 的本周期公网传输，写入 `database_samples`；用量页显示，≥70% 时顶部状态栏提醒。`NEON_PROJECT_ID` 已设置；经用户同意已创建项目级 API Key（Secret `NEON_API_KEY`）。
 - **节点页**：等级分布为主视觉（可点选）；一行控件；筛选面板（常用 + 折叠分组）；列表/按国家/ASN 排行三种视图；UDP 列、国家分组 UDP/家宽计数、节点详情显示 UDP 结果与出口差异。
 - **验证**：本地隔离 PG 414 Python + 35 Worker；CI 43618081596；生产备份在隔离 PG17 恢复后迁移 1 秒、精简列表查询前后一致（ANALYZE 后 0.36 秒）。真实节点的 UDP 结果从当晚每日检测开始出现。
 
