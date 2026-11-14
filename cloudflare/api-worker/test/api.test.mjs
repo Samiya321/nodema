@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { readFileSync } from "node:fs";
 import YAML from "yaml";
 import { Client } from "pg";
-import { handle, nameFor } from "../dist/index.js";
+import { handle, nameFor, probeTick } from "../dist/index.js";
 import { Cipher } from "../dist/crypto.js";
 import { render } from "../dist/formats.js";
 import { withName } from "../dist/share.js";
@@ -1691,4 +1691,21 @@ print(json.dumps(out))`),
     const status = (await request("/api/grading-policy", { method: "PUT", data: { policy: value } })).status;
     assert.equal(status === 200, pythonVerdicts[i], `case ${i}`);
   }
+});
+
+test("the hourly cron dispatches entry-probe and reports failures only by code", async () => {
+  const env = { GITHUB_REPOSITORY: "owner/repo", GITHUB_DISPATCH_TOKEN: "synthetic-token", GITHUB_WORKFLOW_REF: "main" };
+  const calls = [];
+  const ok = async (url, init) => {
+    calls.push({ url: String(url), init });
+    return new Response(null, { status: 204 });
+  };
+  assert.deepEqual(await probeTick(env, ok), { status: "QUEUED", dispatched: true });
+  assert.equal(calls[0].url, "https://api.github.com/repos/owner/repo/actions/workflows/entry-probe.yml/dispatches");
+  assert.deepEqual(JSON.parse(calls[0].init.body), { ref: "main", inputs: {} });
+  const refused = async () => new Response("no", { status: 403 });
+  assert.deepEqual(await probeTick(env, refused), { status: "FAILED", dispatched: false, reason: "DISPATCH_FAILED" });
+  assert.equal((await probeTick({ ...env, GITHUB_DISPATCH_TOKEN: "" }, ok)).reason, "DISPATCH_NOT_CONFIGURED");
+  const config = readFileSync(fileURLToPath(new URL("../wrangler.jsonc", import.meta.url)), "utf8");
+  assert.match(config, /"crons":\["30 \* \* \* \*"\]/);
 });

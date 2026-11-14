@@ -167,6 +167,7 @@ async function dispatch(
   env: Env,
   workflow: string,
   inputs: Record<string, string>,
+  fetcher: typeof fetch = fetch,
 ) {
   if (!env.GITHUB_REPOSITORY || !env.GITHUB_DISPATCH_TOKEN)
     throw new SafeError("DISPATCH_NOT_CONFIGURED");
@@ -174,7 +175,7 @@ async function dispatch(
     throw new SafeError("INVALID_DISPATCH_CONFIGURATION");
   let response: Response;
   try {
-    response = await fetch(
+    response = await fetcher(
     `https://api.github.com/repos/${env.GITHUB_REPOSITORY}/actions/workflows/${workflow}/dispatches`,
     {
       method: "POST",
@@ -886,8 +887,24 @@ export async function handle(
       }
   }
 }
+// GitHub's own schedule is delayed by hours or dropped, so the hourly entry-probe
+// round is started by this Worker's Cron Trigger (wrangler.jsonc) instead. Only the
+// outcome code is logged; the workflow itself decides what to measure.
+export async function probeTick(env: Env, fetcher: typeof fetch = fetch) {
+  try {
+    return await dispatch(env, "entry-probe.yml", {}, fetcher);
+  } catch (error) {
+    const reason = error instanceof SafeError ? error.code : "DISPATCH_FAILED";
+    console.error("entry-probe dispatch failed", reason);
+    return { status: "FAILED", dispatched: false, reason };
+  }
+}
+
 export default {
   fetch(request: Request, env: Env) {
     return handle(request, env);
+  },
+  scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext) {
+    ctx.waitUntil(probeTick(env));
   },
 } satisfies ExportedHandler<Env>;
