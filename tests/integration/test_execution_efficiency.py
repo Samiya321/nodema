@@ -140,7 +140,8 @@ def test_cooldown_publication_is_idempotent_skips_do_not_extend_failures(service
     with service.sessions() as session:
         current = session.scalars(sa.select(NodeCurrentStatus)).one()
         assert current.consecutive_failures == 4
-        assert (current.next_full_check_at - current.last_checked_at).total_seconds() == 2 * base * 3600
+        doubled = (current.next_full_check_at - current.last_checked_at).total_seconds()
+        assert doubled == 2 * base * 3600
     checker.probe = "different-runner"
     finish(scans, 1)
     with service.sessions() as session:
