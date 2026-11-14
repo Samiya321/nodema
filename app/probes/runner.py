@@ -77,8 +77,8 @@ SELECT prefix,
     THEN min(last) FILTER (WHERE peak AND vantage LIKE 'CN-%') END last_peak,
   CASE WHEN count(*) FILTER (WHERE NOT peak AND vantage LIKE 'CN-%')=3
     THEN min(last) FILTER (WHERE NOT peak AND vantage LIKE 'CN-%') END last_idle,
-  CASE WHEN count(*) FILTER (WHERE vantage IN ('HK','SG'))=2
-    THEN min(last) FILTER (WHERE vantage IN ('HK','SG')) END last_overseas,
+  max(last) FILTER (WHERE vantage='HK') last_hk,
+  max(last) FILTER (WHERE vantage='SG') last_sg,
   bool_or(NOT peak AND vantage LIKE 'CN-%' AND probes>=:min_probes AND (rtt IS NULL OR rtt>:rtt
     OR (sent>0 AND (1-received::float/sent)*100>:loss))) poor
 FROM (SELECT prefix,vantage,bool_or(peak) peak,min(probes) probes,max(last) last,
@@ -112,7 +112,8 @@ def load_history(session, policy: dict) -> planner.History:
         peak_probes[row.prefix] = row.peak_probes or 0
         last_peak[row.prefix] = row.last_peak
         last_idle[row.prefix] = row.last_idle
-        last_overseas[row.prefix] = row.last_overseas
+        last_overseas[(row.prefix, "HK")] = row.last_hk
+        last_overseas[(row.prefix, "SG")] = row.last_sg
         if row.poor:
             poor.add(row.prefix)
     last_reach, dead = {}, set()
@@ -164,7 +165,9 @@ def _measure(client: globalping.Client, task: planner.Task) -> tuple[planner.Tas
         # No home-broadband probe online in HK/SG right now: any probe there will do.
         if task.kind != "QUALITY_OVERSEAS" or error.code != "HTTP_422":
             raise
-        request["locations"] = [dict(item) for item in planner.OVERSEAS_FALLBACK]
+        request["locations"] = [
+            {"country": item["country"], "limit": 1} for item in request["locations"]
+        ]
         identifier = client.create(request)
     return task, identifier, client.wait(identifier)
 
@@ -246,6 +249,7 @@ def run(sessions, settings, *, client: globalping.Client | None = None, clock=No
         "stored": 0,
         "failed": 0,
         "rate_limited": 0,
+        "failed_codes": {},  # error code -> count; never targets
     }
     peak = is_peak(beijing_minute(started), policy)
     run_row = {"peak": peak, "authenticated": client.authenticated}
@@ -281,8 +285,10 @@ def run(sessions, settings, *, client: globalping.Client | None = None, clock=No
                     for other in pending:
                         other.cancel()
                     continue
-                except globalping.ApiError:
+                except globalping.ApiError as error:
                     summary["failed"] += 1
+                    codes = summary["failed_codes"]
+                    codes[error.code] = codes.get(error.code, 0) + 1
                     continue
                 summary["measurements"] += 1
                 summary["tests"] += task.cost

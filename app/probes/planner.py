@@ -25,11 +25,10 @@ CF_PREFIX = "cf"
 # Landing networks the owner does not want measured or graded (WARP/CF egress).
 EXCLUDED_EXIT_ASNS = frozenset({CLOUDFLARE_ASN})
 # HK/SG users sit on home broadband; datacentre probes next to the server read ~1 ms.
-OVERSEAS_LOCATIONS = (
-    {"country": "HK", "tags": ["eyeball-network"], "limit": 1},
-    {"country": "SG", "tags": ["eyeball-network"], "limit": 1},
-)
-OVERSEAS_FALLBACK = ({"country": "HK", "limit": 1}, {"country": "SG", "limit": 1})
+# Each region is its own measurement: a home probe that fails to run in one region
+# must not make the other region's fresh sample be bought again.
+OVERSEAS = ("HK", "SG")
+HOME_BROADBAND = ("eyeball-network",)
 REACH_EVERY = timedelta(days=2)
 IDLE_EVERY = timedelta(days=3)
 OVERSEAS_EVERY = timedelta(days=2)
@@ -162,7 +161,7 @@ class History:
     peak_probes: dict = field(default_factory=dict)  # prefix -> min distinct peak probes
     last_peak: dict = field(default_factory=dict)  # prefix -> oldest carrier peak sample
     last_idle: dict = field(default_factory=dict)  # prefix -> oldest carrier idle sample
-    last_overseas: dict = field(default_factory=dict)  # prefix -> oldest of HK/SG
+    last_overseas: dict = field(default_factory=dict)  # (prefix, "HK"/"SG") -> datetime
     idle_poor: frozenset = frozenset()  # prefixes already worse than band B off-peak
     last_reach: dict = field(default_factory=dict)  # target -> datetime
     dead: frozenset = frozenset()  # targets whose every sample failed
@@ -286,16 +285,14 @@ def plan(
             candidates.append(
                 ((idle_age != float("inf"), -idle_age / IDLE_EVERY.total_seconds()), task)
             )
-        overseas_age = _age(history.last_overseas.get(key), now)
-        if key != CF_PREFIX and overseas_age >= OVERSEAS_EVERY.total_seconds():
-            locations = tuple(dict(item) for item in OVERSEAS_LOCATIONS)
-            task = Task("QUALITY_OVERSEAS", key, target, protocol, locations, 2, False)
-            candidates.append(
-                (
-                    (overseas_age != float("inf"), -overseas_age / OVERSEAS_EVERY.total_seconds()),
-                    task,
+        for region in OVERSEAS if key != CF_PREFIX else ():
+            age = _age(history.last_overseas.get((key, region)), now)
+            if age >= OVERSEAS_EVERY.total_seconds():
+                location = {"country": region, "tags": list(HOME_BROADBAND), "limit": 1}
+                task = Task("QUALITY_OVERSEAS", key, target, protocol, (location,), 1, False)
+                candidates.append(
+                    ((age != float("inf"), -age / OVERSEAS_EVERY.total_seconds()), task)
                 )
-            )
         if protocol == "TCP" and key != CF_PREFIX:
             trace_age = _age(history.last_trace.get(key), now)
             if need and trace_age >= TRACE_EVERY.total_seconds():

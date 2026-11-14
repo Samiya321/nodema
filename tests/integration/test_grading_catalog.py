@@ -259,7 +259,8 @@ def test_probe_round_plans_measures_and_records_counts(service, monitor_settings
     }
     assert (
         ("mtr", ("CN", "CN", "CN")) in kinds
-        and ("ping", ("HK", "SG")) in kinds
+        and ("ping", ("HK",)) in kinds
+        and ("ping", ("SG",)) in kinds
         and ("ping", ("CN",)) in kinds
     )
     assert all(r["target"] == "198.51.100.1" for r in client.requests)  # IPs only, never hostnames
@@ -327,6 +328,7 @@ def test_overseas_measurement_falls_back_to_any_probe(service, monitor_settings,
     summary = runner.run(service.sessions, monitor_settings, client=client, clock=lambda: off_peak)
     assert summary["status"] == "OK" and summary["failed"] == 0
     overseas = [
-        r for r in client.requests if {loc["country"] for loc in r["locations"]} == {"HK", "SG"}
+        r for r in client.requests if {loc["country"] for loc in r["locations"]} <= {"HK", "SG"}
     ]
     assert overseas and all("tags" not in loc for r in overseas for loc in r["locations"])
+    assert all(len(r["locations"]) == 1 for r in overseas) and summary["failed_codes"] == {}
