@@ -37,5 +37,7 @@ def downgrade():
  ) a"""
         )
     )
+    op.execute(sa.text("DROP FUNCTION nodema_mark_shared_credentials()"))
+    op.execute(sa.text("ALTER TABLE nodes DROP COLUMN credential_shared"))
     op.execute(sa.text("DROP INDEX idx_nodes_credential"))
     op.execute(sa.text("ALTER TABLE nodes DROP COLUMN credential_key"))
