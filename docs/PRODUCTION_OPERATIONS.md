@@ -94,6 +94,8 @@ gh workflow run export-build.yml --repo Samiya321/nodema --ref main
 # 恢复指定 run 使用 daily-check.yml 的 run_id 输入，不把示例 ID 当真实 ID
 ```
 
+接入测量 `entry-probe.yml` 没有 GitHub 定时：API Worker 的 Cron Trigger（`wrangler.jsonc` 的 `triggers.crons`，UTC 每小时 :30）用 `GITHUB_DISPATCH_TOKEN` 调用 workflow dispatch 启动它。调度令牌过期或失去 Actions 写权限时测量会停止：总览“接入测量”的最近一次时间不再更新；Worker 只记录失败代码。想暂停测量用设置 → 质量分级规则 → 接入测量，不要删除 cron。
+
 等级重算（`nodema grade refresh`）每次重写约 4 万行，只在 Actions 内运行（`daily-check.yml` 收尾、`entry-probe.yml` 到期时）。从国内本机对 Neon 执行会因上传慢而持续数十分钟并长期持有事务，2026-11-14 实测超过 40 分钟后中止。
 
 ## 备份、恢复与数据库搬家
