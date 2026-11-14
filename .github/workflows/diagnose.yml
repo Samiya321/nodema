@@ -1,0 +1,27 @@
+name: Diagnose untestable nodes
+# Started by hand only. Read-only: counts of why nodes are UNSUPPORTED (protocol and
+# field names, never values), written to the run summary. ~3 MB of Neon transfer.
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  diagnose:
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      ENCRYPTION_KEY_B64: ${{ secrets.ENCRYPTION_KEY_B64 }}
+      ENCRYPTION_KEY_ID: ${{ vars.ENCRYPTION_KEY_ID || 'local-v1' }}
+      FINGERPRINT_KEY_B64: ${{ secrets.FINGERPRINT_KEY_B64 }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
+        with:
+          python-version: '3.12'
+      - run: uv sync --frozen
+      - name: Count conversion rejection reasons
+        run: |
+          uv run nodema node unsupported-reasons --limit 60 > reasons.json
+          { echo '```json'; cat reasons.json; echo '```'; } >> "$GITHUB_STEP_SUMMARY"

@@ -1,6 +1,7 @@
 """Internal secret-bearing objects; only explicit safe DTOs may leave the service layer."""
 
 import hashlib
+import re
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
@@ -25,6 +26,21 @@ class AssetError(Exception):
     def __init__(self, code: str):
         self.code = code
         super().__init__(code)
+
+
+def field_label(names) -> str:
+    """First of some field names, for diagnostics; odd names collapse to "other"."""
+    name = sorted(str(n) for n in names)[0]
+    return name if re.fullmatch(r"[A-Za-z0-9_.-]{1,40}", name) else "other"
+
+
+class Unsupported(AssetError):
+    """RUNTIME_UNSUPPORTED plus which field made a node inexpressible. The reason is
+    a fixed label or a field name (never a value), so it is safe in logs."""
+
+    def __init__(self, reason: str = "unknown"):
+        super().__init__("RUNTIME_UNSUPPORTED")
+        self.reason = reason
 
 
 class SourceType(StrEnum):

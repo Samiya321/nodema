@@ -4,7 +4,7 @@ import base64
 import copy
 from urllib.parse import quote, urlencode
 
-from app.domain import AssetError
+from app.domain import Unsupported, field_label
 
 SS_CIPHERS = {
     "aes-128-gcm",
@@ -30,17 +30,20 @@ SS_CIPHERS = {
 }
 
 
-def reject():
-    raise AssetError("RUNTIME_UNSUPPORTED")
+def reject(reason: str = "unknown"):
+    raise Unsupported(reason)
 
 
-def keys(value, allowed):
-    if not isinstance(value, dict) or set(value) - set(allowed):
-        reject()
+def keys(value, allowed, where="options"):
+    if not isinstance(value, dict):
+        reject(where)
+    extra = set(value) - set(allowed)
+    if extra:
+        reject(f"{where}:{field_label(extra)}")
 
 
 def plugin_string(plugin):
-    keys(plugin, ("name", "options"))
+    keys(plugin, ("name", "options"), "plugin")
     parts = [plugin["name"]]
 
     def escape(value):
@@ -54,23 +57,23 @@ def plugin_string(plugin):
 
 
 def _plugin(plugin):
-    keys(plugin, ("name", "options"))
+    keys(plugin, ("name", "options"), "plugin")
     name, options = plugin.get("name"), plugin.get("options", {})
     if name == "obfs-local":
-        keys(options, ("obfs", "obfs-host"))
+        keys(options, ("obfs", "obfs-host"), "plugin_options")
         if options.get("obfs") not in ("http", "tls"):
-            reject()
+            reject("obfs_mode")
         return "obfs", {{"obfs": "mode", "obfs-host": "host"}[k]: v for k, v in options.items()}
     if name == "v2ray-plugin":
-        keys(options, ("tls", "host", "path", "mux"))
+        keys(options, ("tls", "host", "path", "mux"), "plugin_options")
         if any(type(options[k]) is not bool for k in ("tls", "mux") if k in options):
-            reject()
+            reject("plugin_options")
         return name, {"mode": "websocket", **copy.deepcopy(options)}
-    reject()
+    reject("plugin:" + field_label([name]))
 
 
 def _tls(tls, security):
-    keys(tls, ("sni", "alpn", "client_fingerprint", "insecure", "reality"))
+    keys(tls, ("sni", "alpn", "client_fingerprint", "insecure", "reality"), "tls")
     output = {}
     for source, target in (
         ("sni", "sni"),
@@ -82,22 +85,22 @@ def _tls(tls, security):
             output[target] = tls[source]
     if "reality" in tls:
         reality = tls["reality"]
-        keys(reality, ("public_key", "short_id"))
+        keys(reality, ("public_key", "short_id"), "reality")
         if security != "reality" or not reality.get("public_key"):
-            reject()
+            reject("reality_public_key")
         output["reality-opts"] = {k.replace("_", "-"): v for k, v in reality.items()}
     elif security == "reality":
-        reject()
+        reject("reality_without_options")
     return output
 
 
 def _transport(options, transport):
-    keys(options, ("host", "path", "service_name", "headers", "header_type"))
+    keys(options, ("host", "path", "service_name", "headers", "header_type"), "transport_options")
     if options.get("header_type") not in (None, "", "none"):
-        reject()
+        reject("header_type")
     if transport == "ws":
         if "service_name" in options:
-            reject()
+            reject("ws_options")
         headers = copy.deepcopy(options.get("headers", {}))
         if "host" in options:
             headers["Host"] = options["host"]
@@ -109,14 +112,14 @@ def _transport(options, transport):
         }
     if transport == "grpc":
         if set(options) - {"service_name", "header_type"}:
-            reject()
+            reject("grpc_options")
         return {
             "grpc-opts": {"grpc-service-name": options["service_name"]}
             if "service_name" in options
             else {}
         }
     if set(options) - {"header_type"}:
-        reject()
+        reject("tcp_options")
     return {}
 
 
@@ -125,7 +128,7 @@ def to_mihomo(d, name):
     transport = d.get("transport", "quic" if protocol == "hysteria2" else "tcp")
     security = d.get("security", "none" if protocol == "shadowsocks" else "tls")
     if not isinstance(d.get("password"), str) or not d["password"]:
-        reject()
+        reject("password")
     out = {
         "name": name,
         "type": "ss" if protocol == "shadowsocks" else protocol,
@@ -134,11 +137,11 @@ def to_mihomo(d, name):
         "password": d["password"],
     }
     if p.get("allowed_network") not in (None, "tcp"):
-        reject()
+        reject("allowed_network")
     if p.get("allowed_network") == "tcp":
         out["udp"] = False
     if protocol == "shadowsocks":
-        keys(p, ("cipher", "plugin", "allowed_network"))
+        keys(p, ("cipher", "plugin", "allowed_network"), "protocol_options")
         tls = d.get("tls", {})
         if (
             transport != "tcp"
@@ -147,22 +150,22 @@ def to_mihomo(d, name):
             or tls
             and tls != {"insecure": False}
         ):
-            reject()
+            reject("ss_transport_or_tls")
         if tls:
             out["skip-cert-verify"] = False
         if p.get("cipher") not in SS_CIPHERS:
-            reject()
+            reject("cipher")
         out["cipher"] = p["cipher"]
         if "plugin" in p:
             out["plugin"], out["plugin-opts"] = _plugin(p["plugin"])
     else:
         if security not in (("tls", "reality") if protocol == "trojan" else ("tls",)):
-            reject()
+            reject("security")
         out.update(_tls(d.get("tls", {}), security))
         if protocol == "trojan":
-            keys(p, ("allowed_network",))
+            keys(p, ("allowed_network",), "protocol_options")
             if transport not in ("tcp", "ws", "grpc"):
-                reject()
+                reject("transport")
             out["network"] = transport
             out.update(_transport(d.get("transport_options", {}), transport))
         elif protocol == "anytls":
@@ -175,9 +178,10 @@ def to_mihomo(d, name):
                     "client_metadata",
                     "allowed_network",
                 ),
+                "protocol_options",
             )
             if transport != "tcp" or d.get("transport_options"):
-                reject()
+                reject("transport")
             for source, target in (
                 ("idle_check_seconds", "idle-session-check-interval"),
                 ("idle_timeout_seconds", "idle-session-timeout"),
@@ -188,19 +192,20 @@ def to_mihomo(d, name):
                     if source != "client_metadata" and (
                         type(p[source]) is not int or not 0 <= p[source] <= 86400
                     ):
-                        reject()
+                        reject("session_option")
                     out[target] = p[source]
         elif protocol == "hysteria2":
             keys(
                 p,
                 ("server_ports", "hop_seconds", "up_mbps", "down_mbps", "obfs", "allowed_network"),
+                "protocol_options",
             )
             if (
                 transport != "quic"
                 or d.get("transport_options")
                 or "client_fingerprint" in d.get("tls", {})
             ):
-                reject()
+                reject("hysteria2_transport")
             if "server_ports" in p:
                 out["ports"] = ",".join(p["server_ports"])
             for source, target in (
@@ -212,21 +217,24 @@ def to_mihomo(d, name):
                     out[target] = p[source]
             if "obfs" in p:
                 obfs = p["obfs"]
-                keys(obfs, ("type", "password"))
+                keys(obfs, ("type", "password"), "obfs")
                 if (
                     obfs.get("type") != "salamander"
                     or not isinstance(obfs.get("password"), str)
                     or not obfs["password"]
                 ):
-                    reject()
+                    reject("obfs")
                 out["obfs"], out["obfs-password"] = obfs["type"], obfs["password"]
         else:
-            reject()
+            reject("protocol")
     for dialect, extra in d.get("extensions", {}).items():
         if dialect != "clash":
-            reject()
+            keys(extra, (), f"ext:{dialect}")
+            reject(f"ext:{dialect}")
         keys(
-            extra, ("udp", "tfo", "mptcp", "ip-version", "fingerprint", "name-cert-verify", "smux")
+            extra,
+            ("udp", "tfo", "mptcp", "ip-version", "fingerprint", "name-cert-verify", "smux"),
+            "ext:clash",
         )
         out.update(copy.deepcopy(extra))
     return out

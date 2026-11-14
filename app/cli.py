@@ -383,6 +383,15 @@ def quality_annotate(node_id: str, input_file: str = typer.Option(...)):
     )
 
 
+@node_app.command("unsupported-reasons")
+@safe_command
+def node_unsupported_reasons(limit: int = 30):
+    """Counts of why UNSUPPORTED nodes cannot be converted (field names, no values)."""
+    from app.diagnose import unsupported_reasons
+
+    output(unsupported_reasons(service().sessions, limit=limit))
+
+
 @node_app.command("show")
 @safe_command
 def node_show(node_id: str):

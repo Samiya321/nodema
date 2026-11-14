@@ -6,11 +6,15 @@ import json
 from urllib.parse import quote, urlencode
 
 from app.compat import compatible, without_client_preferences
-from app.domain import PASSWORD_PROTOCOLS, AssetError
+from app.domain import PASSWORD_PROTOCOLS, Unsupported, field_label
+
+TLS_KEYS = {"sni", "alpn", "client_fingerprint", "insecure", "reality"}
+PROTOCOL_KEYS = {"flow", "encryption", "alter_id", "cipher", "allowed_network"}
+TCP_ONLY_NOT = {"host", "path", "headers", "service_name"}  # never on plain TCP
 
 
-def unsupported():
-    raise AssetError("RUNTIME_UNSUPPORTED")
+def unsupported(reason: str = "unknown"):
+    raise Unsupported(reason)
 
 
 def to_mihomo(identity: dict, name: str) -> dict:
@@ -25,10 +29,12 @@ def to_mihomo(identity: dict, name: str) -> dict:
         d.get("transport", "tcp"),
         d.get("security", "none"),
     )
-    if protocol not in ("vless", "vmess") or transport not in ("tcp", "ws", "grpc"):
-        unsupported()
+    if protocol not in ("vless", "vmess"):
+        unsupported("protocol")
+    if transport not in ("tcp", "ws", "grpc"):
+        unsupported("transport:" + field_label([transport]))
     if security not in ("none", "tls", "reality") or protocol == "vmess" and security == "reality":
-        unsupported()
+        unsupported("security:" + field_label([security]))
     proxy = {
         "name": name,
         "type": protocol,
@@ -43,8 +49,8 @@ def to_mihomo(identity: dict, name: str) -> dict:
         d.get("transport_options", {}),
         d.get("protocol_options", {}),
     )
-    if set(tls) - {"sni", "alpn", "client_fingerprint", "insecure", "reality"}:
-        unsupported()
+    if set(tls) - TLS_KEYS:
+        unsupported("tls:" + field_label(set(tls) - TLS_KEYS))
     for source, target in (
         ("sni", "servername"),
         ("alpn", "alpn"),
@@ -55,15 +61,20 @@ def to_mihomo(identity: dict, name: str) -> dict:
             proxy[target] = tls[source]
     if "reality" in tls:
         reality = tls["reality"]
-        if security != "reality" or set(reality) - {"public_key", "short_id"}:
-            unsupported()
+        if security != "reality":
+            unsupported("reality_without_security")
+        if set(reality) - {"public_key", "short_id"}:
+            unsupported("reality:" + field_label(set(reality) - {"public_key", "short_id"}))
         proxy["reality-opts"] = {k.replace("_", "-"): v for k, v in reality.items()}
     if security == "reality" and not proxy.get("reality-opts", {}).get("public-key"):
-        unsupported()
+        unsupported("reality_public_key")
     if set(options) - {"host", "path", "service_name", "headers", "header_type"}:
-        unsupported()
+        unsupported(
+            "transport_options:"
+            + field_label(set(options) - {"host", "path", "service_name", "headers", "header_type"})
+        )
     if options.get("header_type") not in (None, "", "none"):
-        unsupported()
+        unsupported("header_type:" + field_label([options["header_type"]]))
     if transport == "ws":
         ws = {k: options[k] for k in ("path",) if k in options}
         headers = copy.deepcopy(options.get("headers", {}))
@@ -74,19 +85,19 @@ def to_mihomo(identity: dict, name: str) -> dict:
         proxy["ws-opts"] = ws
     elif transport == "grpc":
         if any(k in options for k in ("host", "path", "headers")):
-            unsupported()
+            unsupported("grpc_options")
         proxy["grpc-opts"] = (
             {"grpc-service-name": options["service_name"]} if "service_name" in options else {}
         )
-    elif any(k in options for k in ("host", "path", "headers", "service_name")):
-        unsupported()
-    if set(proto) - {"flow", "encryption", "alter_id", "cipher", "allowed_network"}:
-        unsupported()
+    elif set(options) & TCP_ONLY_NOT:
+        unsupported("tcp_options:" + field_label(set(options) & TCP_ONLY_NOT))
+    if set(proto) - PROTOCOL_KEYS:
+        unsupported("protocol_options:" + field_label(set(proto) - PROTOCOL_KEYS))
     if proto.get("allowed_network") == "udp":
-        unsupported()  # HTTPS is not applicable to an explicitly UDP-only outbound.
+        unsupported("udp_only")  # HTTPS is not applicable to an explicitly UDP-only outbound.
     if "allowed_network" in proto:
         if proto["allowed_network"] != "tcp":
-            unsupported()
+            unsupported("allowed_network")
         proxy["udp"] = False
     for source, target in (
         ("flow", "flow"),
@@ -110,7 +121,7 @@ def to_mihomo(identity: dict, name: str) -> dict:
                 or set(reality_metadata) != {"_spider-x"}
                 or not isinstance(reality_metadata["_spider-x"], str)
             ):
-                unsupported()
+                unsupported(f"ext:{dialect}:reality-opts")
             # Sub-Store export metadata, not an authentication override. Preserve it
             # separately from the canonical public key/short ID when rendering YAML.
             proxy["reality-opts"].update(reality_metadata)
@@ -126,8 +137,10 @@ def to_mihomo(identity: dict, name: str) -> dict:
             "fingerprint",
             "name-cert-verify",
         }
-        if dialect != "clash" or set(extra) - allowed:
-            unsupported()
+        if dialect != "clash":
+            unsupported(f"ext:{dialect}:" + field_label(extra or ["empty"]))
+        if set(extra) - allowed:
+            unsupported(f"ext:{dialect}:" + field_label(set(extra) - allowed))
         proxy.update(copy.deepcopy(extra))
     return proxy
 
