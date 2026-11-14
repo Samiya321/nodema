@@ -7,6 +7,8 @@ const OMITTED = {
   SKIP_CERT_VERIFY: "跳过证书验证：导入后在 Shadowrocket 编辑节点，打开“允许不安全”",
   CLIENT_OPTIONS: "客户端附加参数（如 UDP 开关）",
   BANDWIDTH: "Hysteria2 带宽设置",
+  HEADERS: "WebSocket 请求头（如 User-Agent），通常不影响连接",
+  SESSION_OPTIONS: "AnyTLS 空闲会话参数，客户端用默认值即可",
 };
 const QUIET = 4; // quiet-zone modules around the code, as scanners expect
 
