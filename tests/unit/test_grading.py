@@ -330,6 +330,33 @@ def test_client_creates_polls_and_stops_on_rate_limit():
     anonymous.create({})
     assert calls[-1][2] is None and not anonymous.authenticated
 
+    # A brand-new measurement may read as 404 for a moment; a lasting 404 still fails.
+    lookups = []
+
+    def late(request, timeout):
+        lookups.append(1)
+        if len(lookups) < 3:
+            raise urllib.error.HTTPError(request.full_url, 404, "missing", {}, None)
+        return FakeResponse({"status": "finished", "results": [RESULT]})
+
+    slept = []
+    late_client = globalping.Client("https://api.example.test/v1", opener=late)
+    assert late_client.wait("abc123", sleep=slept.append) == [RESULT] and slept == [1.0, 1.0]
+
+    def gone(request, timeout):
+        raise urllib.error.HTTPError(request.full_url, 404, "missing", {}, None)
+
+    clock = iter([0.0, 0.0, 11.0])
+    original = globalping.time.monotonic
+    globalping.time.monotonic = lambda: next(clock)
+    try:
+        with pytest.raises(globalping.ApiError, match="HTTP_404"):
+            globalping.Client("https://api.example.test/v1", opener=gone).wait(
+                "abc123", sleep=slept.append
+            )
+    finally:
+        globalping.time.monotonic = original
+
 
 def test_grade_recompute_is_due_after_the_evening_peak_or_twelve_hours():
     from app.probes.refresh import due

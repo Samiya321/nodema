@@ -23,6 +23,9 @@ class RateLimited(Exception):
     """The hourly limit is used up; stop creating measurements this run."""
 
 
+NOT_FOUND_GRACE = 10.0  # seconds a new measurement may read as 404
+
+
 class ApiError(Exception):
     def __init__(self, code: str):
         super().__init__(code)
@@ -218,10 +221,19 @@ class Client:
         return identifier
 
     def wait(self, identifier: str, deadline_seconds: float = 60, sleep=time.sleep) -> list:
-        """Poll no faster than every 500 ms (API guideline), until not in-progress."""
+        """Poll no faster than every 500 ms (API guideline), until not in-progress.
+
+        A just-created measurement can briefly answer 404 (seen in production): the
+        tests are already paid for, so keep polling for a few seconds."""
         started = time.monotonic()
         while True:
-            _, data = self._request("GET", f"/measurements/{identifier}")
+            try:
+                _, data = self._request("GET", f"/measurements/{identifier}")
+            except ApiError as error:
+                if error.code != "HTTP_404" or time.monotonic() - started > NOT_FOUND_GRACE:
+                    raise
+                sleep(1.0)
+                continue
             if not isinstance(data, dict):
                 raise ApiError("INVALID_RESPONSE")
             if data.get("status") != "in-progress":
