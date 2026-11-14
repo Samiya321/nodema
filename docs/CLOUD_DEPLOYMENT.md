@@ -114,7 +114,7 @@ UI 额外验证逐行结果、重复提交、390px 布局，以及慢网络下�
 - **数据取舍**：为不让复制本身把旧项目推过 5 GB，`test_results` 只复制了 `node_current_status` 引用的最新结果（40,026 / 223,517 行）；其余 36 张表逐表行数一致（共 574,813 行）。丢的是 7 天保留期内较早的单次检测明细（本来 7 天内也会被清理）；每日统计、等级、接入测量、当前状态都完整。新库 194 MB（旧 557 MB）。
 - 验证：schema `0020_shared_credentials`；31 个函数、11 个触发器、70 个索引、135 个约束、3 个视图与旧库一致；`nodema_api` 对全部表/函数/序列有权限；Worker 经 Hyperdrive 查询（可用 8,865 个 UP 节点）且连接只出现在新库；readiness 为真；手动运行 entry-probe（[run 43609618984](https://github.com/Samiya321/nodema/actions/runs/43609618984)）成功写入新库。
 - 备份：搬家前从本机取整库备份失败（`pg_dump` 跨洋 271 秒后退出，原因未记录）；搬家后备份 `backup-2026-11-14-post-move.nma`（35 MB）在本机 PG17 隔离恢复通过（需删除 Neon 写入的 393 条 `pg_attver` 列选项）。旧项目的完整内容（含全部检测明细）只在 `backup-2026-11-14-pre-0020.nma` 里。
-- 用户决定（2026-11-14）：`backup.yml` 保持停用，不做每周云端备份。需要恢复点时在本机手动备份（见 PRODUCTION_OPERATIONS.md），或 `gh workflow enable backup.yml` 重新打开（新库每次约 0.2 GB 传输）。
+- 用户决定（2026-11-14）：`backup.yml` 保持停用，不做每周云端备份。需要恢复点时在本机手动备份（见 PRODUCTION_OPERATIONS.md），或 `gh workflow enable backup.yml` 重新打开（新库每次约 0.2 GB 传输）。同日按用户要求把本机 `private/*.nma` 全部 11 个备份移到废纸篓：**目前没有任何数据库备份**，上文提到的备份文件都已不在 private/ 中。
 
 ## 2026-11-14 第十二次发布：按落地国家查看、削减 Neon 传输（无迁移）
 
