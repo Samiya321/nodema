@@ -106,6 +106,11 @@ def test_grades_take_the_worse_band_and_explain_it():
     )
     assert grade_node(facts, "CN-CT", Access(), False, POLICY).grade == "B"  # unmeasured: capped
     assert grade_node(NodeFacts("vless", None, 7, 7), "HK", Access(), False, POLICY).grade == "B"
+    cdn = grade_node(
+        NodeFacts("vless", "104.16.0.1:443", 7, 7, cdn_entry=True), "SG", Access(), False, POLICY
+    )
+    assert cdn.grade == "B" and cdn.access_band is None
+    assert any("Cloudflare CDN" in r for r in cdn.reasons)
     assert (
         grade_node(
             NodeFacts("hysteria2", "198.51.100.1", 7, 7), "CN-CT", access, False, POLICY
@@ -199,6 +204,13 @@ def test_off_peak_plan_covers_reach_overseas_idle_and_routes():
     assert trace["type"] == "mtr" and trace["measurementOptions"]["protocol"] == "TCP"
     icmp = next(t for t in tasks if t.prefix == "203.0.113" and t.kind == "QUALITY_OVERSEAS")
     assert icmp.request()["measurementOptions"] == {"packets": 16, "protocol": "ICMP"}
+    # HK/SG: home-broadband probes; the Cloudflare edge is never measured from there.
+    overseas = [t for t in tasks if t.kind == "QUALITY_OVERSEAS"]
+    assert overseas and all(t.prefix != planner.CF_PREFIX for t in overseas)
+    assert all(
+        loc["tags"] == ["eyeball-network"] for t in overseas for loc in t.request()["locations"]
+    )
+    assert any(t.prefix == planner.CF_PREFIX and t.kind == "QUALITY_CN" for t in tasks)
     recent = planner.History(
         last_reach={t.target: NOW for t in reach},
         last_overseas={p: NOW for p in groups},

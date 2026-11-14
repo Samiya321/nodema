@@ -46,10 +46,11 @@ def load_nodes(session, fresh_hours: int, coverage: str) -> list[planner.EntryNo
             " JOIN test_results t ON t.id=c.last_result_id"
             " WHERE n.enabled AND c.status IN ('UP','DEGRADED')"
             " AND c.last_checked_at>now()-make_interval(hours=>:fresh)"
+            " AND NOT coalesce(c.last_exit_asn,-1)=ANY(CAST(:excluded AS bigint[]))"
             + scope
             + " GROUP BY 1,2,3,4"
         ),
-        {"fresh": fresh_hours},
+        {"fresh": fresh_hours, "excluded": sorted(planner.EXCLUDED_EXIT_ASNS)},
     )
     entries = []
     for row in rows:
@@ -156,7 +157,15 @@ def carrier_asns(probes: list[globalping.Probe]) -> tuple[dict[str, list[int]], 
 
 
 def _measure(client: globalping.Client, task: planner.Task) -> tuple[planner.Task, str, list]:
-    identifier = client.create(task.request())
+    request = task.request()
+    try:
+        identifier = client.create(request)
+    except globalping.ApiError as error:
+        # No home-broadband probe online in HK/SG right now: any probe there will do.
+        if task.kind != "QUALITY_OVERSEAS" or error.code != "HTTP_422":
+            raise
+        request["locations"] = [dict(item) for item in planner.OVERSEAS_FALLBACK]
+        identifier = client.create(request)
     return task, identifier, client.wait(identifier)
 
 

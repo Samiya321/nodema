@@ -18,6 +18,7 @@ from app.domain import AssetError
 
 VANTAGES = ("CN-CT", "CN-CU", "CN-CM", "CN", "HK", "SG")
 CARRIERS = ("CN-CT", "CN-CU", "CN-CM")
+OVERSEAS = ("HK", "SG")
 BANDS = ("S", "A", "B", "C")
 GRADES = ("S", "A", "B", "C", "D", "PENDING")
 VANTAGE_NAMES = {
@@ -241,6 +242,7 @@ class NodeFacts:
     available_days: int
     checked_days: int
     exit_ip_proxy: bool | None = None
+    cdn_entry: bool = False  # entry on Cloudflare's anycast edge
 
 
 @dataclass(frozen=True)
@@ -277,6 +279,11 @@ def grade_node(
     band = access_band(access, vantage, policy)
     if facts.target is None:
         reasons.append("入口没有 IPv4 地址（仅 IPv6 或未解析），接入未测，最高 B")
+    elif facts.cdn_entry and vantage in OVERSEAS:
+        reasons.append(
+            f"入口是 Cloudflare CDN：{VANTAGE_NAMES[vantage]}探针只能连到本地 CF 机房"
+            "（约 1 ms），测不到节点本身，接入未测，最高 B"
+        )
     elif band is None:
         reasons.append(
             f"{VANTAGE_NAMES[vantage]}接入样本不足（{access.probes} 个探针，"
