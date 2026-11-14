@@ -107,6 +107,14 @@ UI 额外验证逐行结果、重复提交、390px 布局，以及慢网络下�
 - 待观察：下一次同步中原超过 10,000 条的子订阅能否入库，及超时来源重试后的结果（标 `retried`）。
 
 
+## 2026-11-14 第十二次发布：按落地国家查看、削减 Neon 传输（无迁移）
+
+- 代码 `80a7e96`（main `c830336`，CI 43602045768 通过，401 Python）；Pages https://28607225.nodema-dashboard.pages.dev；Worker、Echo、schema 未变（仍为 0020）。
+- 起因：Neon 发出 84%（4.2 GB / 5 GB）公网传输提醒。Free 用完会暂停计算实例到下个计费周期。
+- 生产操作：`backup.yml` 已手动停用（`gh workflow disable`），以免当晚第一次定时整库备份占用剩余额度；计费周期重置后执行 `gh workflow enable backup.yml`。最近的恢复验证备份是 `backup-2026-11-14-pre-0020.nma`。
+- 改动：每日检测收尾只读 14 列测试结果；节点页默认只加载可用节点；新增“按落地国家”视图（国家 → 落地 ASN 分组）。下一次每日检测（范围 10,566 个自建节点）起生效。
+- 验证：经 Pages 域名确认新脚本与样式已上线、health 200。为省传输，没有在生产上加载节点列表做界面回归，界面在本地合成数据上检查。
+
 ## 2026-11-14 第十一次发布：共用凭据算机场（迁移 0020）
 
 - 代码 `3b4509b`（main，CI 43593036489 通过）：400 Python、35 Worker。迁移 head `0020_shared_credentials`：`nodes.credential_key`（凭据 MD5）、`nodes.credential_shared`、函数 `nodema_mark_shared_credentials()`，视图 `nodema_node_scope` 新增尾列 `credential_shared`。规则：同一凭据 ≥5 个节点且 ≥2 个服务器地址即算机场节点。
