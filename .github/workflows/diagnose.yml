@@ -23,5 +23,5 @@ jobs:
       - run: uv sync --frozen
       - name: Count conversion rejection reasons
         run: |
-          uv run nodema node unsupported-reasons --limit 60 > reasons.json
+          uv run nodema node unsupported-reasons --limit 60 | tee reasons.json
           { echo '```json'; cat reasons.json; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
