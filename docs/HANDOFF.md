@@ -9,6 +9,7 @@
 - Cloudflare API version `8156a79e-b9b6-4192-8e77-609d04fac6d2`；Pages 预览 https://5bdfc055.nodema-dashboard.pages.dev。后续部署以实际资源状态为准。
 - **2026-11-14 已发布 `7306266`**：节点质量分级与 Globalping 接入测量，迁移 head `0018_entry_probes_grading`，新工作流 `entry-probe.yml`（每小时 :30）。设计与实现见 [NODE_GRADING_DESIGN.md](NODE_GRADING_DESIGN.md)，发布记录见 [CLOUD_DEPLOYMENT.md](CLOUD_DEPLOYMENT.md)。
 - **2026-11-14 已发布 `b23585e`**：CF 落地不测不分级、CF 入口不再用港新样本、港新家宽探针、前端与节点页重做；迁移 head `0019_grade_exclusions`。发布记录见 [CLOUD_DEPLOYMENT.md](CLOUD_DEPLOYMENT.md)。
+- **2026-11-14 已发布 `3b4509b`**：共用凭据（≥5 节点、≥2 服务器）的节点算机场，迁移 head `0020_shared_credentials`；接入测量由 API Worker cron 每小时触发。
 - 当前没有已知待补的本轮代码缺口。用户真实节点、大陆体验、长期配额、生产恢复不属于已完成的合成验收证明。不得把“基础链路通过”写成所有公网参数都已保证可用。
 
 先看 git 与实际云端状态。历史记录中的“尚未导入真实节点”和表行数不代表此刻数据库为空；用户可以随时从 Dashboard 导入，禁止据此清库。
