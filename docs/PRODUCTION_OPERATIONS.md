@@ -110,6 +110,7 @@ gh workflow run export-build.yml --repo Samiya321/nodema --ref main
 - 恢复演练：新建隔离 PostgreSQL 17，显式让 DATABASE_URL 指向测试目标，再用 `nodema restore --input-file <私密文件> --confirm-restore --docker-client`。该命令内部 pg_restore --clean，会覆盖目标对象，绝不能指向在线库当作演练。
 - **Neon 专有列选项**：2026-11-14 起，Neon 给 0018 新建的表（如 `entry_probe_results`）写了 `ALTER TABLE ... ALTER COLUMN ... SET (pg_attver=...)` 列选项，标准 PostgreSQL 17 不认识，`pg_restore` 会报 `unrecognized parameter "pg_attver"` 并整体回滚（`nodema restore` 显示 DATABASE_RESTORE_FAILED）。恢复到非 Neon 的 PostgreSQL 时，先用 `pg_restore -f -` 解密转成 SQL，删除这些 `SET (pg_attver=…)` 语句（2026-11-14 的备份有 67 条），再用 `psql -v ON_ERROR_STOP=1 --single-transaction` 导入；这是隔离恢复 `backup-2026-11-14-pre-0019.nma` 时验证过的做法。恢复回 Neon 时不受影响。
 - 验证 schema、函数/触发器/索引、行数、HMAC 一致性、读写和订阅失效语义。备份不包含 owner/ACL，目标需重新授予业务角色权限。
+- **搬到新的 Neon 项目（2026-11-14 做过一次）**：在 GitHub Runner 上复制，避免跨洋上传和本机超时：停用写数据库的工作流；新项目建 `nodema_owner`/`nodema_api` 与默认权限；临时 Secrets `MOVE_SOURCE_DATABASE_URL`/`MOVE_TARGET_DATABASE_URL` 加一个调用 `scripts/move_database.py --mode full|reduced` 的一次性 workflow_dispatch 工作流（参考 git 历史 `240a695` 的 `.github/workflows/db-move.yml`）；脚本拒绝非空目标，最后逐表核对行数。之后切换 Secrets、Hyperdrive origin 和本机 env，验证后再删旧项目。`reduced` 只复制被引用的 `test_results`。
 - 迁移到另一完整 PostgreSQL：协调暂停 Actions/其他写入口，最终备份，隔离恢复与验证，建立 API 角色，更新 Actions 的数据库 Secrets 和 Hyperdrive origin（继续禁用查询缓存），核对 TLS/CA，再恢复任务。保留 HMAC/AES、资产 ID、订阅 ID/token、日期水位与累计计数；保留原库用于回退。
 
 没有执行过生产恢复或跨云搬家时，明确标记“未验收”，不要引用本地合成测试替代生产结果。
