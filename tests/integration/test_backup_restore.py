@@ -96,7 +96,7 @@ def test_real_encrypted_database_restore(
             assert bytes(encrypted).startswith(b"{")
             assert (
                 conn.scalar(sa.text(f'SELECT version_num FROM "{schema}".alembic_version'))
-                == "0019_grade_exclusions"
+                == "0020_shared_credentials"
             )
         # Clean restores are repeatable and perform real writes to the target.
         with target.begin() as conn:

@@ -134,6 +134,13 @@ class Node(Base):
         sa.Index("idx_nodes_protocol", "protocol"),
         sa.Index("idx_nodes_endpoint", "server_host", "server_port"),
         sa.Index("idx_nodes_first_seen", "first_seen_at"),
+        sa.Index(
+            "idx_nodes_credential",
+            "credential_key",
+            "server_host",
+            postgresql_where=sa.text("credential_key IS NOT NULL"),
+        ),
+        sa.CheckConstraint("credential_key ~ '^[0-9a-f]{32}$'", name="credential_key"),
         sa.CheckConstraint(
             "checked_days>=0 AND available_days>=0 AND available_days<=checked_days",
             name="lifetime_days",
@@ -149,6 +156,8 @@ class Node(Base):
     transport: Mapped[str | None] = mapped_column(sa.Text)
     security: Mapped[str | None] = mapped_column(sa.Text)
     config_data: Mapped[bytes] = mapped_column(sa.LargeBinary)
+    # MD5 of the UUID (VLESS/VMess) or password; groups one operator's nodes.
+    credential_key: Mapped[str | None] = mapped_column(sa.Text)
     line_type: Mapped[str] = mapped_column(sa.Text, server_default="UNKNOWN")
     enabled: Mapped[bool] = mapped_column(server_default=sa.true())
     checked_days: Mapped[int] = mapped_column(server_default="0")

@@ -24,7 +24,7 @@
 
 ## 2. 检测范围与手动批次
 
-- 节点类别 `node_group`：只要关联到任一“机场”类来源（含已删除的）即为 `AIRPORT`，否则 `SELF_HOSTED`。由视图 `nodema_node_scope` 统一定义，Python 扫描、Worker 目录和导出共用。
+- 节点类别 `node_group`：只要关联到任一“机场”类来源（含已删除的）即为 `AIRPORT`；**或者（2026-11-14 起，迁移 0020）它的凭据（VLESS/VMess 的 UUID，其他协议的密码）被至少 5 个节点、分布在至少 2 个不同服务器地址上共用**，也算 `AIRPORT`（视图列 `credential_shared` 为真，没有对应机场名）；否则 `SELF_HOSTED`。凭据以 MD5 存于 `nodes.credential_key`，同一 UUID 的 VLESS 与 VMess 视为同一凭据，同一服务器不同端口不算分散。这样 Sub-Store 子来源里没有流量头、实际属于同一运营者（机场、公开免费节点或同一 Worker 模板）的节点不再算自建；来源列表上的“类别”仍按来源本身显示。由视图 `nodema_node_scope` 统一定义，Python 扫描、Worker 目录和导出共用。
 - `scan_runs.kind` 新增 `MANUAL`，`scan_runs.scope` 为 `ALL/SELF_HOSTED/AIRPORT`。手动批次总是重测范围内节点，只跳过仍在其他未完成批次中待测的节点；DAILY/SUPPLEMENTAL 仍按“每天每节点一次”。
 - `node_daily_stats` 改为取各次结果的最大值合并（同日多批次、先部分后完整发布都幂等；一天中只要成功过一次即算可用）。
 

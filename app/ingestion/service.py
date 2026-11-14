@@ -10,7 +10,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import insert
 
 from app.database.models import Node, NodeSource, Source, short_id_sequence
-from app.domain import AssetError, InputFormat, NormalizedNode, SourceType
+from app.domain import AssetError, InputFormat, NormalizedNode, SourceType, credential_key
 from app.ingestion.airport import is_info_node, parse_airport_headers
 from app.ingestion.children import apply_airport, materialize
 from app.ingestion.fetcher import Fetcher, validate_url
@@ -563,6 +563,7 @@ class AssetService:
                         transport=identity.get("transport"),
                         security=identity.get("security"),
                         config_data=bytes(canonical_json(identity)),
+                        credential_key=credential_key(identity),
                         first_seen_at=now,
                         last_seen_at=now,
                     )

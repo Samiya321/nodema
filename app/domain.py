@@ -1,11 +1,22 @@
 """Internal secret-bearing objects; only explicit safe DTOs may leave the service layer."""
 
+import hashlib
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
 PROTOCOLS = ("shadowsocks", "trojan", "anytls", "hysteria2", "vmess", "vless")
 PASSWORD_PROTOCOLS = PROTOCOLS[:4]
+
+
+def credential_key(identity: dict) -> str | None:
+    """Same value as migration 0020's backfill: md5("uuid:"+lower(uuid)) for VLESS/VMess,
+    md5("pw:"+password) otherwise; None without a credential."""
+    if identity["protocol"] in PASSWORD_PROTOCOLS:
+        prefix, value = "pw:", identity.get("password")
+    else:
+        prefix, value = "uuid:", (identity.get("uuid") or "").lower()
+    return hashlib.md5((prefix + value).encode()).hexdigest() if value else None
 
 
 class AssetError(Exception):
