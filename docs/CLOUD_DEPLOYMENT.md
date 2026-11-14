@@ -107,6 +107,12 @@ UI 额外验证逐行结果、重复提交、390px 布局，以及慢网络下�
 - 待观察：下一次同步中原超过 10,000 条的子订阅能否入库，及超时来源重试后的结果（标 `retried`）。
 
 
+## 2026-11-14 补丁：二维码覆盖
+
+- 代码 `bf010e3`（main，CI 43590209211 通过，399 Python）；Pages https://58528bc2.nodema-dashboard.pages.dev；无迁移、Worker 未变。
+- 原因（生产只读统计，只看键名）：591 个可用节点没有二维码，主要是 Sub-Store/Clash 给 WebSocket 节点加的 `User-Agent` 请求头（分享链接没有请求头字段，整条转换被拒），其次是 AnyTLS 空闲会话参数和无 TLS 的 Shadowsocks 带证书开关。现在二维码链接省略这些并在弹窗中说明（Host 头转为传输 host），保存的节点不变。
+- 在本机运行 `nodema node share-links` 重试失败行（21 秒）：可用节点中仍无二维码的只剩 13 个 VLESS（新的 `encryption` 字段，分享链接无法可靠表达）；其余失败的是不可用/不支持的节点。
+
 ## 2026-11-14 第十次发布：CF 落地不分级、港新家宽探针、前端重做
 
 - 代码 `b23585e`（main，快进合并，[PR #2](https://github.com/Samiya321/nodema/pull/2)，CI 通过）：398 Python、34 Worker。迁移 head `0019_grade_exclusions`（只替换 `nodema_effective_grade`：可用但无等级行的节点为 NULL，不再算待定）。
