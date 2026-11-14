@@ -3,6 +3,7 @@
   "name":"nodema-api","main":"src/index.ts","compatibility_date":"2026-11-07",
   "compatibility_flags":["nodejs_compat"],
   "observability":{"enabled":false},
+  "triggers":{"crons":["30 * * * *"]},
   "hyperdrive":[{"binding":"HYPERDRIVE","id":"39444e7a3a6c4445b6521e335682f8df",
     "localConnectionString":"postgres://nodema:local_dev_only@127.0.0.1:55432/nodema"}],
   "vars":{"FRESHNESS_HOURS":"36",
