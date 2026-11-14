@@ -11,8 +11,22 @@ export const VANTAGES = [
   ["SG", "新加坡"],
 ];
 export const vantageName = (v) => VANTAGES.find(([k]) => k === v)?.[1] || v;
+// Carrier vantages (and the three-carrier view) read the evening peak; HK/SG a median.
+export const isCarrier = (v) => String(v).startsWith("CN");
 export const GRADES = ["S", "A", "B", "C", "D", "PENDING"];
 export const GRADE_TEXT = { S: "S", A: "A", B: "B", C: "C", D: "D", PENDING: "待定" };
+// Buckets of the node list's grade bar: the grades plus two ungraded states.
+export const BUCKET_TEXT = { ...GRADE_TEXT, D: "D 不通", NONE: "不分级", OFF: "不可用" };
+export const BUCKET_HINT = {
+  S: "接入优 + 稳定优",
+  A: "接入、稳定都至少良",
+  B: "接入、稳定都至少中（未测接入时最高 B）",
+  C: "能用，但接入或稳定有一项差",
+  D: "这个地区的探针 TCP 连不上入口",
+  PENDING: "检测天数不足 3 天，暂不定档",
+  NONE: "当前可用但不分级：落地是 Cloudflare，或等下次计算",
+  OFF: "当前不可用、未检测或结果过期",
+};
 const GRADE_HINT = {
   S: "接入优 + 稳定优",
   A: "接入、稳定都至少良",

@@ -444,7 +444,8 @@ export function meter(ratio, { tone = "", label } = {}) {
 
 // Page navigation for client-side paged lists.
 export function pager(page, pages, onPage) {
-  if (pages <= 1) return null;
+  // An empty text node, not null: callers pass this straight to native append().
+  if (pages <= 1) return document.createTextNode("");
   const button = (target, text, disabled) => h("button", { type: "button", class: "quiet", disabled, onclick: () => onPage(target) }, text);
   return h(
     "nav",
