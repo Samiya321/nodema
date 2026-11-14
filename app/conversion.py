@@ -8,7 +8,14 @@ from urllib.parse import quote, urlencode
 from app.compat import compatible, without_client_preferences
 from app.domain import PASSWORD_PROTOCOLS, Unsupported, field_label
 
-TLS_KEYS = {"sni", "alpn", "client_fingerprint", "insecure", "reality"}
+TLS_KEYS = {"sni", "alpn", "client_fingerprint", "insecure", "reality", "pin_sha256"}
+REALITY_KEYS = {"public_key", "short_id", "spider_x"}  # spider_x: client-side only
+OPTION_KEYS = {"host", "path", "service_name", "headers", "header_type", "mode"}
+# Mihomo v1.19 transports; HTTP Upgrade is its WebSocket mode, XHTTP is VLESS only.
+TRANSPORTS = {
+    "vless": ("tcp", "ws", "grpc", "httpupgrade", "xhttp"),
+    "vmess": ("tcp", "ws", "grpc", "httpupgrade"),
+}
 PROTOCOL_KEYS = {"flow", "encryption", "alter_id", "cipher", "allowed_network"}
 TCP_ONLY_NOT = {"host", "path", "headers", "service_name"}  # never on plain TCP
 
@@ -31,7 +38,7 @@ def to_mihomo(identity: dict, name: str) -> dict:
     )
     if protocol not in ("vless", "vmess"):
         unsupported("protocol")
-    if transport not in ("tcp", "ws", "grpc"):
+    if transport not in TRANSPORTS[protocol]:
         unsupported("transport:" + field_label([transport]))
     if security not in ("none", "tls", "reality") or protocol == "vmess" and security == "reality":
         unsupported("security:" + field_label([security]))
@@ -41,7 +48,7 @@ def to_mihomo(identity: dict, name: str) -> dict:
         "server": d["server_host"],
         "port": d["server_port"],
         "uuid": d["uuid"],
-        "network": transport,
+        "network": "ws" if transport == "httpupgrade" else transport,
         "tls": security != "none",
     }
     tls, options, proto = (
@@ -56,6 +63,7 @@ def to_mihomo(identity: dict, name: str) -> dict:
         ("alpn", "alpn"),
         ("client_fingerprint", "client-fingerprint"),
         ("insecure", "skip-cert-verify"),
+        ("pin_sha256", "fingerprint"),
     ):
         if source in tls:
             proxy[target] = tls[source]
@@ -63,26 +71,51 @@ def to_mihomo(identity: dict, name: str) -> dict:
         reality = tls["reality"]
         if security != "reality":
             unsupported("reality_without_security")
-        if set(reality) - {"public_key", "short_id"}:
-            unsupported("reality:" + field_label(set(reality) - {"public_key", "short_id"}))
-        proxy["reality-opts"] = {k.replace("_", "-"): v for k, v in reality.items()}
+        if set(reality) - REALITY_KEYS:
+            unsupported("reality:" + field_label(set(reality) - REALITY_KEYS))
+        proxy["reality-opts"] = {
+            k.replace("_", "-"): v for k, v in reality.items() if k != "spider_x"
+        }
     if security == "reality" and not proxy.get("reality-opts", {}).get("public-key"):
         unsupported("reality_public_key")
-    if set(options) - {"host", "path", "service_name", "headers", "header_type"}:
-        unsupported(
-            "transport_options:"
-            + field_label(set(options) - {"host", "path", "service_name", "headers", "header_type"})
-        )
-    if options.get("header_type") not in (None, "", "none"):
-        unsupported("header_type:" + field_label([options["header_type"]]))
-    if transport == "ws":
+    if set(options) - OPTION_KEYS:
+        unsupported("transport_options:" + field_label(set(options) - OPTION_KEYS))
+    header_type = options.get("header_type")
+    if header_type not in (None, "", "none") and (header_type != "http" or transport != "tcp"):
+        unsupported("header_type:" + field_label([header_type]))
+    if "mode" in options and transport != "xhttp":
+        unsupported("mode")
+    if transport in ("ws", "httpupgrade"):
         ws = {k: options[k] for k in ("path",) if k in options}
         headers = copy.deepcopy(options.get("headers", {}))
         if "host" in options:
             headers["Host"] = options["host"]
         if headers:
             ws["headers"] = headers
+        if transport == "httpupgrade":
+            ws["v2ray-http-upgrade"] = True
         proxy["ws-opts"] = ws
+    elif transport == "xhttp":
+        if "service_name" in options:
+            unsupported("xhttp_options")
+        proxy["xhttp-opts"] = {
+            k: copy.deepcopy(options[k])
+            for k in ("path", "host", "mode", "headers")
+            if k in options
+        }
+    elif header_type == "http":
+        # TCP with HTTP/1.1 header obfuscation: mihomo's "http" network.
+        if "service_name" in options:
+            unsupported("tcp_options:service_name")
+        http = {"method": "GET", "path": [options.get("path") or "/"]}
+        headers = {
+            k: [v] if isinstance(v, str) else v for k, v in options.get("headers", {}).items()
+        }
+        if options.get("host"):
+            headers["Host"] = [h.strip() for h in options["host"].split(",") if h.strip()]
+        if headers:
+            http["headers"] = headers
+        proxy["network"], proxy["http-opts"] = "http", http
     elif transport == "grpc":
         if any(k in options for k in ("host", "path", "headers")):
             unsupported("grpc_options")
@@ -155,6 +188,11 @@ def to_singbox(identity: dict, name: str) -> dict:
     if identity.get("extensions"):
         unsupported()
     d = identity
+    options = d.get("transport_options", {})
+    if d.get("transport") == "xhttp" or options.get("header_type") == "http":
+        unsupported("singbox_transport")  # no XHTTP or TCP header obfuscation in sing-box
+    if "pin_sha256" in d.get("tls", {}):
+        unsupported("singbox_certificate_pin")
     result = {
         "type": d["protocol"],
         "tag": name,
@@ -171,9 +209,9 @@ def to_singbox(identity: dict, name: str) -> dict:
         if "client_fingerprint" in tls:
             output["utls"] = {"enabled": True, "fingerprint": tls["client_fingerprint"]}
         if "reality" in tls:
-            output["reality"] = {"enabled": True, **tls["reality"]}
+            reality = {k: v for k, v in tls["reality"].items() if k != "spider_x"}
+            output["reality"] = {"enabled": True, **reality}
         result["tls"] = output
-    options = d.get("transport_options", {})
     transport = d.get("transport", "tcp")
     if transport != "tcp":
         output = {"type": transport}
@@ -181,7 +219,9 @@ def to_singbox(identity: dict, name: str) -> dict:
             if key in options:
                 output[key] = options[key]
         headers = copy.deepcopy(options.get("headers", {}))
-        if "host" in options:
+        if "host" in options and transport == "httpupgrade":
+            output["host"] = options["host"]
+        elif "host" in options:
             headers["Host"] = options["host"]
         if headers:
             output["headers"] = headers
@@ -207,11 +247,15 @@ def to_uri(identity: dict, name: str) -> str:
         from app.password_conversion import to_uri as convert
 
         return convert(identity, name)
-    to_singbox(identity, name)  # URI cannot represent opaque extension options
+    to_mihomo(identity, name)  # reject values whose semantics we cannot preserve
+    if identity.get("extensions"):
+        unsupported()  # URI cannot represent opaque extension options
     tls, options, proto = (
         identity.get(k, {}) for k in ("tls", "transport_options", "protocol_options")
     )
     if options.get("headers") or "allowed_network" in proto:
+        unsupported()
+    if identity["protocol"] == "vless" and proto.get("encryption") not in (None, "none", ""):
         unsupported()
     if identity["protocol"] == "vmess":
         if tls.get("insecure") is not None:
@@ -230,6 +274,10 @@ def to_uri(identity: dict, name: str) -> str:
         for key in ("host", "path"):
             if key in options:
                 doc[key] = options[key]
+        if options.get("header_type") == "http":
+            doc["type"] = "http"
+        if "pin_sha256" in tls:
+            doc["pcs"] = tls["pin_sha256"]
         if "service_name" in options:
             unsupported()  # not universally represented by the VMess JSON share format
         for source, target in (("sni", "sni"), ("client_fingerprint", "fp")):
@@ -248,10 +296,18 @@ def to_uri(identity: dict, name: str) -> str:
         query["alpn"] = ",".join(tls["alpn"])
     if "insecure" in tls:
         query["allowInsecure"] = "1" if tls["insecure"] else "0"
-    for source, target in (("public_key", "pbk"), ("short_id", "sid")):
+    for source, target in (("public_key", "pbk"), ("short_id", "sid"), ("spider_x", "spx")):
         if source in tls.get("reality", {}):
             query[target] = tls["reality"][source]
-    for source, target in (("host", "host"), ("path", "path"), ("service_name", "serviceName")):
+    if "pin_sha256" in tls:
+        query["pcs"] = tls["pin_sha256"]
+    for source, target in (
+        ("host", "host"),
+        ("path", "path"),
+        ("service_name", "serviceName"),
+        ("mode", "mode"),
+        ("header_type", "headerType"),
+    ):
         if source in options:
             query[target] = options[source]
     query.update({k: proto[k] for k in ("flow", "encryption") if k in proto})

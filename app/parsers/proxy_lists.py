@@ -7,7 +7,7 @@ docs/PARSER_REFERENCES.md. No upstream service or executable is run here.
 import re
 from urllib.parse import urlsplit
 
-from app.domain import AssetError, ParseIssue, ParseReport
+from app.domain import AssetError, ParseIssue, ParseReport, UnsupportedProtocol
 
 PROTOCOL_NAMES = {
     "ss",
@@ -198,7 +198,7 @@ def _line(text):
         dialect = "loon" if positional else "surge"
     protocol = {"shadowsocks": "ss", "hy2": "hysteria2"}.get(protocol, protocol)
     if protocol not in {"ss", "vmess", "vless", "trojan", "anytls", "hysteria2"}:
-        raise AssetError("UNSUPPORTED_PROTOCOL")
+        raise UnsupportedProtocol(protocol)
     if any(key in options for key in ("underlying-proxy", "dialer-proxy", "detour")):
         raise AssetError("UNSUPPORTED_DEPENDENCY")
     data = {"name": tag, "type": protocol, "server": host, "port": port}
@@ -348,7 +348,7 @@ def parse_proxy_list(text, *, max_items=10000):
             else:
                 report.nodes.append(node)
         except AssetError as error:
-            report.issues.append(ParseIssue(error.code, ordinal))
+            report.issues.append(ParseIssue.of(error, ordinal))
         except (ValueError, TypeError, IndexError):
             report.issues.append(ParseIssue("INVALID_PROXY_LINE", ordinal))
     if not count:

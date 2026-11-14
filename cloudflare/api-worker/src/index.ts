@@ -888,23 +888,38 @@ export async function handle(
   }
 }
 // GitHub's own schedule is delayed by hours or dropped, so the hourly entry-probe
-// round is started by this Worker's Cron Trigger (wrangler.jsonc) instead. Only the
-// outcome code is logged; the workflow itself decides what to measure.
-export async function probeTick(env: Env, fetcher: typeof fetch = fetch) {
+// round and the daily check are started by this Worker's Cron Triggers (wrangler.jsonc)
+// instead. Only the outcome code is logged; the workflows decide what to do.
+export const DAILY_CRON = "17 20 * * *"; // 04:17 Asia/Shanghai
+
+async function tick(env: Env, workflow: string, inputs: Record<string, string>, fetcher: typeof fetch) {
   try {
-    return await dispatch(env, "entry-probe.yml", {}, fetcher);
+    return await dispatch(env, workflow, inputs, fetcher);
   } catch (error) {
     const reason = error instanceof SafeError ? error.code : "DISPATCH_FAILED";
-    console.error("entry-probe dispatch failed", reason);
+    console.error(`${workflow} dispatch failed`, reason);
     return { status: "FAILED", dispatched: false, reason };
   }
+}
+
+export function probeTick(env: Env, fetcher: typeof fetch = fetch) {
+  return tick(env, "entry-probe.yml", {}, fetcher);
+}
+
+// trigger=schedule: the workflow follows the dashboard's daily setting (on/off, scope).
+export function dailyTick(env: Env, fetcher: typeof fetch = fetch) {
+  return tick(env, "daily-check.yml", { trigger: "schedule" }, fetcher);
+}
+
+export function cronTick(cron: string, env: Env, fetcher: typeof fetch = fetch) {
+  return cron === DAILY_CRON ? dailyTick(env, fetcher) : probeTick(env, fetcher);
 }
 
 export default {
   fetch(request: Request, env: Env) {
     return handle(request, env);
   },
-  scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext) {
-    ctx.waitUntil(probeTick(env));
+  scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext) {
+    ctx.waitUntil(cronTick(controller.cron, env));
   },
 } satisfies ExportedHandler<Env>;

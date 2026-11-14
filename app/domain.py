@@ -34,6 +34,13 @@ def field_label(names) -> str:
     return name if re.fullmatch(r"[A-Za-z0-9_.-]{1,40}", name) else "other"
 
 
+class UnsupportedProtocol(AssetError):
+    def __init__(self, protocol=None):
+        super().__init__("UNSUPPORTED_PROTOCOL")
+        named = isinstance(protocol, str) and protocol
+        self.detail = field_label([protocol]) if named else "missing"
+
+
 class Unsupported(AssetError):
     """RUNTIME_UNSUPPORTED plus which field made a node inexpressible. The reason is
     a fixed label or a field name (never a value), so it is safe in logs."""
@@ -71,6 +78,27 @@ class NormalizedNode:
 class ParseIssue:
     code: str
     ordinal: int = 0
+    detail: str | None = None  # e.g. the unsupported protocol's name (never a value)
+
+    @classmethod
+    def of(cls, error: AssetError, ordinal: int) -> "ParseIssue":
+        return cls(error.code, ordinal, getattr(error, "detail", None))
+
+
+def issue_dicts(issues) -> list[dict]:
+    return [
+        {"code": i.code, "ordinal": i.ordinal, **({"detail": i.detail} if i.detail else {})}
+        for i in issues
+    ]
+
+
+def unsupported_protocols(issues) -> dict:
+    """Counts of share-link/Clash protocol names this parser cannot read."""
+    counts: dict = {}
+    for i in issues:
+        if i.code == "UNSUPPORTED_PROTOCOL" and i.detail:
+            counts[i.detail] = counts.get(i.detail, 0) + 1
+    return dict(sorted(counts.items(), key=lambda kv: -kv[1]))
 
 
 @dataclass(repr=False)
@@ -89,8 +117,11 @@ class ParseReport:
             "valid": len(self.nodes),
             "ignored": self.ignored_count,
             "issue_count": len(self.issues),
-            "issues": [{"code": i.code, "ordinal": i.ordinal} for i in self.issues[:100]],
+            "issues": issue_dicts(self.issues[:100]),
         }
+        protocols = unsupported_protocols(self.issues)
+        if protocols:
+            result["unsupported_protocols"] = protocols
         if self.subscription_summary:
             result["subscription"] = self.subscription_summary
         return result

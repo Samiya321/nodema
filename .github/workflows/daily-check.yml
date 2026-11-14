@@ -1,9 +1,15 @@
 name: Daily node health
 on:
-  schedule:
-    - cron: '17 20 * * *' # 04:17 Asia/Shanghai; GitHub may delay scheduled jobs.
+  # 04:17 Asia/Shanghai is started by the API Worker's Cron Trigger with trigger=schedule
+  # (cloudflare/api-worker wrangler.jsonc): GitHub's own schedule ran 4-5 hours late.
   workflow_dispatch:
     inputs:
+      trigger:
+        description: schedule follows the dashboard's daily setting; manual always tests
+        required: false
+        type: choice
+        default: manual
+        options: [manual, schedule]
       run_id:
         description: Existing scan UUID to resume (empty syncs requested sources and starts a new test)
         required: false
@@ -55,7 +61,7 @@ env:
   CHECK_FORCE_FULL: ${{ vars.CHECK_FORCE_FULL || 'false' }}
   FAILURE_COOLDOWN_ENABLED: ${{ vars.FAILURE_COOLDOWN_ENABLED || 'true' }}
   FAILURE_COOLDOWN_THRESHOLD: ${{ vars.FAILURE_COOLDOWN_THRESHOLD || '3' }}
-  FAILURE_COOLDOWN_BASE_HOURS: ${{ vars.FAILURE_COOLDOWN_BASE_HOURS || '6' }}
+  FAILURE_COOLDOWN_BASE_HOURS: ${{ vars.FAILURE_COOLDOWN_BASE_HOURS || '24' }}
   FAILURE_COOLDOWN_MAX_HOURS: ${{ vars.FAILURE_COOLDOWN_MAX_HOURS || '168' }}
   # UDP through working nodes (Wi-Fi Calling); set the repo variable to 'false' to skip it.
   UDP_CHECK_ENABLED: ${{ vars.UDP_CHECK_ENABLED || 'true' }}
@@ -98,7 +104,7 @@ jobs:
         env:
           REQUESTED_RUN_ID: ${{ inputs.run_id }}
           REQUESTED_SCOPE: ${{ inputs.scope || 'SELF_HOSTED' }}
-          EVENT_NAME: ${{ github.event_name }}
+          EVENT_NAME: ${{ inputs.trigger == 'schedule' && 'schedule' || github.event_name }}
         shell: bash
         run: |
           if [ -n "$REQUESTED_RUN_ID" ]; then

@@ -62,3 +62,28 @@ def test_reason_from_stored_config():
     assert _reason(json.dumps(vless(transport="kcp")).encode()) == "transport:kcp"
     assert _reason(json.dumps(vless()).encode()) == "convertible_now"
     assert _reason(b"not json") == "malformed"
+
+
+def test_parse_reports_unsupported_protocol_names():
+    from app.parsers.core import parse_document as parse_text
+
+    report = parse_text(
+        b"tuic://u:p@198.51.100.1:443#a\ntuic://u:p@198.51.100.2:443#b\nssr://abc\n"
+        + b"trojan://pw@198.51.100.3:443?sni=a.example#c\n"
+    )
+    summary = report.summary()
+    assert summary["valid"] == 1
+    assert summary["unsupported_protocols"] == {"tuic": 2, "ssr": 1}
+    assert {"code": "UNSUPPORTED_PROTOCOL", "ordinal": 1, "detail": "tuic"} in summary["issues"]
+
+
+def test_clash_unsupported_type_is_named():
+    from app.parsers.core import parse_document as parse_text
+
+    yaml = (
+        "proxies:\n"
+        "  - {name: a, type: wireguard, server: 198.51.100.1, port: 51820}\n"
+        "  - {name: b, type: trojan, server: 198.51.100.2, port: 443,"
+        " password: pw, sni: a.example}\n"
+    )
+    assert parse_text(yaml.encode()).summary()["unsupported_protocols"] == {"wireguard": 1}

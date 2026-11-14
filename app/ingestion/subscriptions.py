@@ -186,7 +186,7 @@ class SubscriptionResolver:
                 except AssetError as error:
                     if error.code in ("INPUT_TOO_LARGE", "TOO_MANY_ITEMS"):
                         raise
-                    self.report.issues.append(ParseIssue(error.code, entry.ordinal))
+                    self.report.issues.append(ParseIssue.of(error, entry.ordinal))
                     if kind == "url":
                         self.stats["failed_references"] += 1
 

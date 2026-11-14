@@ -367,3 +367,64 @@ def test_grade_recompute_is_due_after_the_evening_peak_or_twelve_hours():
     assert due(evening_end - timedelta(minutes=5), evening_end + timedelta(minutes=10), POLICY)
     assert not due(evening_end + timedelta(minutes=1), evening_end + timedelta(hours=3), POLICY)
     assert due(evening_end, evening_end + timedelta(hours=13), POLICY)
+
+
+def test_compute_caches_prefix_figures_without_changing_results():
+    """One shared prefix (all Cloudflare entries are "cf"): computed once, same rows."""
+    import random
+    import uuid
+    from datetime import UTC, datetime
+    from types import SimpleNamespace
+
+    from app.grading import CARRIERS
+    from app.probes import refresh
+
+    rng = random.Random(7)
+    targets = [f"104.16.0.{i}:443" for i in range(1, 30)]
+    now = datetime.now(UTC)
+    quality = {
+        ("cf", v): [
+            Sample(
+                rng.choice(targets),
+                3,
+                0 if t_dead else rng.choice([0, 3, 3]),
+                rng.uniform(40, 300),
+                rng.uniform(1, 20),
+                rng.random() < 0.7,
+                f"p{rng.randint(1, 6)}",
+                now,
+            )
+            for t_dead in [False] * 300
+        ]
+        for v in (*CARRIERS, "HK", "SG")
+    }
+    dead_target = "104.16.0.99:443"
+    for v in CARRIERS:
+        quality[("cf", v)] += [
+            Sample(dead_target, 3, 0, None, None, True, f"p{i}", now) for i in range(4)
+        ]
+    nodes = [
+        SimpleNamespace(
+            id=uuid.uuid4(),
+            protocol="vless",
+            server_port=443,
+            entry_asn=13335,
+            entry_ips=[t.split(":")[0]],
+            is_proxy=False,
+            server_key=str(i),
+        )
+        for i, t in enumerate([*targets, dead_target])
+    ]
+    rows = refresh.compute(nodes, {}, quality, {}, {}, POLICY)
+    for row in rows:
+        if row["vantage"] not in CARRIERS:
+            continue
+        node = next(n for n in nodes if n.id == row["node_id"])
+        target = f"{node.entry_ips[0]}:443"
+        expected = access_stats(quality[("cf", row["vantage"])], target, True, POLICY)
+        assert (row["peak_rtt_ms"], row["loss"], row["samples"]) == (
+            expected.rtt,
+            expected.loss,
+            expected.samples,
+        )
+    assert any(r["unreachable"] for r in rows if r["vantage"] in CARRIERS)

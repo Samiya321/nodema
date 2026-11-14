@@ -11,7 +11,7 @@ import math
 import re
 import statistics
 from collections.abc import Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 
 from app.domain import AssetError
@@ -168,11 +168,17 @@ def access_stats(
     """Window statistics for one vantage. Samples are the entry prefix's (same /24
     route); a target whose every sample failed is excluded from the prefix figures
     and only marks its own nodes unreachable."""
+    access, dead = prefix_access(samples, carrier, policy)
+    return replace(access, unreachable=own_target in dead)
+
+
+def prefix_access(samples: list[Sample], carrier: bool, policy: dict) -> tuple["Access", set]:
+    """The prefix figures plus its dead targets: the same for every node behind the
+    prefix, so callers compute them once per (prefix, vantage)."""
     by_target: dict[str, list[Sample]] = {}
     for sample in samples:
         by_target.setdefault(sample.target, []).append(sample)
     dead = {t for t, group in by_target.items() if _all_failed(group, policy)}
-    unreachable = own_target in dead
     usable = [s for s in samples if s.target not in dead]
     last = max((s.measured_at for s in samples if s.measured_at), default=None)
     chosen = [s for s in usable if s.peak] if carrier else usable
@@ -187,9 +193,8 @@ def access_stats(
         samples=len(chosen),
         probes=probes,
         sufficient=probes >= policy["min_probes"] and any(s.received for s in chosen),
-        unreachable=unreachable,
         last_measured_at=last,
-    )
+    ), dead
 
 
 def access_band(access: Access, vantage: str, policy: dict) -> str | None:

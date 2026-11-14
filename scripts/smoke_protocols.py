@@ -304,6 +304,42 @@ def main(binary):
                     "transport_options": option,
                 }
             )
+        # XHTTP (VLESS) and HTTP Upgrade (mihomo's WebSocket mode) from real share links.
+        for protocol, transport, inbound, options in (
+            (
+                "vless",
+                "xhttp",
+                {"xhttp-config": {"path": "/synthetic-xhttp", "mode": "auto"}},
+                {"path": "/synthetic-xhttp", "mode": "auto"},
+            ),
+            (
+                "vmess",
+                "httpupgrade",
+                {"ws-path": "/synthetic-upgrade"},
+                {"path": "/synthetic-upgrade"},
+            ),
+        ):
+            address = port()
+            base = next(d for d in identities if d["protocol"] == protocol)
+            listener = dict(next(item for item in listeners if item["type"] == protocol))
+            listener.update(
+                name=protocol + "-" + transport,
+                port=address,
+                certificate=cert,
+                **{"private-key": key},
+                **inbound,
+            )
+            listeners.append(listener)
+            identities.append(
+                {
+                    **base,
+                    "server_port": address,
+                    "transport": transport,
+                    "security": "tls",
+                    "tls": {"sni": "localhost", "insecure": True},
+                    "transport_options": options,
+                }
+            )
         reality_key = X25519PrivateKey.generate()
         reality_private = (
             base64.urlsafe_b64encode(

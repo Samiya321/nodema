@@ -3,7 +3,7 @@
 import re
 from urllib.parse import parse_qsl, quote, unquote, urlsplit
 
-from app.domain import AssetError
+from app.domain import AssetError, UnsupportedProtocol
 from app.parsers.core import (
     MAX_BYTES,
     MISSING,
@@ -254,7 +254,7 @@ def parse_password_uri(uri):
         u, query = _uri(uri)
         protocol = "hysteria2" if u.scheme == "hy2" else u.scheme
         if protocol not in ("trojan", "anytls", "hysteria2"):
-            raise AssetError("UNSUPPORTED_PROTOCOL")
+            raise UnsupportedProtocol(protocol)
         if u.path not in ("", "/"):
             raise AssetError("INVALID_URI")
         if "@" not in u.netloc:

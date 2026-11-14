@@ -34,7 +34,8 @@ DROP = {
         "ech-opts",
         "dialer-proxy-group",
     },
-    "vmess_uri": {"packet_encoding", "packetEncoding", "fragment"},
+    # test_name/name: panel bookkeeping; ech: optional, as for VLESS.
+    "vmess_uri": {"packet_encoding", "packetEncoding", "fragment", "test_name", "name", "ech"},
     "vless_uri": {"fragment", "packetEncoding", "packet_encoding", "ech"},
     "trojan_uri": {"ech", "fragment"},
     "hysteria2_uri": {"ech"},
@@ -44,6 +45,20 @@ DROP_IF_NONE = {"headerType", "header_type", "quicSecurity", "security"}
 INSECURE_KEYS = ("skip-cert-verify", "allowInsecure", "insecure", "allow_insecure")
 # Fields a VLESS entry sometimes inherits from VMess templates; VLESS ignores them.
 VLESS_STRAY = {"alterId", "alter_id", "cipher"}
+# v2rayN "pcs": SHA-256 pin of the server certificate (mihomo "fingerprint").
+PIN_DIALECTS = ("vmess_uri", "vless_uri", "trojan_uri")
+XHTTP_MODES = ("auto", "packet-up", "stream-up", "stream-one")
+TRANSPORT_ALIASES = {"raw": "tcp"}  # Xray renamed TCP to RAW
+
+
+def _pin(value):
+    """One SHA-256 hex digest (colons allowed), lower-cased; None otherwise."""
+    if not isinstance(value, str):
+        return None
+    digest = value.replace(":", "").strip().lower()
+    if len(digest) == 64 and all(c in "0123456789abcdef" for c in digest):
+        return digest
+    return None
 
 
 def _tls_insecure(d, value):
@@ -55,17 +70,11 @@ def _tls_insecure(d, value):
 
 def compatible(identity: dict) -> dict:
     """Return a copy with known extras mapped or dropped; unknown extras are kept."""
-    extensions = identity.get("extensions")
-    needs = (
-        extensions
-        or identity.get("transport", "tcp") is None
-        or "header_type" in (identity.get("transport_options") or {})
-    )
-    if not needs:
-        return identity
     d = copy.deepcopy(identity)
     if d.get("transport", "tcp") is None:
         d["transport"] = "tcp"  # Clash omits network for plain TCP (e.g. Reality)
+    if d.get("transport") in TRANSPORT_ALIASES:
+        d["transport"] = TRANSPORT_ALIASES[d["transport"]]
     kept = {}
     for dialect, extra in (d.pop("extensions", None) or {}).items():
         if not isinstance(extra, dict):
@@ -98,6 +107,25 @@ def compatible(identity: dict) -> dict:
                     continue
             if dialect == "clash" and key in VLESS_STRAY and d["protocol"] == "vless":
                 continue
+            if dialect in PIN_DIALECTS and key == "pcs":
+                if value in NONE_VALUES:
+                    continue
+                pin, tls = _pin(value), d.get("tls", {})
+                secured = d.get("security") in ("tls", "reality") or (
+                    d["protocol"] == "trojan" and d.get("security") is None
+                )
+                if pin and secured and tls.get("pin_sha256", pin) == pin:
+                    d["tls"] = {**tls, "pin_sha256": pin}
+                    continue
+            if dialect == "vless_uri" and key == "mode" and d.get("transport") == "xhttp":
+                if value in XHTTP_MODES:
+                    d.setdefault("transport_options", {})["mode"] = value
+                    continue
+            if dialect == "vless_uri" and key == "headerType" and value == "http":
+                options = d.setdefault("transport_options", {})
+                if d.get("transport") == "tcp" and options.get("header_type", value) == value:
+                    options["header_type"] = value
+                    continue
             if dialect == "clash" and key == "auth" and d["protocol"] == "hysteria2":
                 if d.get("password") in (None, "", value):
                     d["password"] = value

@@ -20,6 +20,7 @@ from app.domain import (
     NormalizedNode,
     ParseIssue,
     ParseReport,
+    UnsupportedProtocol,
 )
 
 PARSER_VERSION = "protocols-v4"
@@ -412,10 +413,10 @@ def _clash_item(item):
     d = copy.deepcopy(item)
     protocol = _take(d, "type")
     if not isinstance(protocol, str):
-        raise AssetError("UNSUPPORTED_PROTOCOL")
+        raise UnsupportedProtocol()
     protocol = {"ss": "shadowsocks", "hy2": "hysteria2"}.get(protocol, protocol)
     if protocol not in PROTOCOLS:
-        raise AssetError("UNSUPPORTED_PROTOCOL")
+        raise UnsupportedProtocol(protocol)
     if "dialer-proxy" in d:
         raise AssetError("UNSUPPORTED_DEPENDENCY")
     name = _take(d, "name")
@@ -513,7 +514,7 @@ def _singbox_item(item):
     if protocol in ("direct", "block", "dns", "selector", "urltest"):
         return None
     if protocol not in PROTOCOLS:
-        raise AssetError("UNSUPPORTED_PROTOCOL")
+        raise UnsupportedProtocol(protocol)
     if "detour" in d:
         raise AssetError("UNSUPPORTED_DEPENDENCY")
     name = _take(d, "tag")
@@ -647,7 +648,7 @@ def _items_report(items, adapter, max_items):
             else:
                 report.nodes.append(node)
         except AssetError as e:
-            report.issues.append(ParseIssue(e.code, ordinal))
+            report.issues.append(ParseIssue.of(e, ordinal))
     return report
 
 
@@ -720,5 +721,5 @@ def parse_document(
                 node = parse_password_uri(line)
             report.nodes.append(node)
         except AssetError as e:
-            report.issues.append(ParseIssue(e.code, ordinal))
+            report.issues.append(ParseIssue.of(e, ordinal))
     return report

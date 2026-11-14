@@ -7,6 +7,7 @@ by grade are marked for rebuild when any grade changes.
 """
 
 from collections import defaultdict
+from dataclasses import replace
 from datetime import UTC, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
@@ -19,10 +20,10 @@ from app.grading import (
     Access,
     NodeFacts,
     Sample,
-    access_stats,
     best_grade,
     combine_cn,
     grade_node,
+    prefix_access,
 )
 from app.probes import planner
 from app.probes.policy import load_policy
@@ -114,6 +115,23 @@ def _reach_failed(samples: list[Sample]) -> bool:
 
 def compute(nodes, stability, quality, reach, traces, policy) -> list[dict]:
     rows: list[dict] = []
+    # Thousands of nodes share one prefix (all Cloudflare entries are "cf"): its
+    # figures are computed once, not once per node (was nodes x samples).
+    prefix_cache: dict[tuple, tuple] = {}
+
+    def access_for(prefix, vantage, target):
+        key = (prefix, vantage)
+        if key not in prefix_cache:
+            samples = quality.get(key, [])
+            prefix_cache[key] = (
+                prefix_access(samples, vantage in CARRIERS, policy) if samples else None
+            )
+        cached = prefix_cache[key]
+        if cached is None:
+            return Access()
+        access, dead = cached
+        return replace(access, unreachable=target in dead)
+
     for node in nodes:
         ip = planner.ipv4(node.entry_ips)
         entry = planner.EntryNode(node.id, node.protocol, ip, node.server_port, node.entry_asn)
@@ -128,10 +146,7 @@ def compute(nodes, stability, quality, reach, traces, policy) -> list[dict]:
         for vantage in (*CARRIERS, "HK", "SG"):
             # HK/SG probes only reach their local CF data centre: never use those samples.
             skip = not entry.prefix or (cdn and vantage not in CARRIERS)
-            samples = [] if skip else quality.get((entry.prefix, vantage), [])
-            access = (
-                access_stats(samples, target, vantage in CARRIERS, policy) if samples else Access()
-            )
+            access = Access() if skip else access_for(entry.prefix, vantage, target)
             result = grade_node(facts, vantage, access, reach_failed, policy)
             if vantage in CARRIERS:
                 carriers[vantage] = result

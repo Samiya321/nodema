@@ -41,7 +41,7 @@ class Settings(BaseSettings):
     precheck_sample_rate: float = Field(default=0.1, ge=0, le=1)
     failure_cooldown_enabled: bool = True
     failure_cooldown_threshold: int = Field(default=3, ge=2, le=30)
-    failure_cooldown_base_hours: int = Field(default=6, ge=1, le=24)
+    failure_cooldown_base_hours: int = Field(default=24, ge=1, le=24)
     failure_cooldown_max_hours: int = Field(default=168, ge=1, le=168)
     echo_url: str = ""
     # Tried through the proxy when Echo fails; empty disables the fallback.

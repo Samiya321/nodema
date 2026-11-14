@@ -88,5 +88,5 @@ def parse_substore_index(payload: bytes, *, required=False, max_items=10000):
                 )
             )
         except AssetError as error:
-            result.issues.append(ParseIssue(error.code, ordinal))
+            result.issues.append(ParseIssue.of(error, ordinal))
     return result

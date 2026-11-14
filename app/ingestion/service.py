@@ -10,7 +10,14 @@ import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import insert
 
 from app.database.models import Node, NodeSource, Source, short_id_sequence
-from app.domain import AssetError, InputFormat, NormalizedNode, SourceType, credential_key
+from app.domain import (
+    AssetError,
+    InputFormat,
+    NormalizedNode,
+    SourceType,
+    credential_key,
+    issue_dicts,
+)
 from app.ingestion.airport import is_info_node, parse_airport_headers
 from app.ingestion.children import apply_airport, materialize
 from app.ingestion.fetcher import Fetcher, validate_url
@@ -525,7 +532,7 @@ class AssetService:
     def _apply_index(self, session, source, index, digest, now):
         source.detected_kind = "SUBSTORE"
         summary = materialize(session, source, index, now, source.sync_interval_seconds)
-        issues = [{"code": issue.code, "ordinal": issue.ordinal} for issue in index.issues]
+        issues = issue_dicts(index.issues)
         source.applied_hash, source.parser_version = digest, PARSER_VERSION
         source.last_synced_at = now
         source.last_sync_status = "PARTIAL" if issues else "SUCCESS"

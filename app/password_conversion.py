@@ -73,22 +73,25 @@ def _plugin(plugin):
 
 
 def _tls(tls, security):
-    keys(tls, ("sni", "alpn", "client_fingerprint", "insecure", "reality"), "tls")
+    keys(tls, ("sni", "alpn", "client_fingerprint", "insecure", "reality", "pin_sha256"), "tls")
     output = {}
     for source, target in (
         ("sni", "sni"),
         ("alpn", "alpn"),
         ("client_fingerprint", "client-fingerprint"),
         ("insecure", "skip-cert-verify"),
+        ("pin_sha256", "fingerprint"),
     ):
         if source in tls:
             output[target] = tls[source]
     if "reality" in tls:
         reality = tls["reality"]
-        keys(reality, ("public_key", "short_id"), "reality")
+        keys(reality, ("public_key", "short_id", "spider_x"), "reality")
         if security != "reality" or not reality.get("public_key"):
             reject("reality_public_key")
-        output["reality-opts"] = {k.replace("_", "-"): v for k, v in reality.items()}
+        output["reality-opts"] = {
+            k.replace("_", "-"): v for k, v in reality.items() if k != "spider_x"
+        }
     elif security == "reality":
         reject("reality_without_options")
     return output
@@ -244,6 +247,8 @@ def to_singbox(d, name):
     to_mihomo(d, name)
     if d.get("extensions") or d["protocol"] == "shadowsocks" and d.get("tls"):
         reject()
+    if "pin_sha256" in d.get("tls", {}):
+        reject("singbox_certificate_pin")
     protocol, p = d["protocol"], d.get("protocol_options", {})
     out = {
         "type": protocol,
@@ -266,7 +271,8 @@ def to_singbox(d, name):
         if "client_fingerprint" in t:
             tls["utls"] = {"enabled": True, "fingerprint": t["client_fingerprint"]}
         if "reality" in t:
-            tls["reality"] = {"enabled": True, **t["reality"]}
+            reality = {k: v for k, v in t["reality"].items() if k != "spider_x"}
+            tls["reality"] = {"enabled": True, **reality}
         out["tls"] = tls
         if protocol == "trojan" and d.get("transport", "tcp") != "tcp":
             options = d.get("transport_options", {})
@@ -336,6 +342,8 @@ def to_uri(d, name):
             query["alpn"] = ",".join(t["alpn"])
         if "insecure" in t:
             query["insecure"] = "1" if t["insecure"] else "0"
+        if "pin_sha256" in t:
+            query["pcs"] = t["pin_sha256"]
         scheme = protocol
         if protocol == "trojan":
             keys(p, ())
@@ -350,7 +358,11 @@ def to_uri(d, name):
             if d.get("transport_options", {}).get("headers"):
                 reject()
             if "reality" in t:
-                for source, target in (("public_key", "pbk"), ("short_id", "sid")):
+                for source, target in (
+                    ("public_key", "pbk"),
+                    ("short_id", "sid"),
+                    ("spider_x", "spx"),
+                ):
                     if source in t["reality"]:
                         query[target] = t["reality"][source]
         elif protocol == "anytls":
