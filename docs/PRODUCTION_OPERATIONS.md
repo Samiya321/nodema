@@ -81,6 +81,7 @@ PY
 | 订阅 404/鉴权失败 | 检查 token、撤销、到期；不要将完整私有 URL 贴到公开 issue。旧 token hash 不能还原原 token，确需更换由用户触发 |
 | 入口国家/ASN 未知 | 看 geoip-pack 输出；缺记录/校验失败/未安装 MMDB 都可能，不代表节点 DOWN。GitHub 源无需新建 MaxMind 账号，确认 GeoIP provider 即可 |
 | DB/TLS 连接失败 | Neon 可能休眠、网络可能暂时不通；核对连接角色、TLS、CA、Hyperdrive。保留 verify-full，不关闭 TLS、不重建库 |
+| Neon 公网传输快用完 | Free 每月 5 GB，用完后实例暂停到下个计费周期（数据保留）。所有从 Neon 读出的数据都计入：Hyperdrive 给 Worker 的查询、Actions 的读、本机脚本和每次 `pg_dump`。先停每周备份（`gh workflow disable backup.yml`，有新鲜本地备份时）、避免本机整库备份和对生产的大查询（节点页“全部状态”约 13 MB/次），周期重置后再 `gh workflow enable backup.yml`。用量以 Neon 控制台项目概览为准 |
 | 容量或分钟数增长 | 查运行与用量、活跃任务和保留设置；cleanup 会归档并删除过期明细，应了解其影响后执行，不为验收随意运行 |
 
 每日主流程默认北京时间 04:17，备份默认周日 05:41。GitHub 定时可能延迟；手工执行固定工作流前确认本次任务允许生产写入/检测：
