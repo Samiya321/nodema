@@ -113,7 +113,8 @@ class Usage:
             logging.getLogger("nodema.usage").warning("USAGE_WRITE_FAILED")
             return False
 
-    def database_sample(self):
+    def database_sample(self, transfer=None):
+        """transfer: neon_transfer() values, or None when no Neon API key is configured."""
         with self.sessions.begin() as session:
             row = (
                 session.execute(
@@ -129,7 +130,7 @@ class Usage:
                 .mappings()
                 .one()
             )
-            sample = DatabaseSample(id=uuid4(), **dict(row))
+            sample = DatabaseSample(id=uuid4(), **dict(row), **(transfer or {}))
             session.add(sample)
             session.flush()
             return {c.name: getattr(sample, c.name) for c in DatabaseSample.__table__.columns}
@@ -217,6 +218,19 @@ class Usage:
         )
         ended = executions["completed_executions"] + executions["failed_executions"]
         executions["failure_ratio"] = executions["failed_executions"] / ended if ended else None
+        with self.sessions() as session:
+            latest = session.execute(
+                sa.select(
+                    DatabaseSample.taken_at,
+                    DatabaseSample.transfer_bytes,
+                    DatabaseSample.transfer_limit_bytes,
+                    DatabaseSample.transfer_period_end,
+                )
+                .where(DatabaseSample.transfer_bytes.is_not(None))
+                .order_by(DatabaseSample.taken_at.desc())
+                .limit(1)
+            ).first()
+        transfer = dict(latest._mapping) if latest else None
         return {
             "days": days,
             "since": since,
@@ -227,6 +241,7 @@ class Usage:
             "executions": executions,
             "action_runs": actions,
             "database_samples": samples,
+            "neon_transfer": transfer,
             "runner_minutes": float(runner_ms) / 60000,
             "database_growth_bytes": samples[0]["table_bytes"] - first_sample_bytes
             if len(samples) > 1
@@ -247,3 +262,35 @@ class Usage:
                     (ActionRun, "started_at"),
                 )
             }
+
+
+NEON_API = "https://console.neon.tech/api/v2/projects/"
+
+
+def neon_transfer(settings, opener=None):
+    """This billing period's Neon public network transfer, or None (no key, API error)."""
+    import json
+    import urllib.request
+
+    key = settings.neon_api_key.get_secret_value()
+    if not key or not settings.neon_project_id:
+        return None
+    request = urllib.request.Request(
+        NEON_API + settings.neon_project_id,
+        headers={"Authorization": "Bearer " + key, "Accept": "application/json"},
+    )
+    try:
+        with (opener or urllib.request.urlopen)(request, timeout=15) as response:
+            project = json.load(response)["project"]
+        used = int(project["data_transfer_bytes"])
+        end = project.get("consumption_period_end")
+        return {
+            "transfer_bytes": used,
+            "transfer_limit_bytes": settings.neon_transfer_limit_bytes,
+            "transfer_period_end": datetime.fromisoformat(end.replace("Z", "+00:00"))
+            if end
+            else None,
+        }
+    except Exception as error:  # noqa: BLE001 - usage must never fail a workflow
+        logging.getLogger("nodema.usage").warning("NEON_USAGE_UNAVAILABLE %s", type(error).__name__)
+        return None

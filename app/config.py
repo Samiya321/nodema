@@ -42,7 +42,7 @@ class Settings(BaseSettings):
     failure_cooldown_enabled: bool = True
     failure_cooldown_threshold: int = Field(default=3, ge=2, le=30)
     failure_cooldown_base_hours: int = Field(default=6, ge=1, le=24)
-    failure_cooldown_max_hours: int = Field(default=72, ge=1, le=168)
+    failure_cooldown_max_hours: int = Field(default=168, ge=1, le=168)
     echo_url: str = ""
     # Tried through the proxy when Echo fails; empty disables the fallback.
     fallback_probe_url: str = Field(
@@ -71,6 +71,13 @@ class Settings(BaseSettings):
     retry_delay_seconds: float = Field(default=5, ge=0, le=30)
     environment_error_limit: int = Field(default=6, ge=2, le=100)
     degraded_http_ms: int = Field(default=8000, gt=0)
+    # Neon transfer on the usage page: a project-scoped API key (read by the usage job).
+    neon_api_key: SecretStr = SecretStr("")
+    neon_project_id: str = Field(default="", pattern=r"^([a-z0-9-]{1,64})?$")
+    neon_transfer_limit_bytes: int = Field(default=5_000_000_000, gt=0)
+    # UDP through each working node (Wi-Fi Calling); every attempt has this timeout.
+    udp_check_enabled: bool = True
+    udp_timeout_seconds: float = Field(default=2.5, gt=0, le=10)
     freshness_hours: int = Field(default=36, gt=0)
     shard_size: int = Field(default=100, gt=0, le=1000)
     # Upper bound on test jobs per run; shards grow beyond shard_size to respect it.

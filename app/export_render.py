@@ -128,6 +128,10 @@ class Renderer:
                 # never fail the whole subscription for it.
                 self.skipped += 1
                 return False
+            # Clash/mihomo relays UDP (Wi-Fi Calling, QUIC, games) only when asked to;
+            # a node that declares TCP only keeps its explicit udp: false.
+            if self.format == "mihomo" and proxy.get("udp") is not False:
+                proxy = {**proxy, "udp": True}
         self.names.add(node.get("name"))
         if self.format == "json":
             self.push(

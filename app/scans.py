@@ -53,6 +53,9 @@ PUBLISH_COLUMNS = tuple(
         "entry_asn",
         "probe_key",
         "measurement_kind",
+        "udp_status",
+        "udp_duration_ms",
+        "udp_exit_ip",
     )
 )
 
@@ -960,6 +963,11 @@ class ScanService:
                     "probe_key": result.probe_key,
                     "measurement_kind": result.measurement_kind,
                     "next_full_check_at": None,
+                    "udp_status": result.udp_status,
+                    "udp_duration_ms": result.udp_duration_ms,
+                    "udp_exit_ip": result.udp_exit_ip,
+                    "udp_checked_at": result.checked_at if result.udp_status else None,
+                    "udp_success_at": result.checked_at if result.udp_status == "SUCCESS" else None,
                 }
             )
             success, failure = (
@@ -982,6 +990,9 @@ class ScanService:
             updates = {key: excluded[key] for key in current_rows[0] if key != "node_id"}
             updates["last_success_at"] = sa.func.coalesce(
                 excluded.last_success_at, NodeCurrentStatus.last_success_at
+            )
+            updates["udp_success_at"] = sa.func.coalesce(
+                excluded.udp_success_at, NodeCurrentStatus.udp_success_at
             )
             same_probe = excluded.probe_key == NodeCurrentStatus.probe_key
             skipped = (excluded.measurement_kind == "SKIPPED") & same_probe
@@ -1057,6 +1068,9 @@ class ScanService:
             sa.text("SELECT nodema_refresh_runner_summaries(CAST(:ids AS uuid[]))"),
             {"ids": [r.node_id for r in results]},
         )
+        # Exit countries just changed: relay entries (one credential, many countries)
+        # may now qualify as airport nodes.
+        session.execute(sa.text("SELECT nodema_mark_shared_credentials()"))
         session.execute(sa.text("SELECT nodema_assign_names()"))
 
     def retention_days(self) -> tuple[int, int]:

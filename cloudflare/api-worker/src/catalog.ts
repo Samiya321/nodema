@@ -61,6 +61,7 @@ export const filterKeys = new Set([
   "cross_border",
   "unreachable",
   "best_per_server",
+  "udp",
 ]);
 const booleanKeys = [
   "eligible",
@@ -69,6 +70,7 @@ const booleanKeys = [
   "cross_border",
   "unreachable",
   "best_per_server",
+  "udp",
 ];
 
 export function filtersFromParams(params: URLSearchParams): Row {

@@ -312,14 +312,14 @@ export async function handle(
         /^[\w.-]+\/[\w.-]+$/.test(env.GITHUB_REPOSITORY) &&
         Boolean(env.GITHUB_DISPATCH_TOKEN) &&
         Boolean(env.GITHUB_WORKFLOW_REF);
-      if (version !== "0020_shared_credentials")
+      if (version !== "0021_udp_relay")
         return json({
           ready: false,
           checks: { schema: false, dispatch: dispatchReady },
         });
       const checks = {
         database: true,
-        schema: version === "0020_shared_credentials",
+        schema: version === "0021_udp_relay",
         storage: "PLAINTEXT",
         dispatch: dispatchReady,
       };

@@ -104,6 +104,7 @@ class ListenerPool:
                     "name": f"in-{proxy['name']}",
                     "type": "mixed",
                     "listen": "127.0.0.1",
+                    "udp": True,
                     "port": ports[proxy["name"]],
                     "proxy": proxy["name"],
                 }

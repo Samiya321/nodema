@@ -82,6 +82,7 @@ def monitor_settings():
         check_batch_size=1,
         precheck_gate_enabled=False,
         failure_cooldown_enabled=False,
+        udp_check_enabled=False,  # UDP has its own tests; fakes here have no real listener
         echo_url="https://echo.example/",
         github_repository="",
         github_dispatch_token="",

@@ -23,6 +23,9 @@ jobs:
       ENCRYPTION_KEY_B64: ${{ secrets.ENCRYPTION_KEY_B64 }}
       ENCRYPTION_KEY_ID: ${{ vars.ENCRYPTION_KEY_ID || 'local-v1' }}
       FINGERPRINT_KEY_B64: ${{ secrets.FINGERPRINT_KEY_B64 }}
+      # Optional: Neon transfer on the usage page (project-scoped API key).
+      NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+      NEON_PROJECT_ID: ${{ vars.NEON_PROJECT_ID }}
       GITHUB_TOKEN: ${{ github.token }}
       NODEMA_TRUSTED_BRANCH: ${{ github.event.repository.default_branch }}
       COMPLETED_RUN_ID: ${{ github.event.workflow_run.id }}

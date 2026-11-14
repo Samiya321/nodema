@@ -1,7 +1,7 @@
 import hashlib
 import hmac
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from urllib.parse import urlsplit
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
@@ -34,6 +34,23 @@ def source_due(last_checked, interval, at, timezone="Asia/Shanghai"):
         days = (at.astimezone(zone).date() - last_checked.astimezone(zone).date()).days
         return days >= interval // 86400
     return (at - last_checked).total_seconds() >= interval
+
+
+# A link failing for this long (or never working since it was added) is synced weekly
+# instead of daily: dead upstreams stop costing every run, a manual sync still works.
+DORMANT_AFTER = timedelta(days=7)
+
+
+def source_dormant(source, at):
+    if source["last_sync_status"] != "FAILED" or source["sync_requested_at"] is not None:
+        return False
+    since, checked = source["last_success_at"] or source["created_at"], source["last_checked_at"]
+    return (
+        since is not None
+        and checked is not None
+        and at - since >= DORMANT_AFTER
+        and at - checked < DORMANT_AFTER
+    )
 
 
 class AssetService:
@@ -100,6 +117,7 @@ class AssetService:
                 "profile_title",
                 "profile_url",
                 "last_success_at",
+                "created_at",
             )
         }
 
