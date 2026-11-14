@@ -107,6 +107,14 @@ UI 额外验证逐行结果、重复提交、390px 布局，以及慢网络下�
 - 待观察：下一次同步中原超过 10,000 条的子订阅能否入库，及超时来源重试后的结果（标 `retried`）。
 
 
+## 2026-11-14 第十次发布：CF 落地不分级、港新家宽探针、前端重做
+
+- 代码 `b23585e`（main，快进合并，[PR #2](https://github.com/Samiya321/nodema/pull/2)，CI 通过）：398 Python、34 Worker。迁移 head `0019_grade_exclusions`（只替换 `nodema_effective_grade`：可用但无等级行的节点为 NULL，不再算待定）。
+- 发布前：无扫描租约、无订阅方案。加密备份 `backup-2026-11-14-pre-0019.nma`（47 MB）在隔离 PG 17 恢复（38,308 节点）：需先删除 Neon 写入的 67 条 `SET (pg_attver=…)` 列选项（见 PRODUCTION_OPERATIONS.md），升级到 0019 即时完成；重算 6,860 个节点约 4 秒，三网 B 3,043 / 待定 3,786 / C 31；港新 <3 ms 的节点从约 1,600 降到 32 / 50；精简列表 1 万条 0.8 秒（与之前相同）。
+- 生产迁移到 0019，doctor ready；API Worker 版本 `2036b2b8-6072-43d0-bbf7-4325960ec8e7`；Pages https://1a360c91.nodema-dashboard.pages.dev；Echo 未变。
+- 验证（经 Pages 域名）：health 200、未认证 401、readiness 为真（schema 0019）、精简列表 33 个字段、`/api/probe-status` 200、新样式表已生效。
+- 等级重算：在本机对生产执行 `grade refresh` 因跨洋上传约 4 万行过慢（超过 40 分钟），已中止（事务回滚，旧等级保留）。改由同时进行的定时每日检测（[run 43537181714](https://github.com/Samiya321/nodema/actions/runs/43537181714)，代码 `b23585e`）在 Actions 内重算（01:31 UTC 完成）：定档 7,558 个节点，三网 B 5,594 / C 175 / 待定 1,789；落地 CF 的 1,397 个可用节点不再定档（0 行）；港新 <3 ms 的节点从约 1,650 降到 32 / 53（641 个已测节点中，均为机房探针测同城机房的真实值，7 天内被家宽样本替换）。以后不要从本机跑生产重算。
+
 ## 2026-11-14 第九次发布：节点质量分级（Globalping 接入测量）
 
 - 代码 `7306266`（main，快进合并，[PR #1](https://github.com/Samiya321/nodema/pull/1)），main [CI 43459412230](https://github.com/Samiya321/nodema/actions/runs/43459412230)：396 Python、34 Worker、3 Echo 通过。迁移 head `0018_entry_probes_grading`。
