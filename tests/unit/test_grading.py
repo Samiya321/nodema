@@ -211,9 +211,14 @@ def test_off_peak_plan_covers_reach_overseas_idle_and_routes():
         loc["tags"] == ["eyeball-network"] for t in overseas for loc in t.request()["locations"]
     )
     assert any(t.prefix == planner.CF_PREFIX and t.kind == "QUALITY_CN" for t in tasks)
+    # HK fresh, SG missing: only SG is bought again, one location per measurement.
+    half = planner.History(last_overseas={(p, "HK"): NOW for p in groups})
+    again = planner.plan(groups, half, CARRIERS, now=NOW, peak=False, budget=999, min_probes=2)
+    regions = {loc["country"] for t in again if t.kind == "QUALITY_OVERSEAS" for loc in t.locations}
+    assert regions == {"SG"} and all(t.cost == 1 for t in again if t.kind == "QUALITY_OVERSEAS")
     recent = planner.History(
         last_reach={t.target: NOW for t in reach},
-        last_overseas={p: NOW for p in groups},
+        last_overseas={(p, r): NOW for p in groups for r in planner.OVERSEAS},
         last_idle={p: NOW for p in groups},
         last_trace={p: NOW - timedelta(days=1) for p in groups},
     )
