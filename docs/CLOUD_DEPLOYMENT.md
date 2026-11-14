@@ -8,7 +8,7 @@
 | API | https://nodema-api.simb.workers.dev；管理接口需要管理员鉴权 |
 | Echo | https://nodema-echo.simb.workers.dev；仅返回调用者的观测信息 |
 | 源码 | https://github.com/Samiya321/nodema |
-| 数据库 | Neon Free，PostgreSQL 17，美国东部；迁移至 `0013_export_usage` |
+| 数据库 | Neon Free，PostgreSQL 17，美国东部；2026-11-14 搬到新项目（见下方第十三次记录），当前 schema 见最新发布记录 |
 | API 数据库权限 | 独立角色，授予业务 DML；数据库迁移使用单独的 owner 连接 |
 | Hyperdrive | 已禁用查询缓存，origin 连接数限制为 5 |
 
@@ -106,6 +106,15 @@ UI 额外验证逐行结果、重复提交、390px 布局，以及慢网络下�
 - 第七次发布的待观察项已在第二次全量检测中复核（见 STATUS 第七轮）：原“不支持”节点 984 个可用；机场 61 组，剩余按域名分组确为同一机场。
 - 待观察：下一次同步中原超过 10,000 条的子订阅能否入库，及超时来源重试后的结果（标 `retried`）。
 
+
+## 2026-11-14 第十三次变更：数据库搬到新的 Neon 项目
+
+- 原因：旧项目本计费周期（11-10 到 12-01）公网传输已用 4.23 / 5 GB，按日常用量撑不到重置；用户决定搬到同账号新的 Neon 项目（Free 额度按项目计算）并删除旧项目。
+- 过程：停用全部写数据库的工作流 → 新建项目（AWS us-east-1，PG17，库 `nodema`，owner `nodema_owner`），用 SQL 建 `nodema_api` 并设置与旧库一致的默认权限 → 一次性工作流在 GitHub 美国 Runner 上复制（[run 43608870500](https://github.com/Samiya321/nodema/actions/runs/43608870500)，`scripts/move_database.py --mode reduced`，压缩 30 MB）→ 切换 GitHub Secrets（`DATABASE_URL`、`MIGRATION_DATABASE_URL`、`BACKUP_DATABASE_URL`）、Hyperdrive origin（Cloudflare API，密码不进命令行）和本机 private env → 验证 → 重新启用工作流 → 删除旧项目。临时 Secrets 与一次性工作流已删除，脚本保留。
+- **数据取舍**：为不让复制本身把旧项目推过 5 GB，`test_results` 只复制了 `node_current_status` 引用的最新结果（40,026 / 223,517 行）；其余 36 张表逐表行数一致（共 574,813 行）。丢的是 7 天保留期内较早的单次检测明细（本来 7 天内也会被清理）；每日统计、等级、接入测量、当前状态都完整。新库 194 MB（旧 557 MB）。
+- 验证：schema `0020_shared_credentials`；31 个函数、11 个触发器、70 个索引、135 个约束、3 个视图与旧库一致；`nodema_api` 对全部表/函数/序列有权限；Worker 经 Hyperdrive 查询（可用 8,865 个 UP 节点）且连接只出现在新库；readiness 为真；手动运行 entry-probe（[run 43609618984](https://github.com/Samiya321/nodema/actions/runs/43609618984)）成功写入新库。
+- 备份：搬家前从本机取整库备份失败（`pg_dump` 跨洋 271 秒后退出，原因未记录）；搬家后备份 `backup-2026-11-14-post-move.nma`（35 MB）在本机 PG17 隔离恢复通过（需删除 Neon 写入的 393 条 `pg_attver` 列选项）。旧项目的完整内容（含全部检测明细）只在 `backup-2026-11-14-pre-0020.nma` 里。
+- 未完成：`backup.yml` 仍为停用状态，是否在新项目上恢复每周备份由用户决定（新库每次约 0.2 GB 传输）。
 
 ## 2026-11-14 第十二次发布：按落地国家查看、削减 Neon 传输（无迁移）
 
