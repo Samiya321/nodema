@@ -311,14 +311,14 @@ export async function handle(
         /^[\w.-]+\/[\w.-]+$/.test(env.GITHUB_REPOSITORY) &&
         Boolean(env.GITHUB_DISPATCH_TOKEN) &&
         Boolean(env.GITHUB_WORKFLOW_REF);
-      if (version !== "0018_entry_probes_grading")
+      if (version !== "0019_grade_exclusions")
         return json({
           ready: false,
           checks: { schema: false, dispatch: dispatchReady },
         });
       const checks = {
         database: true,
-        schema: version === "0018_entry_probes_grading",
+        schema: version === "0019_grade_exclusions",
         storage: "PLAINTEXT",
         dispatch: dispatchReady,
       };

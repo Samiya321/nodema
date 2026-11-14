@@ -284,3 +284,49 @@ def test_probe_round_plans_measures_and_records_counts(service, monitor_settings
     assert (
         runner.run(service.sessions, monitor_settings, client=FakeClient())["status"] == "DISABLED"
     )
+
+
+def test_cloudflare_landings_are_neither_measured_nor_graded(
+    service, monitor_settings, fixture_bytes
+):
+    _, catalog, _ = seed(service, monitor_settings, fixture_bytes)
+    excluded, kept = sorted(n["id"] for n in catalog.nodes()["items"])
+    with service.sessions.begin() as session:
+        session.execute(
+            sa.text("UPDATE node_current_status SET last_exit_asn=13335 WHERE node_id=:id"),
+            {"id": excluded},
+        )
+    result = refresh.refresh(service.sessions, monitor_settings)
+    assert result["nodes"] == 1 and result["rows"] == 6
+    with service.sessions() as session:
+        graded = set(session.scalars(sa.select(NodeGrade.node_id).distinct()))
+        assert graded == {kept}
+        entries = runner.load_nodes(session, monitor_settings.freshness_hours, "ALL")
+        assert len(entries) == 1  # the landing on Cloudflare is not probed
+    by_id = {n["id"]: n for n in catalog.page({"vantage": "CN"})["items"]}
+    assert by_id[excluded]["quality_grade"] is None  # "not graded", never PENDING
+    assert by_id[kept]["quality_grade"] == "B"  # three checked days, entry not measured
+    assert catalog.page({"min_quality_grade": "C"})["total"] == 1
+
+
+class NoHomeProbes(FakeClient):
+    """Globalping answers 422 when no home-broadband probe matches a location."""
+
+    def create(self, body):
+        if any("tags" in loc and loc["country"] in ("HK", "SG") for loc in body["locations"]):
+            from app.probes.globalping import ApiError
+
+            raise ApiError("HTTP_422")
+        return super().create(body)
+
+
+def test_overseas_measurement_falls_back_to_any_probe(service, monitor_settings, fixture_bytes):
+    seed(service, monitor_settings, fixture_bytes)
+    client = NoHomeProbes()
+    off_peak = datetime(2026, 11, 13, 4, 0, tzinfo=UTC)
+    summary = runner.run(service.sessions, monitor_settings, client=client, clock=lambda: off_peak)
+    assert summary["status"] == "OK" and summary["failed"] == 0
+    overseas = [
+        r for r in client.requests if {loc["country"] for loc in r["locations"]} == {"HK", "SG"}
+    ]
+    assert overseas and all("tags" not in loc for r in overseas for loc in r["locations"])

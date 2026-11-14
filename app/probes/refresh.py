@@ -1,8 +1,9 @@
 """Recompute node_grades from measurements (after probe rounds and daily checks).
 
 Only currently available, enabled nodes are graded; others have no row and show
-their status instead. Subscriptions that filter or sort by grade are marked for
-rebuild when any grade changes.
+their status instead. Nodes landing on an excluded network (Cloudflare) get no row
+either: they are "not graded", never "pending". Subscriptions that filter or sort
+by grade are marked for rebuild when any grade changes.
 """
 
 from collections import defaultdict
@@ -53,8 +54,9 @@ def load(session, fresh_hours: int):
             " LEFT JOIN ip_info ip ON ip.ip=c.last_exit_ip AND ip.status='SUCCESS'"
             " WHERE n.enabled AND c.status IN ('UP','DEGRADED')"
             " AND c.last_checked_at>now()-make_interval(hours=>:fresh)"
+            " AND NOT coalesce(c.last_exit_asn,-1)=ANY(CAST(:excluded AS bigint[]))"
         ),
-        {"fresh": fresh_hours},
+        {"fresh": fresh_hours, "excluded": sorted(planner.EXCLUDED_EXIT_ASNS)},
     ).all()
     stability = {
         row.node_id: (row.available, row.checked)
@@ -117,13 +119,16 @@ def compute(nodes, stability, quality, reach, traces, policy) -> list[dict]:
         entry = planner.EntryNode(node.id, node.protocol, ip, node.server_port, node.entry_asn)
         target = entry.target if node.protocol != "hysteria2" else ip
         available, checked = stability.get(node.id, (0, 0))
-        facts = NodeFacts(node.protocol, entry.target, available, checked, node.is_proxy)
+        cdn = entry.prefix == planner.CF_PREFIX
+        facts = NodeFacts(node.protocol, entry.target, available, checked, node.is_proxy, cdn)
         reach_failed = node.protocol != "hysteria2" and _reach_failed(
             reach.get(entry.target or "", [])
         )
         carriers = {}
         for vantage in (*CARRIERS, "HK", "SG"):
-            samples = quality.get((entry.prefix, vantage), []) if entry.prefix else []
+            # HK/SG probes only reach their local CF data centre: never use those samples.
+            skip = not entry.prefix or (cdn and vantage not in CARRIERS)
+            samples = [] if skip else quality.get((entry.prefix, vantage), [])
             access = (
                 access_stats(samples, target, vantage in CARRIERS, policy) if samples else Access()
             )

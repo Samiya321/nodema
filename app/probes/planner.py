@@ -5,7 +5,10 @@ Units (see docs/NODE_GRADING_DESIGN.md 4.4):
   is pinged from each Chinese carrier (peak and idle), HK and SG;
 - national reachability is per ip:port, one mainland probe each, off-peak;
 - the outbound route (mtr hop ASNs) per prefix and carrier, about monthly;
-- Cloudflare entries all hit the anycast edge: one shared "cf" prefix.
+- Cloudflare entries all hit the anycast edge: one shared "cf" prefix, measured from
+  the Chinese carriers only (HK/SG probes reach a CF data centre in their own city,
+  about 1 ms, which says nothing about the node);
+- nodes that land on Cloudflare (exit ASN 13335) are not measured or graded at all.
 """
 
 import ipaddress
@@ -19,6 +22,14 @@ from app.grading import CARRIERS
 
 CLOUDFLARE_ASN = 13335
 CF_PREFIX = "cf"
+# Landing networks the owner does not want measured or graded (WARP/CF egress).
+EXCLUDED_EXIT_ASNS = frozenset({CLOUDFLARE_ASN})
+# HK/SG users sit on home broadband; datacentre probes next to the server read ~1 ms.
+OVERSEAS_LOCATIONS = (
+    {"country": "HK", "tags": ["eyeball-network"], "limit": 1},
+    {"country": "SG", "tags": ["eyeball-network"], "limit": 1},
+)
+OVERSEAS_FALLBACK = ({"country": "HK", "limit": 1}, {"country": "SG", "limit": 1})
 REACH_EVERY = timedelta(days=2)
 IDLE_EVERY = timedelta(days=3)
 OVERSEAS_EVERY = timedelta(days=2)
@@ -276,8 +287,8 @@ def plan(
                 ((idle_age != float("inf"), -idle_age / IDLE_EVERY.total_seconds()), task)
             )
         overseas_age = _age(history.last_overseas.get(key), now)
-        if overseas_age >= OVERSEAS_EVERY.total_seconds():
-            locations = ({"country": "HK", "limit": 1}, {"country": "SG", "limit": 1})
+        if key != CF_PREFIX and overseas_age >= OVERSEAS_EVERY.total_seconds():
+            locations = tuple(dict(item) for item in OVERSEAS_LOCATIONS)
             task = Task("QUALITY_OVERSEAS", key, target, protocol, locations, 2, False)
             candidates.append(
                 (
