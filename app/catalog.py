@@ -67,6 +67,7 @@ FILTER_KEYS = {
     "cross_border",
     "unreachable",
     "best_per_server",
+    "udp",
 }
 BOOLEAN_KEYS = (
     "enabled",
@@ -75,6 +76,7 @@ BOOLEAN_KEYS = (
     "cross_border",
     "unreachable",
     "best_per_server",
+    "udp",
 )
 
 

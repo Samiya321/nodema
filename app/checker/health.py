@@ -13,6 +13,7 @@ import httpcore
 from app.checker.geoip import GeoIP
 from app.checker.precheck import EndpointCache
 from app.checker.runtime import Mihomo
+from app.checker.udp import probe as udp_probe
 from app.conversion import to_mihomo
 from app.domain import AssetError
 from app.ingestion.fetcher import DeadlineStream, SafeBackend, read_body, validate_url
@@ -47,6 +48,9 @@ class Observation:
     probe_metadata: dict = field(default_factory=dict)
     measurement_kind: str = "FULL"
     precheck_metadata: dict = field(default_factory=dict)
+    udp_status: str = "NOT_RUN"
+    udp_duration_ms: int | None = None
+    udp_exit_ip: str | None = None
 
     def values(self):
         values = asdict(self)
@@ -222,6 +226,7 @@ class HealthChecker:
         )
         self.resolver = self.cache.resolver
         self.probe_key, self.probe_metadata = "legacy", {}
+        self.udp_targets = None  # None: the public STUN/DNS targets in app.checker.udp
         self.context = {}
         self.metrics = {
             key: 0 for key in ("full_checks", "full_samples", "preflight_skips", "cooldown_skips")
@@ -429,7 +434,24 @@ class HealthChecker:
                 self.metrics["full_samples"] += 1
         self.metrics["full_checks"] += 1
         hosts = {identity["server_host"]: ips} if not resolution["literal"] else {}
-        return result, {"proxy": proxy, "hosts": hosts}
+        # The checker relays UDP unless the node itself declares TCP only.
+        udp = proxy.get("udp") is not False
+        if udp:
+            proxy["udp"] = True
+        return result, {"proxy": proxy, "hosts": hosts, "udp": udp}
+
+    def _udp(self, result, ready, port):
+        """UDP through the node, after HTTPS has proved it works (Wi-Fi Calling)."""
+        if not self.settings.udp_check_enabled:
+            return
+        if not ready.get("udp", True):
+            result.udp_status = "NOT_SUPPORTED"
+            return
+        options = {"targets": self.udp_targets} if self.udp_targets else {}
+        checked = udp_probe(port, timeout=self.settings.udp_timeout_seconds, **options)
+        result.udp_status, result.udp_duration_ms = checked.status, checked.duration_ms
+        result.udp_exit_ip = checked.exit_ip
+        result.precheck_metadata["udp"] = checked.attempts
 
     def probe(self, result, ready, listener=None):
         """The proxy request itself. listener=(port, alive) uses a shared batch runtime
@@ -458,6 +480,7 @@ class HealthChecker:
                 result.status = (
                     "DEGRADED" if result.http_duration_ms > self.settings.degraded_http_ms else "UP"
                 )
+                self._udp(result, ready, port)
                 return result
             result.http_duration_ms = milliseconds(started)
             result.proxy_status = result.http_status = "SUCCESS"
@@ -477,6 +500,7 @@ class HealthChecker:
             result.status = (
                 "DEGRADED" if result.http_duration_ms > self.settings.degraded_http_ms else "UP"
             )
+            self._udp(result, ready, port)
         except AssetError as error:
             result.error_code = error.code
             if error.code == "ECHO_TIMEOUT":

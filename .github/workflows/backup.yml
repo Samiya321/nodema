@@ -1,7 +1,7 @@
 name: Encrypted database backup
 on:
   schedule:
-    - cron: '41 21 * * 6' # Sunday 05:41 Asia/Shanghai
+    - cron: '41 21 1,15 * *' # twice a month (05:41 Asia/Shanghai on the 2nd and 16th); ~0.2 GB Neon transfer each
   workflow_dispatch:
 permissions:
   contents: read

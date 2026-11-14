@@ -24,7 +24,7 @@ from app.database.session import make_engine, session_factory
 from app.domain import AssetError, InputFormat, SourceType
 from app.exports import ExportService
 from app.ingestion.fetcher import Fetcher
-from app.ingestion.service import AssetService, source_due
+from app.ingestion.service import AssetService, source_dormant, source_due
 from app.scans import ScanService, now
 from app.security.crypto import Cipher
 from app.security.logging import configure_logging
@@ -307,6 +307,8 @@ def source_sync_all(due_only: bool = False, fetch_workers: int = 16):
         batch = []
         for source in assets.list_sources():
             if not source["enabled"] or source["id"] in seen:
+                continue
+            if due_only and source_dormant(source, now()):
                 continue
             if (
                 due_only
@@ -626,9 +628,9 @@ def usage_show(days: int = 30):
 @usage_app.command("sample")
 @safe_command
 def usage_sample():
-    from app.usage import Usage
+    from app.usage import Usage, neon_transfer
 
-    output(Usage(service().sessions).database_sample())
+    output(Usage(service().sessions).database_sample(neon_transfer(Settings())))
 
 
 @usage_app.command("collect-actions")

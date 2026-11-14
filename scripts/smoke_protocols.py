@@ -82,8 +82,50 @@ class Geo:
         pass
 
 
+def stun_responder():
+    """Loopback STUN server: answers Binding requests with the sender's address."""
+    import socket
+    import struct
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.bind(("127.0.0.1", 0))
+    sock.settimeout(0.2)
+    stop = threading.Event()
+
+    def serve():
+        while not stop.is_set():
+            try:
+                data, (host, port) = sock.recvfrom(2048)
+            except OSError:
+                continue
+            if len(data) < 20 or data[:2] != b"\x00\x01":
+                continue
+            magic, transaction = data[4:8], data[8:20]
+            xport = port ^ 0x2112
+            xaddr = bytes(a ^ b for a, b in zip(socket.inet_aton(host), magic, strict=True))
+            attr = struct.pack("!HHBBH", 0x0020, 8, 0, 1, xport) + xaddr
+            sock.sendto(
+                struct.pack("!HH", 0x0101, len(attr)) + magic + transaction + attr, (host, port)
+            )
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+
+    def close():
+        stop.set()
+        thread.join(timeout=2)
+        sock.close()
+
+    return sock.getsockname()[1], close
+
+
+# Protocols whose loopback server relays UDP in this smoke (others only report).
+UDP_REQUIRED = {"shadowsocks", "trojan", "vless", "vmess", "hysteria2"}
+
+
 def main(binary):
     binary = str(Path(binary).resolve())
+    stun_port, stop_stun = stun_responder()
     with tempfile.TemporaryDirectory(prefix="nodema-protocol-smoke-") as temporary:
         directory = Path(temporary)
         cert, key = certificate(directory)
@@ -375,17 +417,24 @@ def main(binary):
                 fingerprint_key_b64=base64.b64encode(b"H" * 32).decode(),
             )
             checker = HealthChecker(settings, runtime=Mihomo(binary), echo=LocalEcho(), geoip=Geo())
+            checker.udp_targets = (("loopback-stun", "127.0.0.1", stun_port, "stun"),)
             checker.preflight()
             for identity in identities:
                 result = checker.check(identity, "synthetic")
                 if result.status != "UP":
                     raise AssetError("HANDSHAKE_FAILED_" + identity["protocol"].upper())
+                if identity["protocol"] in UDP_REQUIRED and (
+                    result.udp_status != "SUCCESS" or result.udp_exit_ip != "127.0.0.1"
+                ):
+                    raise AssetError("UDP_FAILED_" + identity["protocol"].upper())
                 label = identity["protocol"]
                 if label == "shadowsocks":
                     label += "/" + identity["protocol_options"]["cipher"]
                 else:
                     label += "/" + identity["transport"] + "/" + identity["security"]
-                print(label + ": LOCAL_HANDSHAKE_AND_HTTPS_OK", flush=True)
+                print(
+                    label + ": LOCAL_HANDSHAKE_AND_HTTPS_OK, UDP " + result.udp_status, flush=True
+                )
             pid = checker.runtime.process.pid
             # Same name, server and protocol, but a different identity: no old
             # authenticated connection or cached proxy may survive the reload.
@@ -445,6 +494,13 @@ def main(binary):
                     batch.release()
                     if (observed.status == "UP") != cases[name][1]:
                         raise AssetError("BATCH_RESULT_WRONG_" + name)
+                    protocol = cases[name][0]["protocol"]
+                    if (
+                        cases[name][1]
+                        and protocol in UDP_REQUIRED
+                        and observed.udp_status != "SUCCESS"
+                    ):
+                        raise AssetError("BATCH_UDP_FAILED_" + name)
                 if batch.alive() or pool.metrics["batch_runtimes"] != 1:
                     raise AssetError("BATCH_RUNTIME_NOT_RETIRED")
                 print(
@@ -467,6 +523,7 @@ def main(binary):
             http.shutdown()
             http.server_close()
             thread.join(timeout=2)
+            stop_stun()
 
 
 if __name__ == "__main__":

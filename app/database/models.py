@@ -289,6 +289,10 @@ class TestResult(Base):
     measurement_kind: Mapped[str] = mapped_column(sa.Text, server_default="FULL")
     precheck_metadata: Mapped[dict] = mapped_column(JSONB, server_default=sa.text("'{}'::jsonb"))
     exit_asn_org: Mapped[str | None] = mapped_column(sa.Text)
+    # UDP through the node (0021): NOT_RUN / SUCCESS / FAILED / NOT_SUPPORTED.
+    udp_status: Mapped[str | None] = mapped_column(sa.Text)
+    udp_duration_ms: Mapped[int | None]
+    udp_exit_ip: Mapped[str | None] = mapped_column(sa.Text)
 
 
 class NodeCurrentStatus(Base):
@@ -317,6 +321,11 @@ class NodeCurrentStatus(Base):
     next_full_check_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
     measurement_kind: Mapped[str] = mapped_column(sa.Text, server_default="FULL")
     last_exit_asn_org: Mapped[str | None] = mapped_column(sa.Text)
+    udp_status: Mapped[str | None] = mapped_column(sa.Text)
+    udp_duration_ms: Mapped[int | None]
+    udp_exit_ip: Mapped[str | None] = mapped_column(sa.Text)
+    udp_checked_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    udp_success_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
 
 
 class ScanRequest(Base):
@@ -691,6 +700,9 @@ class DatabaseSample(Base):
     database_bytes: Mapped[int] = mapped_column(sa.BigInteger)
     table_bytes: Mapped[int] = mapped_column(sa.BigInteger)
     connections: Mapped[int]
+    transfer_bytes: Mapped[int | None] = mapped_column(sa.BigInteger)
+    transfer_limit_bytes: Mapped[int | None] = mapped_column(sa.BigInteger)
+    transfer_period_end: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
 
 
 class ActionRun(Base):

@@ -119,6 +119,12 @@ export async function usageSummary(rows: Rows, days: number) {
       [since],
     )
   ).map((r) => numeric(r, ["database_bytes", "table_bytes", "connections"]));
+  // Latest Neon transfer reading, whatever the window (null without a Neon API key).
+  const transfer = (
+    await rows(
+      "SELECT taken_at,transfer_bytes,transfer_limit_bytes,transfer_period_end FROM database_samples WHERE transfer_bytes IS NOT NULL ORDER BY taken_at DESC LIMIT 1",
+    )
+  ).map((r) => numeric(r, ["transfer_bytes", "transfer_limit_bytes"]))[0];
   const first = (
     await rows(
       "SELECT table_bytes FROM database_samples WHERE taken_at >= $1 ORDER BY taken_at LIMIT 1",
@@ -148,6 +154,7 @@ export async function usageSummary(rows: Rows, days: number) {
     executions,
     action_runs: actions,
     database_samples: samples,
+    neon_transfer: transfer ?? null,
     runner_minutes: Number(runner.minutes),
     database_growth_bytes:
       samples.length > 1
