@@ -38,7 +38,7 @@ jobs:
         with:
           name: encrypted-database-${{ github.run_id }}
           path: backups/database.nma
-          retention-days: 7
+          retention-days: 20 # runs twice a month: always one backup on hand
           if-no-files-found: error
       - name: Record job network usage
         if: always() && steps.network.outcome == 'success' && steps.dependencies.outcome == 'success'

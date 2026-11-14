@@ -102,6 +102,11 @@ def test_udp_results_are_published_filtered_and_remembered(service, monitor_sett
             sa.text("SELECT count(*) FROM node_current_status WHERE udp_success_at IS NOT NULL")
         )
     assert kept == 1
+    # A subscription can keep only UDP-capable nodes (the same filter key).
+    from app.export_render import validate
+
+    with service.sessions() as session:
+        assert validate(session, "mihomo", {"udp": True})["udp"] is True
 
 
 def test_one_relay_entry_landing_in_many_countries_is_an_airport(service, monitor_settings):
