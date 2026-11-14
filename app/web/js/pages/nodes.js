@@ -94,9 +94,11 @@ export async function render(root, { params, go }) {
   // ---- grade bar: proportions on top, a toggle per bucket below ----
   const counts = Object.fromEntries(BUCKETS.map((b) => [b, 0]));
   for (const n of all) counts[bucketOf(n)]++;
+  // The bar shows the make-up of available nodes; unavailable ones (most of a large
+  // library) only get a key and a count, or the colours would shrink to a sliver.
   const track = h("div", { class: "spectrum-track", "aria-hidden": "true" });
   for (const b of BUCKETS) {
-    if (!counts[b]) continue;
+    if (!counts[b] || b === "OFF") continue;
     const part = h("span", { class: "seg-" + b + (chosen.size && !chosen.has(b) ? " off" : "") });
     part.style.flexGrow = String(counts[b]); // CSSOM: the CSP forbids style attributes
     track.append(part);
@@ -126,7 +128,7 @@ export async function render(root, { params, go }) {
     ),
     chosen.size ? h("button", { type: "button", class: "quiet clear-keys", onclick: () => update({ g: "" }) }, "显示全部") : null,
   );
-  const spectrum = h("section", { class: "spectrum", "aria-label": "等级分布" }, track, keys);
+  const spectrum = h("section", { class: "spectrum", "aria-label": "等级分布" }, track.childElementCount ? track : null, keys);
 
   // ---- filter row ----
   const search = h("input", {
