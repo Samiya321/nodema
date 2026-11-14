@@ -33,12 +33,15 @@ const nullsLast = (a, b, compare) => (a == null) - (b == null) || (a == null ? 0
 const number = (key) => (a, b) => nullsLast(a[key], b[key], (x, y) => x - y);
 const text = (pick) => (a, b) => nullsLast(pick(a) || null, pick(b) || null, collator.compare);
 const ratio = (n) => (n.checked_7d ? n.avail_7d / n.checked_7d : null);
+const UDP_RANK = { SUCCESS: 0, FAILED: 1, NOT_SUPPORTED: 2 };
+const udpRank = (n) => UDP_RANK[n.udp] ?? 3;
 
 // key -> [header, comparator for ascending, default direction]
 export const COLUMNS = {
   name: ["节点", text((n) => n.name), "asc"],
   grade: ["等级", (a, b) => rank(a) - rank(b) || (b.quality_score ?? -1) - (a.quality_score ?? -1), "asc"],
   rtt: ["延迟", number("peak_rtt_ms"), "asc"],
+  udp: ["UDP", (a, b) => udpRank(a) - udpRank(b) || (a.udp_ms ?? 1e9) - (b.udp_ms ?? 1e9), "asc"],
   avail: ["7 天可用", (a, b) => nullsLast(ratio(a), ratio(b), (x, y) => x - y) || (a.checked_7d ?? 0) - (b.checked_7d ?? 0), "desc"],
   route: ["线路", text((n) => (n.entry_country || "") + (n.exit_country || "")), "asc"],
   operator: ["落地运营商", text(operatorOf), "asc"],
@@ -82,10 +85,10 @@ export function headRow(sortKey, direction, onSort, pickAll) {
       cell("name"),
       cell("grade"),
       cell("rtt", "num"),
+      cell("udp"),
       cell("avail"),
       cell("route"),
       cell("operator", "operator"),
-      h("th", { scope: "col" }, "类别"),
       cell("checked", "num"),
     ),
   );
@@ -103,6 +106,14 @@ function latency(n) {
   if (n.peak_rtt_ms == null) return h("span", { class: "faint", title: n.icmp_only ? "UDP 入口，按同网段测" : "还没有测量样本" }, "未测");
   const loss = n.peak_loss ? h("span", { class: n.peak_loss > 0.03 ? "loss bad-text" : "loss" }, `丢 ${(n.peak_loss * 100).toFixed(1)}%`) : null;
   return h("span", { class: "rtt" }, h("strong", {}, ms(n.peak_rtt_ms)), loss);
+}
+
+// UDP through the node (Wi-Fi Calling): only shown for nodes that work now.
+const UDP_TEXT = { SUCCESS: "通", FAILED: "不通", NOT_SUPPORTED: "仅 TCP" };
+function udpCell(n) {
+  if (!n.udp || n.udp === "NOT_RUN") return h("span", { class: "faint", title: isAvailable(n) ? "下次每日检测后显示" : "节点当前不可用" }, "—");
+  const title = n.udp === "SUCCESS" ? `UDP 往返约 ${n.udp_ms} ms（STUN/DNS 经节点转发）` : n.udp === "FAILED" ? "多次重试仍收不到 UDP 回包" : "节点配置声明只走 TCP";
+  return h("span", { class: "udp udp-" + n.udp, title }, h("span", { class: "udp-dot", "aria-hidden": "true" }), UDP_TEXT[n.udp] || n.udp);
 }
 
 // Seven cells: green for days with a success, red for checked days without one.
@@ -130,7 +141,7 @@ function operatorCell(n) {
 
 export function nodeRow(n, picked, onPick) {
   const ipType = n.exit_ip_type ? IP_TYPE[n.exit_ip_type] + (n.exit_ip_proxy ? "·代理标记" : "") : "";
-  const meta = [n.short_id, n.protocol, ipType, n.server_node_count > 1 ? `同服务器 ${n.server_node_count} 个` : "", n.enabled ? "" : "已停用", n.present_source_count ? "" : "上游已移除"].filter(Boolean);
+  const meta = [n.short_id, n.protocol, KIND[n.node_group] || "", ipType, n.server_node_count > 1 ? `同服务器 ${n.server_node_count} 个` : "", n.enabled ? "" : "已停用", n.present_source_count ? "" : "上游已移除"].filter(Boolean);
   return h(
     "tr",
     { class: (n.enabled ? "" : "dim ") + (picked ? "picked" : "") },
@@ -142,10 +153,10 @@ export function nodeRow(n, picked, onPick) {
     ),
     h("td", { "data-label": "等级" }, gradeCell(n)),
     h("td", { "data-label": isCarrier(vantage) ? "晚高峰" : "延迟", class: "num" }, latency(n)),
+    h("td", { "data-label": "UDP" }, udpCell(n)),
     h("td", { "data-label": "7 天可用" }, week(n)),
     h("td", { "data-label": "线路" }, route(n)),
     h("td", { "data-label": "落地运营商", class: "operator" }, operatorCell(n)),
-    h("td", { "data-label": "类别" }, h("span", { class: "kind " + (n.node_group === "AIRPORT" ? "air" : "own") }, KIND[n.node_group] || "—")),
     h("td", { "data-label": "最近检测", class: "num faint-text" }, ago(n.last_checked_at)),
   );
 }

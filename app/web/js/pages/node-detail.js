@@ -8,6 +8,15 @@ const MEASURE = { FULL: "完整代理验证", PREFLIGHT: "入口预检", SKIPPED
 const BAND = { S: "优", A: "良", B: "中", C: "差" };
 const lossText = (v) => (v === null || v === undefined ? "—" : (v * 100).toFixed(1) + "%");
 
+// UDP through the node (Wi-Fi Calling): the latest check, and its exit when it differs.
+function udpText(n) {
+  if (!n.udp_state || n.udp_state === "NOT_RUN") return n.udp_success_at ? `最近一次通过：${ago(n.udp_success_at)}` : "还没有测过";
+  if (n.udp_state === "NOT_SUPPORTED") return "节点配置声明只走 TCP";
+  if (n.udp_state === "FAILED") return n.udp_success_at ? `这次不通（重试多次）；上次通过 ${ago(n.udp_success_at)}` : "不通（重试多次仍收不到回包）";
+  const other = n.udp_exit_ip && n.exit_ip && n.udp_exit_ip !== n.exit_ip;
+  return h("span", {}, `通，往返约 ${n.udp_ms} ms`, other ? h("span", { class: "muted" }, `；UDP 出口 ${n.udp_exit_ip}（与 TCP 落地不同）`) : null);
+}
+
 function pairs(entries) {
   return h("dl", { class: "pairs" }, entries.flatMap(([k, v]) => [h("dt", {}, k), h("dd", {}, v ?? "—")]));
 }
@@ -52,6 +61,7 @@ export async function nodeDetail(id) {
         ["ISP", n.exit_isp],
         ["IP 类型", n.exit_ip_type ? `${IP_TYPE[n.exit_ip_type]}${n.exit_ip_proxy ? "，被标记为 VPN/代理" : ""}（ip-api 数据库标记，非实测）` : null],
         ["落地 ASN", n.exit_asn ? `AS${n.exit_asn} ${n.exit_asn_org || ""}` : "—"],
+        ["UDP", udpText(n)],
       ]),
       pairs([
         ["美国 Runner 代理延迟", ms(n.http_duration_ms)],
