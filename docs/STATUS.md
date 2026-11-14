@@ -49,6 +49,16 @@
 - **单订阅条数上限放开**：一个 Sub-Store 子订阅超过 10,000 个节点而一直 `TOO_MANY_ITEMS`。条数上限改为 200,000（`SOURCE_MAX_ITEMS`，Sub-Store 聚合预算 `SOURCE_SUBSTORE_MAX_ITEMS` 200,000、最大 500,000），实际由每份 10 MB 大小上限约束（约 10 万条链接）。
 - **超时重试**：`source sync-all` 结束前把本轮 `FETCH_TIMEOUT` 的来源再同步一次（4 线程并行下载），结果替换第一次并标 `retried`；其他错误不重试。上一轮 10 个“这次失败”中 9 个是超时，分属不同域名，一个半小时前都正常。
 
+2026-11-15 第二轮：可检测节点、等级重算、调度与页面（无迁移，main `6bc3a9f`..`a19ffff`，见 [CLOUD_DEPLOYMENT.md](CLOUD_DEPLOYMENT.md) 第十五次发布）：
+- **“不支持”的原因**：转换拒绝时记录字段名（`Unsupported.reason`，只含字段名不含值）；`nodema node unsupported-reasons` 与只能手动触发的 `diagnose.yml` 汇总计数。11-15 生产 7,763 个启用的“不支持”节点：VLESS `xhttp` 1,624、`pcs`（v2rayN 证书固定）约 1,300、REALITY `spx` 628、VMess `test_name`/`name` 约 730、TCP 残留 path 217、TCP HTTP 伪装 199、`raw` 185、`httpupgrade` 201 等。
+- **新支持（只改转换层，不改解析与指纹）**：VLESS XHTTP（含 `mode`）、HTTP Upgrade（mihomo 的 ws `v2ray-http-upgrade`）、TCP HTTP 头伪装（mihomo `network: http`）、`raw`=tcp、`pcs`→mihomo `fingerprint`（单个 SHA-256）、REALITY `spider_x`（只放进 URI）、TCP 的 host/path 残留、VMess 记账字段与 `ech`。sing-box 不能表达 XHTTP、头伪装和证书固定，这些节点在 sing-box 导出中跳过；URI/二维码改为用 mihomo 校验，可以携带它们。真实 mihomo 回环冒烟新增 `vless/xhttp/tls`、`vmess/httpupgrade/tls`（含 UDP）。
+- **效果**：11-15 对 3,470 个原“不支持”的自建节点做了一次定向检测：自建可用 934 → 1,099，仍不支持 1,996（VMess 946、VLESS 931，主要是 VMess xhttp、REALITY 缺公钥、未知扩展字段等，见诊断）。
+- **解析侧**：`UNSUPPORTED_PROTOCOL` 记录协议名，来源解析摘要新增 `unsupported_protocols` 计数；没有提升 `PARSER_VERSION`（为省流量不强制重解析），内容变化的来源下次同步时出现。
+- **等级重算**：同一入口网段（CF 入口全为 `cf`）的统计每个网段只算一次（合成数据 1000 节点 × 6000 样本：4.1 秒 → 0.03 秒），结果与逐节点计算一致。但生产这一步仍约 13 分钟，说明主要耗时在数据库读写；已在输出里加 `timings`（load/compute/write/samples），等下一次运行定位。
+- **调度**：每日检测改由 API Worker 的 Cron（`17 20 * * *`，带 `trigger=schedule`）触发，`daily-check.yml` 去掉 GitHub schedule（此前每天晚 4–5 小时）。失败冷却起点 24 小时（原 6 小时，每日一次检测时 6/12 小时的冷却从不生效）。`backup.yml` 支持仓库变量 `BACKUP_SKIP_UNTIL`，已设 `2026-11-16` 跳过 11-15 那次。
+- **页面**（按生产页面逐页检查）：顶部状态栏不再显示 `null`，所选节点批次显示“所选”；切换页面回到顶部；总览只按每日检测范围提示未检测数，“需要处理”每类最多 3 条加汇总；按国家视图分组从二次方降为线性、组头不再重叠；ASN 排行在没有 S/A 时按“B 及以上”排、延迟改称入口延迟；机场按可用节点排序、未提供总量不再显示 0 B；统计条铺满整行；用量页数字格式、中文工作流名与结果、表格先显示 10 行、流量按速度预计用完日期；来源页“添加来源”移到标题行；设置页 ASN 简称可搜索、先显示 20 行、改动后才可保存；手机宽度状态栏换行。
+- **验证**：本地隔离 PG 432 Python + 36 Worker；真实 mihomo 冒烟；本地只读镜像（只转发 GET，密钥只在本机代理里）对生产数据逐页检查 1440 px 与 375 px。
+
 2026-11-15 UDP、中转规则与节点页重做（迁移 `0021_udp_relay`，main `3b68418`，见 [CLOUD_DEPLOYMENT.md](CLOUD_DEPLOYMENT.md) 第十四次发布）：
 - **UDP（Wi-Fi Calling）**：`app/checker/udp.py`。每个 HTTPS 通过的节点经自己的 mihomo 监听发 STUN（Cloudflare、Google），失败再用 DNS（1.1.1.1:53），共 4 次尝试，每次新建 SOCKS5 UDP 关联；全部失败才记 FAILED。配置声明仅 TCP 的节点记 NOT_SUPPORTED。结果存 `test_results`/`node_current_status`（含最近一次成功时间和 UDP 出口 IP），节点列表 `udp` 字段与 `{"udp": true}` 筛选。真实 mihomo 回环冒烟（`scripts/smoke_protocols.py`）对全部协议和批量运行验证 UDP。
 - **中转入口算机场**、**失败来源每周重试**、**冷却上限 168 小时**、**备份每月 1/15 日**：见 HANDOFF.md 决策表。

@@ -92,7 +92,7 @@ Pages Functions 将 `/api/*` 和 `/subscriptions/*` 转发给 Worker 服务绑�
 
 - `export-build.yml`：保存、编辑或重试订阅方案时调用；Actions 生成并发布当前成品，独立于长时间健康检测任务。
 - `source-sync.yml`（Sync sources）：只在 Dashboard 点击“同步来源”时调用；拉取已请求或到期的来源、生成 Sub-Store 子来源、刷新机场流量并发布订阅，**不检测节点**。导入/编辑来源不会自动启动它。
-- `daily-check.yml`：Dashboard“检测”按钮以 `scope`（SELF_HOSTED/AIRPORT/ALL）调用，创建 MANUAL 批次；北京时间每天 04:17 的定时运行读取设置页（默认开启、仅自建）。先同步待同步来源再检测，恢复保留期内未完成批次；动态 matrix 最多 4 个并行 Job（默认每片 100 节点、每 Job 16 并发）。可传入已有 run UUID 单独恢复。详见 [SOURCES_AIRPORTS_NAMING.md](SOURCES_AIRPORTS_NAMING.md)。
+- `daily-check.yml`：Dashboard“检测”按钮以 `scope`（SELF_HOSTED/AIRPORT/ALL）调用，创建 MANUAL 批次；北京时间每天 04:17 由 API Worker 的 Cron 以 `trigger=schedule` 派发，读取设置页（默认开启、仅自建）。先同步待同步来源再检测，恢复保留期内未完成批次；动态 matrix 最多 4 个并行 Job（默认每片 100 节点、每 Job 16 并发）。可传入已有 run UUID 单独恢复。详见 [SOURCES_AIRPORTS_NAMING.md](SOURCES_AIRPORTS_NAMING.md)。
 - `backup.yml`：北京时间每周日 05:41，配置备份 AES 后，加密备份并上传仅含密文的 artifact，保留 7 天；未配置则明确跳过，不上传明文备份。
 - `tests.yml`：可在 PR 执行，但只使用合成数据和本地 PostgreSQL，不使用生产 Secrets。
 - `usage.yml`：同仓库默认分支的每日检测、来源同步（Sync sources）、订阅构建、备份工作流完成后读取安全的 jobs 起止时间和计数，并采样数据库容量。自动 `GITHUB_TOKEN` 只需 `actions: read` / `contents: read`，无需新增长期 token。
