@@ -6,8 +6,7 @@ const PROBE_ERRORS = { NETWORK: "无法连接 Globalping", TIMEOUT: "测量超�
 
 function qualityPanel(status, vantage, go) {
   const counts = status?.grades || {};
-  const link = (g) =>
-    `#/nodes?view=grade&vantage=${vantage}&` + (g === "D" ? "unreachable=true" : g === "PENDING" ? "quality_grade=PENDING" : `min_quality_grade=${g}`);
+  const link = (g) => `#/nodes?vantage=${vantage}&g=${g}`;
   const total = Object.values(counts).reduce((a, b) => a + b, 0);
   return h(
     "section",
