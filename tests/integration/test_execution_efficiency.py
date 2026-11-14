@@ -123,7 +123,8 @@ def test_cooldown_publication_is_idempotent_skips_do_not_extend_failures(service
         current = session.scalars(sa.select(NodeCurrentStatus)).one()
         previous = current.next_full_check_at
         assert current.consecutive_failures == 3
-        assert 5.9 < (previous - current.last_checked_at).total_seconds() / 3600 < 6.1
+        base = settings.failure_cooldown_base_hours  # first cooldown: one base period
+        assert base - 0.1 < (previous - current.last_checked_at).total_seconds() / 3600 < base + 0.1
     checker.status, checker.kind = "UNKNOWN", "SKIPPED"
     skipped = finish(scans, 3)
     scans.finalize(skipped["id"])
@@ -139,7 +140,7 @@ def test_cooldown_publication_is_idempotent_skips_do_not_extend_failures(service
     with service.sessions() as session:
         current = session.scalars(sa.select(NodeCurrentStatus)).one()
         assert current.consecutive_failures == 4
-        assert (current.next_full_check_at - current.last_checked_at).total_seconds() == 12 * 3600
+        assert (current.next_full_check_at - current.last_checked_at).total_seconds() == 2 * base * 3600
     checker.probe = "different-runner"
     finish(scans, 1)
     with service.sessions() as session:

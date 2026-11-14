@@ -9,6 +9,7 @@ by grade are marked for rebuild when any grade changes.
 from collections import defaultdict
 from dataclasses import replace
 from datetime import UTC, datetime, time, timedelta
+from time import perf_counter
 from zoneinfo import ZoneInfo
 
 import sqlalchemy as sa
@@ -208,6 +209,7 @@ def due(last: datetime | None, now: datetime, policy: dict) -> bool:
 
 
 def refresh(sessions, settings, *, if_due: bool = False, clock=None) -> dict:
+    started = perf_counter()
     with sessions() as session:
         policy = load_policy(session)
         if if_due:
@@ -215,7 +217,9 @@ def refresh(sessions, settings, *, if_due: bool = False, clock=None) -> dict:
             if not due(last, (clock or (lambda: datetime.now(UTC)))(), policy):
                 return {"skipped": True}
         nodes, stability, quality, reach, traces = load(session, settings.freshness_hours)
+    loaded = perf_counter()
     rows = compute(nodes, stability, quality, reach, traces, policy)
+    computed = perf_counter()
     now = datetime.now(UTC)
     with sessions.begin() as session:
         # Daily finalize and an hourly round may overlap: serialize delete-all/insert.
@@ -251,9 +255,17 @@ def refresh(sessions, settings, *, if_due: bool = False, clock=None) -> dict:
     for row in rows:
         if row["vantage"] == policy["default_vantage"]:
             counts[row["grade"]] += 1
+    # Phase timings (seconds) in the Actions log: where a slow recompute spends its time.
+    timings = {
+        "load": round(loaded - started, 1),
+        "compute": round(computed - loaded, 1),
+        "write": round(perf_counter() - computed, 1),
+        "samples": sum(len(v) for v in quality.values()),
+    }
     return {
         "nodes": len(nodes),
         "rows": len(rows),
+        "timings": timings,
         "changed": changed,
         "invalidated_exports": invalidated,
         "grades": dict(counts),
