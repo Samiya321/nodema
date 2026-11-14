@@ -49,6 +49,13 @@
 - **单订阅条数上限放开**：一个 Sub-Store 子订阅超过 10,000 个节点而一直 `TOO_MANY_ITEMS`。条数上限改为 200,000（`SOURCE_MAX_ITEMS`，Sub-Store 聚合预算 `SOURCE_SUBSTORE_MAX_ITEMS` 200,000、最大 500,000），实际由每份 10 MB 大小上限约束（约 10 万条链接）。
 - **超时重试**：`source sync-all` 结束前把本轮 `FETCH_TIMEOUT` 的来源再同步一次（4 线程并行下载），结果替换第一次并标 `retried`；其他错误不重试。上一轮 10 个“这次失败”中 9 个是超时，分属不同域名，一个半小时前都正常。
 
+2026-11-15 UDP、中转规则与节点页重做（迁移 `0021_udp_relay`，main `3b68418`，见 [CLOUD_DEPLOYMENT.md](CLOUD_DEPLOYMENT.md) 第十四次发布）：
+- **UDP（Wi-Fi Calling）**：`app/checker/udp.py`。每个 HTTPS 通过的节点经自己的 mihomo 监听发 STUN（Cloudflare、Google），失败再用 DNS（1.1.1.1:53），共 4 次尝试，每次新建 SOCKS5 UDP 关联；全部失败才记 FAILED。配置声明仅 TCP 的节点记 NOT_SUPPORTED。结果存 `test_results`/`node_current_status`（含最近一次成功时间和 UDP 出口 IP），节点列表 `udp` 字段与 `{"udp": true}` 筛选。真实 mihomo 回环冒烟（`scripts/smoke_protocols.py`）对全部协议和批量运行验证 UDP。
+- **中转入口算机场**、**失败来源每周重试**、**冷却上限 168 小时**、**备份每月 1/15 日**：见 HANDOFF.md 决策表。
+- **Neon 流量**：用量任务在配置 `NEON_API_KEY` Secret 与 `NEON_PROJECT_ID` 变量后读取 Neon API 的本周期公网传输，写入 `database_samples`；用量页显示，≥70% 时顶部状态栏提醒。`NEON_PROJECT_ID` 已设置，API Key 尚未创建（需用户同意）。
+- **节点页**：等级分布为主视觉（可点选）；一行控件；筛选面板（常用 + 折叠分组）；列表/按国家/ASN 排行三种视图；UDP 列、国家分组 UDP/家宽计数、节点详情显示 UDP 结果与出口差异。
+- **验证**：本地隔离 PG 414 Python + 35 Worker；CI 43618081596；生产备份在隔离 PG17 恢复后迁移 1 秒、精简列表查询前后一致（ANALYZE 后 0.36 秒）。真实节点的 UDP 结果从当晚每日检测开始出现。
+
 2026-11-14 数据库搬家：旧 Neon 项目本周期传输用到 4.23 / 5 GB（周期到 12-01 才重置），已在 GitHub Runner 上把数据复制到同账号新项目并删除旧项目；`test_results` 只保留各节点最新一条，其余表完整。过程、验证与取舍见 [CLOUD_DEPLOYMENT.md](CLOUD_DEPLOYMENT.md) 第十三次记录。按用户决定，每周备份 `backup.yml` 保持停用，本机备份文件也已移到废纸篓：目前没有任何数据库备份。
 
 2026-11-14 数据库流量与按国家查看（无迁移）：
