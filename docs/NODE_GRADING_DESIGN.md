@@ -108,7 +108,7 @@ API 规格（[schemas.yaml](https://github.com/jsdelivr/globalping/blob/master/p
 
 - **只测“美国完整检测当前可用”的节点**；从未测过的 > 结果过期的 > 订阅方案里的 > 其他。
 - **样本要求**：7 天滚动窗口内，每家运营商至少 2 个**不同探针**的晚高峰样本，取中位数；不足就是“资料不足”。家宽探针少（电信约 5、联通约 10、移动约 9），轮换使用并记录探针 ASN 和城市。
-- **独立工作流** `entry-probe.yml`（每小时一次，晚高峰时段加密），不放进 daily-check。只是等 HTTP 结果，CPU 很少；公开仓库不计 Actions 分钟数。
+- **独立工作流** `entry-probe.yml`（每小时一次，晚高峰时段加密），不放进 daily-check。2026-11-14 起由 API Worker 的 Cron Trigger（UTC 每小时 :30）调用 workflow dispatch 启动，工作流本身不再有 GitHub 定时（GitHub 定时曾 10 小时只触发 1 次）。只是等 HTTP 结果，CPU 很少；公开仓库不计 Actions 分钟数。
 - **只用一个注册账号的 token**，不叠加匿名额度，不开多个账号或多个 Runner 换 IP。[使用条款](https://globalping.io/terms/terms-of-use)第 5 条禁止用额外账号/IP 规避限额，第 13 条可封账号和 IP；第 6 条允许正当项目申请提高限额。没有 token 时可以退回匿名模式（每 IP 每小时 250 次），两者不同时使用。
 - 额度以外的途径：托管探针每天 +150 次（可以忽略）；赞助 $1 = 4,000 次（不符合“严格免费”，只列出供参考，[来源](https://globalping.io/credits)）。
 

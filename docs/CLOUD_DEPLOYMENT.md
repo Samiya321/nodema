@@ -115,7 +115,7 @@ UI 额外验证逐行结果、重复提交、390px 布局，以及慢网络下�
 - 验证（经 Pages 域名）：health 200、未认证 401、readiness 为真（schema 0019）、精简列表 33 个字段、`/api/probe-status` 200、新样式表已生效。
 - 等级重算：在本机对生产执行 `grade refresh` 因跨洋上传约 4 万行过慢（超过 40 分钟），已中止（事务回滚，旧等级保留）。改由同时进行的定时每日检测（[run 43537181714](https://github.com/Samiya321/nodema/actions/runs/43537181714)，代码 `b23585e`）在 Actions 内重算（01:31 UTC 完成）：定档 7,558 个节点，三网 B 5,594 / C 175 / 待定 1,789；落地 CF 的 1,397 个可用节点不再定档（0 行）；港新 <3 ms 的节点从约 1,650 降到 32 / 53（641 个已测节点中，均为机房探针测同城机房的真实值，7 天内被家宽样本替换）。以后不要从本机跑生产重算。
 - 同日补丁：`6ff757d` 等级条只按可用节点比例显示（生产约 75% 节点不可用，否则彩色部分只剩一小段），Pages https://5b9bc4c9.nodema-dashboard.pages.dev；`b701338` 港新分开测量、运行摘要按错误码统计失败（只有计数）。验证：[entry-probe 43542759466](https://github.com/Samiya321/nodema/actions/runs/43542759466)（token 认证、447 次测试、0 限流，新样本无 CF 前缀的港新数据，港新探针为 HKT/HKBN/MyRepublic 等家宽网络）；[43544959809](https://github.com/Samiya321/nodema/actions/runs/43544959809)（同小时剩余额度 28 次内运行，2 次失败均为 `HTTP_422`：随机选中的运营商 ASN 当时无在线探针）。
-- **定时不可靠**：GitHub 定时严重延迟/丢弃。`entry-probe.yml` 上线后约 10 小时只自动触发 1 次；`daily-check.yml` 的 20:17 UTC 定时于 00:53 UTC 才开始。晚高峰样本因此可能远少于设计。可选方案：由 API Worker 的 Cron Trigger 每小时调用现有的 workflow dispatch（待用户决定）。
+- **定时不可靠**：GitHub 定时严重延迟/丢弃。`entry-probe.yml` 上线后约 10 小时只自动触发 1 次；`daily-check.yml` 的 20:17 UTC 定时于 00:53 UTC 才开始。晚高峰样本因此可能远少于设计。用户决定改由 Worker 触发：`63ce3a0` 给 API Worker 加 Cron Trigger `30 * * * *`，每小时调用现有 workflow dispatch 启动 `entry-probe.yml`，工作流移除 GitHub 定时（避免重复）；CI 通过（35 Worker 测试），API Worker 版本 `acb85648-1d13-4389-a32e-cd5b4830067a`，readiness 为真（dispatch 已配置）。首个 Worker 触发的运行 [43561839630](https://github.com/Samiya321/nodema/actions/runs/43561839630) 于 05:30:20 UTC 准点启动。
 
 ## 2026-11-14 第九次发布：节点质量分级（Globalping 接入测量）
 
