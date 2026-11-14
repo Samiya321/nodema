@@ -4,6 +4,7 @@ import { ago, api, busy, debounce, empty, field, h, select, toast } from "../cor
 import { ADVANCED, PROTOCOLS, control, readFilters } from "../filters.js";
 import { testNodes } from "../strip.js";
 import { BUCKETS, COLUMNS, bucketOf, countryName, headRow, nodeRow, setRowVantage, sortNodes } from "./node-rows.js";
+import { countryView, revealCountry } from "./node-countries.js";
 import { BUCKET_HINT, BUCKET_TEXT, defaultVantage, vantageSwitch } from "../grades.js";
 
 // Filters the database applies (sent to the API). Grade buckets, sort and paging are local.
@@ -23,7 +24,11 @@ const DRAWER = [
 const DRAWER_KEYS = DRAWER.flatMap(([, keys]) => keys);
 const KEYS = [...new Set([...QUICK, ...DRAWER_KEYS])];
 const PERCENT = ["min_success_rate", "max_timeout_rate", "min_lifetime_availability", "max_peak_loss", "min_avail_7d"];
-const STATUS = [["", "全部状态"], ["UP", "可用"], ["DEGRADED", "较慢"], ["DOWN", "不可用"], ["UNKNOWN", "未检测"], ["STALE", "结果过期"], ["UNSUPPORTED", "不支持"]];
+// Without a status the page lists available nodes (UP + DEGRADED, fetched as two
+// queries): the whole library is ~4x the rows, and each row is metered transfer.
+const AVAILABLE = "AVAILABLE";
+const ALL = "ALL";
+const STATUS = [[AVAILABLE, "可用+较慢"], [ALL, "全部状态"], ["UP", "可用"], ["DEGRADED", "较慢"], ["DOWN", "不可用"], ["UNKNOWN", "未检测"], ["STALE", "结果过期"], ["UNSUPPORTED", "不支持"]];
 const GROUPS = [["", "全部类别"], ["SELF_HOSTED", "自建"], ["AIRPORT", "机场"]];
 const SIZES = [50, 100, 200];
 const FETCH_PAGE = 10000; // compact rows per request; there is no overall cap
@@ -35,16 +40,23 @@ const CACHE_MS = 10 * 60_000;
 const objects = (page) => page.items.map((row) => Object.fromEntries(page.fields.map((name, i) => [name, row[i]])));
 
 let cache = null;
-async function load(filters) {
-  const key = JSON.stringify(filters);
-  if (cache && cache.key === key && Date.now() - cache.at < CACHE_MS) return cache.data;
+async function fetchAll(filters) {
   const fetchPage = (offset) =>
     api("/nodes?" + new URLSearchParams({ ...filters, sort: "short_id:asc", view: "compact", offset: String(offset), limit: String(FETCH_PAGE) }));
   const first = await fetchPage(0);
   const offsets = [];
   for (let offset = FETCH_PAGE; offset < first.total; offset += FETCH_PAGE) offsets.push(offset);
   const rest = await Promise.all(offsets.map(fetchPage));
-  const data = { items: [first, ...rest].flatMap(objects), at: Date.now() };
+  return [first, ...rest].flatMap(objects);
+}
+
+async function load(filters) {
+  const key = JSON.stringify(filters);
+  if (cache && cache.key === key && Date.now() - cache.at < CACHE_MS) return cache.data;
+  const { status = AVAILABLE, ...rest } = filters;
+  const statuses = status === AVAILABLE ? ["UP", "DEGRADED"] : status === ALL ? [null] : [status];
+  const parts = await Promise.all(statuses.map((value) => fetchAll(value ? { ...rest, status: value } : rest)));
+  const data = { items: parts.flat(), at: Date.now() };
   cache = { key, at: data.at, data };
   return data;
 }
@@ -75,6 +87,7 @@ export async function render(root, { params, go }) {
   const chosen = new Set((params.get("g") ? params.get("g").split(",") : legacyBuckets(params)).filter((b) => BUCKETS.includes(b)));
   const [sortKey, sortDir] = (params.get("sort") || "grade:asc").split(":");
   const size = SIZES.includes(Number(params.get("size"))) ? Number(params.get("size")) : SIZES[0];
+  const byCountry = params.get("by") === "country";
   const filters = {};
   for (const key of KEYS) if (params.get(key)) filters[key] = params.get(key);
   const apiFilters = { ...filters, vantage };
@@ -148,6 +161,14 @@ export async function render(root, { params, go }) {
     el.addEventListener("change", () => update({ [name]: el.value }));
     return el;
   };
+  const statusPill = () => {
+    const el = select("status", STATUS, filters.status || AVAILABLE);
+    el.classList.add("pill");
+    el.classList.toggle("set", Boolean(filters.status));
+    el.setAttribute("aria-label", "状态");
+    el.addEventListener("change", () => update({ status: el.value === AVAILABLE ? "" : el.value }));
+    return el;
+  };
   const countries = [...new Set(all.map((n) => n.exit_country).filter(Boolean))].sort();
   if (filters.exit_country && !countries.includes(filters.exit_country)) countries.unshift(filters.exit_country);
   const advancedCount = DRAWER_KEYS.filter((k) => filters[k] && k !== "exit_country").length;
@@ -156,11 +177,11 @@ export async function render(root, { params, go }) {
     "div",
     { class: "filter-row", role: "search" },
     search,
-    pill("status", STATUS),
+    statusPill(),
     pill("protocol", [["", "全部协议"], ...PROTOCOLS.map((p) => [p, p])]),
     pill("node_group", GROUPS),
     filters.node_group === "AIRPORT" || filters.provider_id ? pill("provider_id", [["", "全部机场"], ...providers.map((p) => [p.id, p.name])]) : null,
-    pill("exit_country", [["", "全部落地"], ...countries.map((c) => [c, `${countryName(c)} ${c}`])]),
+    byCountry ? null : pill("exit_country", [["", "全部落地"], ...countries.map((c) => [c, `${countryName(c)} ${c}`])]),
     h("button", { type: "button", class: "pill more" + (advancedCount ? " set" : ""), onclick: () => openDrawer() }, "更多筛选", advancedCount ? h("span", { class: "pill-n" }, advancedCount) : null),
     h("label", { class: "check best", title: "同一台落地服务器只保留当前视角等级最好的一个节点" }, bestBox, "每台服务器只看最好的"),
   );
@@ -175,7 +196,7 @@ export async function render(root, { params, go }) {
       return h("button", { type: "button", class: "chip-x", title: "移除这个条件", onclick: () => update({ [key]: "" }) }, h("span", { class: "chip-k" }, label), shown, h("span", { class: "x", "aria-hidden": "true" }, "×"));
     });
   const chipRow = chips.length
-    ? h("div", { class: "chip-row" }, chips, h("button", { type: "button", class: "quiet", onclick: () => go("nodes", new URLSearchParams({ vantage })) }, "清除全部条件"))
+    ? h("div", { class: "chip-row" }, chips, h("button", { type: "button", class: "quiet", onclick: () => go("nodes", new URLSearchParams(byCountry ? { vantage, by: "country" } : { vantage })) }, "清除全部条件"))
     : null;
 
   // ---- drawer with every other condition ----
@@ -225,23 +246,29 @@ export async function render(root, { params, go }) {
   const sorted = sortNodes(items, COLUMNS[sortKey] ? sortKey : "grade", sortDir === "desc" ? "desc" : "asc");
   const pages = Math.max(1, Math.ceil(sorted.length / size));
   const page = Math.min(Math.max(0, Number(params.get("page") || 0) || 0), pages - 1);
-  const visible = sorted.slice(page * size, (page + 1) * size);
+  const onSort = (key) => {
+    const direction = key === sortKey ? (sortDir === "asc" ? "desc" : "asc") : COLUMNS[key][2];
+    update({ sort: `${key}:${direction}` }, { keepPage: byCountry });
+  };
 
   // ---- selection across the whole filtered set ----
+  // Each checkbox in a table head selects a known set of ids (the page, or an ASN group).
   const picked = new Set();
-  const pickAll = h("input", { type: "checkbox", "aria-label": "选择本页节点" });
-  const tbody = h("tbody");
+  const scope = [];
+  const rowsRoot = h("div", { class: "rows-root" });
   const bar = h("div", { class: "selection-bar", role: "region", "aria-label": "批量操作", hidden: true });
   const barCount = h("strong");
   const widen = h("button", { type: "button", class: "quiet" });
   const refreshPicks = () => {
-    for (const box of tbody.querySelectorAll("input[data-id]")) {
+    for (const box of rowsRoot.querySelectorAll("input[data-id]")) {
       box.checked = picked.has(box.dataset.id);
       box.closest("tr").classList.toggle("picked", box.checked);
     }
-    const onPage = visible.filter((n) => picked.has(n.id)).length;
-    pickAll.checked = onPage > 0 && onPage === visible.length;
-    pickAll.indeterminate = onPage > 0 && onPage < visible.length;
+    for (const { box, ids } of scope) {
+      const on = ids.filter((id) => picked.has(id)).length;
+      box.checked = on > 0 && on === ids.length;
+      box.indeterminate = on > 0 && on < ids.length;
+    }
     bar.hidden = picked.size === 0;
     barCount.textContent = `已选 ${picked.size.toLocaleString("zh-CN")} 个`;
     widen.hidden = picked.size >= sorted.length;
@@ -251,7 +278,6 @@ export async function render(root, { params, go }) {
     for (const id of ids) on ? picked.add(id) : picked.delete(id);
     refreshPicks();
   };
-  pickAll.addEventListener("change", () => toggle(visible.map((n) => n.id), pickAll.checked));
   widen.addEventListener("click", () => toggle(sorted.map((n) => n.id), true));
   const bulk = (enabled) => (e) =>
     busy(e.target, async () => {
@@ -272,25 +298,37 @@ export async function render(root, { params, go }) {
     h("button", { type: "button", class: "quiet", onclick: () => toggle([...picked], false) }, "取消选择"),
   );
 
-  // ---- table and pager ----
-  const onSort = (key) => {
-    const direction = key === sortKey ? (sortDir === "asc" ? "desc" : "asc") : COLUMNS[key][2];
-    update({ sort: `${key}:${direction}` });
-  };
+  // ---- table and pager, or countries ----
   let body;
   if (!sorted.length) {
-    const filtered = Object.keys(filters).length || chosen.size;
+    const filtered = Object.keys(filters).some((k) => k !== "status") || chosen.size;
     body = h(
       "div",
       { class: "table-card" },
       empty(
-        filtered ? "没有符合条件的节点" : "还没有节点",
-        filtered ? "放宽或清除筛选条件后再看。" : "在“来源”页添加订阅或节点，然后点顶部“同步来源”。",
-        filtered ? h("button", { type: "button", onclick: () => go("nodes", new URLSearchParams({ vantage })) }, "清除全部条件") : null,
+        filtered ? "没有符合条件的节点" : "现在没有可用节点",
+        filtered ? "放宽或清除筛选条件后再看。" : "状态选“全部状态”可以看到不可用和未检测的节点；没有节点时先在“来源”页添加订阅并同步。",
+        filtered ? h("button", { type: "button", onclick: () => go("nodes", new URLSearchParams(byCountry ? { vantage, by: "country" } : { vantage })) }, "清除全部条件") : null,
       ),
     );
+  } else if (byCountry) {
+    const view = countryView(sorted, {
+      country: params.get("c"),
+      onCountry: (code) => update({ c: code }),
+      sortKey: COLUMNS[sortKey] ? sortKey : "grade",
+      sortDir: sortDir === "desc" ? "desc" : "asc",
+      onSort,
+      onPick: toggle,
+    });
+    scope.push(...view.scope);
+    rowsRoot.append(view.element);
+    body = rowsRoot;
   } else {
-    tbody.append(...visible.map((n) => nodeRow(n, false, toggle)));
+    const pickAll = h("input", { type: "checkbox", "aria-label": "选择本页节点" });
+    const pageNodes = sorted.slice(page * size, (page + 1) * size);
+    pickAll.addEventListener("change", () => toggle(pageNodes.map((n) => n.id), pickAll.checked));
+    scope.push({ box: pickAll, ids: pageNodes.map((n) => n.id) });
+    const tbody = h("tbody", {}, pageNodes.map((n) => nodeRow(n, false, toggle)));
     const from = page * size + 1;
     const to = Math.min(sorted.length, (page + 1) * size);
     body = h(
@@ -311,10 +349,22 @@ export async function render(root, { params, go }) {
       ),
     );
     body.querySelector("select[name=size]").addEventListener("change", (e) => update({ size: e.target.value === String(SIZES[0]) ? "" : e.target.value }));
+    rowsRoot.append(body);
+    body = rowsRoot;
   }
 
   // ---- header ----
   const available = all.filter((n) => n.status === "UP" || n.status === "DEGRADED").length;
+  const subtitle = filters.status
+    ? `${all.length.toLocaleString("zh-CN")} 个，当前可用 ${available.toLocaleString("zh-CN")} 个`
+    : `${all.length.toLocaleString("zh-CN")} 个可用节点`;
+  const viewSwitch = h(
+    "div",
+    { class: "segmented view-switch", role: "group", "aria-label": "显示方式" },
+    [["", "列表"], ["country", "按落地国家"]].map(([value, text]) =>
+      h("button", { type: "button", class: "seg", "aria-pressed": String((params.get("by") || "") === value), onclick: () => update({ by: value, c: "", page: "" }) }, text),
+    ),
+  );
   root.append(
     h(
       "header",
@@ -323,7 +373,12 @@ export async function render(root, { params, go }) {
         "div",
         { class: "page-heading" },
         h("h1", { class: "page-title" }, "节点"),
-        h("p", { class: "page-sub" }, `${all.length.toLocaleString("zh-CN")} 个，当前可用 ${available.toLocaleString("zh-CN")} 个`),
+        h(
+          "p",
+          { class: "page-sub" },
+          subtitle,
+          filters.status ? null : h("button", { type: "button", class: "link sub-link", title: "包括不可用、未检测和结果过期的节点", onclick: () => update({ status: ALL }) }, "看全部状态"),
+        ),
       ),
       h(
         "div",
@@ -332,7 +387,7 @@ export async function render(root, { params, go }) {
         h("button", { type: "button", onclick: () => { invalidateNodes(); go("nodes", params); } }, "刷新"),
       ),
     ),
-    h("div", { class: "vantage-row" }, h("span", { class: "vantage-label" }, "等级视角"), vantageSwitch(vantage, (value) => update({ vantage: value }))),
+    h("div", { class: "vantage-row" }, h("span", { class: "vantage-label" }, "等级视角"), vantageSwitch(vantage, (value) => update({ vantage: value })), viewSwitch),
     spectrum,
     filterRow,
     chipRow,
@@ -340,6 +395,7 @@ export async function render(root, { params, go }) {
     bar,
   );
   refreshPicks();
+  if (byCountry) requestAnimationFrame(() => revealCountry(root)); // after the router mounts the page
 }
 
 // « 1 … 4 5 6 … 20 »

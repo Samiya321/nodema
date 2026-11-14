@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo
 
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import ARRAY, insert
+from sqlalchemy.orm import load_only
 
 from app.checker.batch import ListenerPool
 from app.checker.health import GLOBAL_ENVIRONMENT_ERRORS, HealthChecker
@@ -34,6 +35,26 @@ from app.database.models import (
 from app.domain import AssetError
 
 TERMINAL = ("UP", "DOWN", "DEGRADED", "UNKNOWN", "UNSUPPORTED")
+# TestResult columns finalize publishes into node_current_status / node_daily_stats.
+PUBLISH_COLUMNS = tuple(
+    getattr(TestResult, name)
+    for name in (
+        "id",
+        "node_id",
+        "status",
+        "checked_at",
+        "error_code",
+        "exit_ip",
+        "exit_country",
+        "exit_asn",
+        "exit_asn_org",
+        "http_duration_ms",
+        "entry_country",
+        "entry_asn",
+        "probe_key",
+        "measurement_kind",
+    )
+)
 
 
 def now():
@@ -875,8 +896,11 @@ class ScanService:
                 .group_by(TestResult.node_id)
                 .subquery()
             )
+            # Only the columns _publish reads: the JSON metadata (~1 KB a row) stays in
+            # the database, which keeps the daily finalize off the Neon transfer budget.
             results = session.scalars(
                 sa.select(TestResult)
+                .options(load_only(*PUBLISH_COLUMNS, raiseload=True))
                 .join(
                     latest,
                     sa.and_(

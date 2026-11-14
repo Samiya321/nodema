@@ -84,7 +84,7 @@ export function headRow(sortKey, direction, onSort, pickAll) {
       cell("rtt", "num"),
       cell("avail"),
       cell("route"),
-      cell("operator"),
+      cell("operator", "operator"),
       h("th", { scope: "col" }, "类别"),
       cell("checked", "num"),
     ),
