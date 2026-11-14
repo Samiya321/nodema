@@ -36,6 +36,7 @@ export const ADVANCED = [
   ["exit_ip", "出口 IP", "text"],
   ["exit_ip_type", "落地 IP 类型（ip-api 标记）", "select", [["", "全部"], ["RESIDENTIAL", "家宽"], ["HOSTING", "机房"], ["MOBILE", "移动网络"]]],
   ["exit_ip_proxy", "落地 IP 被 ip-api 标记为代理", "select", [["", "全部"], ["false", "否"], ["true", "是"]]],
+  ["udp", "UDP 可用（Wi-Fi Calling）", "select", [["", "全部"], ["true", "只要 UDP 可用"], ["false", "UDP 不可用或未测"]]],
   ["transport", "传输", "select", [["", "全部"], ["tcp", "TCP"], ["ws", "WS"], ["grpc", "gRPC"], ["quic", "QUIC"]]],
   ["security", "安全层", "select", [["", "全部"], ["none", "无"], ["tls", "TLS"], ["reality", "Reality"]]],
   ["tags", "标签（逗号分隔）", "text"],
@@ -80,7 +81,7 @@ export function readFilters(form, keys) {
         .split(",")
         .map((t) => t.trim())
         .filter(Boolean);
-    else if (["enabled", "eligible", "exit_ip_proxy", "unreachable", "cross_border", "best_per_server"].includes(key)) result[key] = raw === "true";
+    else if (["enabled", "eligible", "exit_ip_proxy", "unreachable", "cross_border", "best_per_server", "udp"].includes(key)) result[key] = raw === "true";
     else result[key] = String(raw).trim();
   }
   return result;
