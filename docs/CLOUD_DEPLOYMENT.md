@@ -111,7 +111,7 @@ UI 额外验证逐行结果、重复提交、390px 布局，以及慢网络下�
 
 - 代码 `6bc3a9f`（诊断）、`155047e`（转换、等级、调度）、`3a81354`（页面）、`47c129f`/`a19ffff`（测试与计时，CI [43655419472](https://github.com/Samiya321/nodema/actions/runs/43655419472) 通过）。本地隔离 PG 432 Python、36 Worker、真实 mihomo 冒烟通过。schema 仍为 `0021_udp_relay`。
 - API Worker 版本 `b5363895-2f4b-4664-bfa3-19c64ad2c7a5`：Cron 增加 `17 20 * * *` 触发 `daily-check.yml`（`trigger=schedule`，仍按设置页开关与范围）；`daily-check.yml` 去掉 GitHub schedule。Pages https://73f398f5.nodema-dashboard.pages.dev。
-- 仓库变量 `BACKUP_SKIP_UNTIL=2026-11-16`（11-15 定时备份跳过，12-01 恢复；变量可留着，过期即无效）。`FAILURE_COOLDOWN_BASE_HOURS` 默认 24。
+- 仓库变量 `BACKUP_SKIP_UNTIL=2026-11-30`（跳过 11-15 那次；GitHub 定时常晚几小时，日期留了余量，12-01 恢复；变量过期即无效）。`FAILURE_COOLDOWN_BASE_HOURS` 默认 24。
 - 生产只读诊断 `diagnose.yml`（run 43652259091）：7,763 个启用“不支持”节点的原因计数，见 STATUS。随后对 3,470 个原“不支持”的自建节点定向检测（run 43653257902）：自建可用 934 → 1,099，仍不支持 1,996。
 - 等级重算在生产仍约 13 分钟（定向检测 23:33–23:46 UTC，此前每日/到期重算 14–15 分钟），本地计算部分已从秒级降到毫秒级，剩余在数据库；`grade refresh` 输出新增 `timings`，下一次每日检测后据此处理。
 - 11-14 19:28 UTC 手动全量检测后、计数滞后的 Neon 读数从 0.49 升到 0.98 GB（同时段还有每小时接入测量和本次诊断/定向检测）；单次全量检测的准确消耗等 11-15 20:17 UTC 的 Worker 定时检测前后读数。

@@ -392,6 +392,21 @@ def node_unsupported_reasons(limit: int = 30):
     output(unsupported_reasons(service().sessions, limit=limit))
 
 
+@node_app.command("mapping-outcomes")
+@safe_command
+def node_mapping_outcomes(hours: int = 30):
+    """UP/DOWN of recently checked nodes per new conversion mapping (labels and counts)."""
+    from app.diagnose import mapping_outcomes, unsupported_protocol_names
+
+    current = service()
+    output(
+        {
+            "mappings": mapping_outcomes(current.sessions, hours=hours),
+            "unsupported_protocols": unsupported_protocol_names(current.sessions),
+        }
+    )
+
+
 @node_app.command("show")
 @safe_command
 def node_show(node_id: str):

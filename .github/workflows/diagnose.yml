@@ -1,6 +1,6 @@
 name: Diagnose untestable nodes
 # Started by hand only. Read-only: counts of why nodes are UNSUPPORTED (protocol and
-# field names, never values), written to the run summary. ~3 MB of Neon transfer.
+# field names, never values), written to the run summary. ~3 MB + ~15 MB (recently checked configs) of Neon transfer.
 on:
   workflow_dispatch:
 permissions:
@@ -25,3 +25,7 @@ jobs:
         run: |
           uv run nodema node unsupported-reasons --limit 60 | tee reasons.json
           { echo '```json'; cat reasons.json; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - name: Outcomes of the newer conversion mappings, unreadable protocol names
+        run: |
+          uv run nodema node mapping-outcomes | tee mappings.json
+          { echo '```json'; cat mappings.json; echo '```'; } >> "$GITHUB_STEP_SUMMARY"

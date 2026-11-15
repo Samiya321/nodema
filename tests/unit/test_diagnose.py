@@ -87,3 +87,13 @@ def test_clash_unsupported_type_is_named():
         " password: pw, sni: a.example}\n"
     )
     assert parse_text(yaml.encode()).summary()["unsupported_protocols"] == {"wireguard": 1}
+
+
+def test_mapping_features():
+    from app.diagnose import _features
+
+    assert _features(vless(transport="xhttp", security="tls")) == ["xhttp"]
+    assert _features(vless(transport="raw")) == ["raw"]
+    pinned = vless(security="tls", extensions={"vless_uri": {"pcs": "ab" * 32}})
+    assert _features(pinned) == ["pcs_fingerprint"]
+    assert _features(vless()) == ["baseline"]

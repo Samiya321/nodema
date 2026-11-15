@@ -48,3 +48,68 @@ def _reason(config_data) -> str:
     except (KeyError, TypeError, ValueError):
         return "malformed"
     return "convertible_now"  # rejected earlier by an older converter; a retest fixes it
+
+
+def _features(identity: dict) -> list[str]:
+    """Which new conversion mappings a node relies on (labels only)."""
+    from app.compat import compatible
+
+    d = compatible(identity)
+    tls, options = d.get("tls", {}), d.get("transport_options", {})
+    found = []
+    if identity.get("transport") == "raw":
+        found.append("raw")
+    if d.get("transport") in ("xhttp", "httpupgrade"):
+        found.append(d["transport"])
+    if options.get("header_type") == "http":
+        found.append("tcp_http_header")
+    if "pin_sha256" in tls:
+        found.append("pcs_fingerprint")
+    if "spider_x" in tls.get("reality", {}):
+        found.append("reality_spider_x")
+    return found or ["baseline"]
+
+
+def mapping_outcomes(sessions, *, hours: int = 30) -> dict:
+    """Recently checked nodes by new mapping: UP vs DOWN and the top DOWN error codes.
+    A mapping that is systematically wrong shows as near 0% UP with its own errors."""
+    stats: dict = {}
+    query = sa.text(
+        "SELECT n.config_data, c.status, c.last_error_code FROM nodes n"
+        " JOIN node_current_status c ON c.node_id=n.id"
+        " WHERE n.enabled AND c.status IN ('UP','DEGRADED','DOWN')"
+        " AND c.last_checked_at > now() - make_interval(hours => :hours)"
+    )
+    with sessions() as session:
+        for row in session.execute(query.execution_options(yield_per=BATCH), {"hours": hours}):
+            try:
+                features = _features(json.loads(bytes(row.config_data)))
+            except (KeyError, TypeError, ValueError):
+                continue
+            for feature in features:
+                entry = stats.setdefault(feature, {"up": 0, "down": 0, "errors": Counter()})
+                if row.status == "DOWN":
+                    entry["down"] += 1
+                    entry["errors"][row.last_error_code or "none"] += 1
+                else:
+                    entry["up"] += 1
+    return {
+        feature: {
+            "up": e["up"],
+            "down": e["down"],
+            "up_ratio": round(e["up"] / (e["up"] + e["down"]), 3),
+            "down_errors": dict(e["errors"].most_common(5)),
+        }
+        for feature, e in sorted(stats.items())
+    }
+
+
+def unsupported_protocol_names(sessions) -> dict:
+    """Protocol names the parser could not read, summed over sources' last parse."""
+    query = sa.text(
+        "SELECT p.key, sum(p.value::bigint) AS n FROM sources s,"
+        " jsonb_each_text(coalesce(s.last_parse_summary->'unsupported_protocols','{}')) p"
+        " WHERE s.deleted_at IS NULL GROUP BY p.key ORDER BY n DESC LIMIT 40"
+    )
+    with sessions() as session:
+        return {row.key: int(row.n) for row in session.execute(query)}
