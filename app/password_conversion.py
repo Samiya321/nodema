@@ -73,14 +73,13 @@ def _plugin(plugin):
 
 
 def _tls(tls, security):
-    keys(tls, ("sni", "alpn", "client_fingerprint", "insecure", "reality", "pin_sha256"), "tls")
+    keys(tls, ("sni", "alpn", "client_fingerprint", "insecure", "reality"), "tls")
     output = {}
     for source, target in (
         ("sni", "sni"),
         ("alpn", "alpn"),
         ("client_fingerprint", "client-fingerprint"),
         ("insecure", "skip-cert-verify"),
-        ("pin_sha256", "fingerprint"),
     ):
         if source in tls:
             output[target] = tls[source]
@@ -247,8 +246,6 @@ def to_singbox(d, name):
     to_mihomo(d, name)
     if d.get("extensions") or d["protocol"] == "shadowsocks" and d.get("tls"):
         reject()
-    if "pin_sha256" in d.get("tls", {}):
-        reject("singbox_certificate_pin")
     protocol, p = d["protocol"], d.get("protocol_options", {})
     out = {
         "type": protocol,
@@ -342,8 +339,6 @@ def to_uri(d, name):
             query["alpn"] = ",".join(t["alpn"])
         if "insecure" in t:
             query["insecure"] = "1" if t["insecure"] else "0"
-        if "pin_sha256" in t:
-            query["pcs"] = t["pin_sha256"]
         scheme = protocol
         if protocol == "trojan":
             keys(p, ())

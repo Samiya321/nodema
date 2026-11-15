@@ -51,8 +51,9 @@
 
 2026-11-15 第二轮：可检测节点、等级重算、调度与页面（无迁移，main `6bc3a9f`..`a19ffff`，见 [CLOUD_DEPLOYMENT.md](CLOUD_DEPLOYMENT.md) 第十五次发布）：
 - **“不支持”的原因**：转换拒绝时记录字段名（`Unsupported.reason`，只含字段名不含值）；`nodema node unsupported-reasons` 与只能手动触发的 `diagnose.yml` 汇总计数。11-15 生产 7,763 个启用的“不支持”节点：VLESS `xhttp` 1,624、`pcs`（v2rayN 证书固定）约 1,300、REALITY `spx` 628、VMess `test_name`/`name` 约 730、TCP 残留 path 217、TCP HTTP 伪装 199、`raw` 185、`httpupgrade` 201 等。
-- **新支持（只改转换层，不改解析与指纹）**：VLESS XHTTP（含 `mode`）、HTTP Upgrade（mihomo 的 ws `v2ray-http-upgrade`）、TCP HTTP 头伪装（mihomo `network: http`）、`raw`=tcp、`pcs`→mihomo `fingerprint`（单个 SHA-256）、REALITY `spider_x`（只放进 URI）、TCP 的 host/path 残留、VMess 记账字段与 `ech`。sing-box 不能表达 XHTTP、头伪装和证书固定，这些节点在 sing-box 导出中跳过；URI/二维码改为用 mihomo 校验，可以携带它们。真实 mihomo 回环冒烟新增 `vless/xhttp/tls`、`vmess/httpupgrade/tls`（含 UDP）。
-- **效果**：11-15 对 3,470 个原“不支持”的自建节点做了一次定向检测：自建可用 934 → 1,099，仍不支持 1,996（VMess 946、VLESS 931，主要是 VMess xhttp、REALITY 缺公钥、未知扩展字段等，见诊断）。
+- **新支持（只改转换层，不改解析与指纹）**：TCP HTTP 头伪装（mihomo `network: http`）、`raw`=tcp、REALITY `spider_x`（只放进 URI）、TCP 的 host/path 残留、VMess 记账字段与 `ech`。sing-box 不能表达头伪装，这些节点在 sing-box 导出中跳过；URI/二维码改为用 mihomo 校验。
+- **试过又撤回**：VLESS XHTTP、HTTP Upgrade（mihomo ws `v2ray-http-upgrade`）和 v2rayN `pcs` 证书固定（→ mihomo `fingerprint`）也做了转换，回环冒烟（mihomo 对 mihomo）通过，但对真实节点定向检测后按映射统计（`nodema node mapping-outcomes`，`diagnose.yml`）：入口 TCP 可达的节点里普通节点约 42% 可用，XHTTP 5/179、HTTP Upgrade 2/69、证书固定 0/106，几乎都是经代理 HTTPS 失败。说明与真实 Xray 服务端语义不一致，已撤回为“不支持”，避免把能用的节点误报为不可用。保留的映射：`raw` 51/69 可用、`spider_x` 74/365、头伪装 12/210（入口可达部分约 23%）。
+- **效果**：撤回前，对 3,470 个原“不支持”的自建节点定向检测，自建可用 934 → 1,099（其中 XHTTP/HTTP Upgrade 只有 7 个）。撤回后这两类与证书固定节点在下一次检测重新记为不支持。
 - **解析侧**：`UNSUPPORTED_PROTOCOL` 记录协议名，来源解析摘要新增 `unsupported_protocols` 计数；没有提升 `PARSER_VERSION`（为省流量不强制重解析），内容变化的来源下次同步时出现。
 - **等级重算**：同一入口网段（CF 入口全为 `cf`）的统计每个网段只算一次（合成数据 1000 节点 × 6000 样本：4.1 秒 → 0.03 秒），结果与逐节点计算一致。但生产这一步仍约 13 分钟，说明主要耗时在数据库读写；已在输出里加 `timings`（load/compute/write/samples），等下一次运行定位。
 - **调度**：每日检测改由 API Worker 的 Cron（`17 20 * * *`，带 `trigger=schedule`）触发，`daily-check.yml` 去掉 GitHub schedule（此前每天晚 4–5 小时）。失败冷却起点 24 小时（原 6 小时，每日一次检测时 6/12 小时的冷却从不生效）。`backup.yml` 支持仓库变量 `BACKUP_SKIP_UNTIL`，已设 `2026-11-30` 跳过 11-15 那次（GitHub 定时会晚到 16 日，留余量）。

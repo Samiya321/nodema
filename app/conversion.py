@@ -8,14 +8,11 @@ from urllib.parse import quote, urlencode
 from app.compat import compatible, without_client_preferences
 from app.domain import PASSWORD_PROTOCOLS, Unsupported, field_label
 
-TLS_KEYS = {"sni", "alpn", "client_fingerprint", "insecure", "reality", "pin_sha256"}
+TLS_KEYS = {"sni", "alpn", "client_fingerprint", "insecure", "reality"}
 REALITY_KEYS = {"public_key", "short_id", "spider_x"}  # spider_x: client-side only
-OPTION_KEYS = {"host", "path", "service_name", "headers", "header_type", "mode"}
-# Mihomo v1.19 transports; HTTP Upgrade is its WebSocket mode, XHTTP is VLESS only.
-TRANSPORTS = {
-    "vless": ("tcp", "ws", "grpc", "httpupgrade", "xhttp"),
-    "vmess": ("tcp", "ws", "grpc", "httpupgrade"),
-}
+OPTION_KEYS = {"host", "path", "service_name", "headers", "header_type"}
+# XHTTP and HTTP Upgrade converted to mihomo failed against real servers: unsupported.
+TRANSPORTS = {"vless": ("tcp", "ws", "grpc"), "vmess": ("tcp", "ws", "grpc")}
 PROTOCOL_KEYS = {"flow", "encryption", "alter_id", "cipher", "allowed_network"}
 TCP_ONLY_NOT = {"host", "path", "headers", "service_name"}  # never on plain TCP
 
@@ -48,7 +45,7 @@ def to_mihomo(identity: dict, name: str) -> dict:
         "server": d["server_host"],
         "port": d["server_port"],
         "uuid": d["uuid"],
-        "network": "ws" if transport == "httpupgrade" else transport,
+        "network": transport,
         "tls": security != "none",
     }
     tls, options, proto = (
@@ -63,7 +60,6 @@ def to_mihomo(identity: dict, name: str) -> dict:
         ("alpn", "alpn"),
         ("client_fingerprint", "client-fingerprint"),
         ("insecure", "skip-cert-verify"),
-        ("pin_sha256", "fingerprint"),
     ):
         if source in tls:
             proxy[target] = tls[source]
@@ -83,26 +79,14 @@ def to_mihomo(identity: dict, name: str) -> dict:
     header_type = options.get("header_type")
     if header_type not in (None, "", "none") and (header_type != "http" or transport != "tcp"):
         unsupported("header_type:" + field_label([header_type]))
-    if "mode" in options and transport != "xhttp":
-        unsupported("mode")
-    if transport in ("ws", "httpupgrade"):
+    if transport == "ws":
         ws = {k: options[k] for k in ("path",) if k in options}
         headers = copy.deepcopy(options.get("headers", {}))
         if "host" in options:
             headers["Host"] = options["host"]
         if headers:
             ws["headers"] = headers
-        if transport == "httpupgrade":
-            ws["v2ray-http-upgrade"] = True
         proxy["ws-opts"] = ws
-    elif transport == "xhttp":
-        if "service_name" in options:
-            unsupported("xhttp_options")
-        proxy["xhttp-opts"] = {
-            k: copy.deepcopy(options[k])
-            for k in ("path", "host", "mode", "headers")
-            if k in options
-        }
     elif header_type == "http":
         # TCP with HTTP/1.1 header obfuscation: mihomo's "http" network.
         if "service_name" in options:
@@ -189,10 +173,8 @@ def to_singbox(identity: dict, name: str) -> dict:
         unsupported()
     d = identity
     options = d.get("transport_options", {})
-    if d.get("transport") == "xhttp" or options.get("header_type") == "http":
-        unsupported("singbox_transport")  # no XHTTP or TCP header obfuscation in sing-box
-    if "pin_sha256" in d.get("tls", {}):
-        unsupported("singbox_certificate_pin")
+    if options.get("header_type") == "http":
+        unsupported("singbox_transport")  # sing-box has no TCP header obfuscation
     result = {
         "type": d["protocol"],
         "tag": name,
@@ -219,9 +201,7 @@ def to_singbox(identity: dict, name: str) -> dict:
             if key in options:
                 output[key] = options[key]
         headers = copy.deepcopy(options.get("headers", {}))
-        if "host" in options and transport == "httpupgrade":
-            output["host"] = options["host"]
-        elif "host" in options:
+        if "host" in options:
             headers["Host"] = options["host"]
         if headers:
             output["headers"] = headers
@@ -276,8 +256,6 @@ def to_uri(identity: dict, name: str) -> str:
                 doc[key] = options[key]
         if options.get("header_type") == "http":
             doc["type"] = "http"
-        if "pin_sha256" in tls:
-            doc["pcs"] = tls["pin_sha256"]
         if "service_name" in options:
             unsupported()  # not universally represented by the VMess JSON share format
         for source, target in (("sni", "sni"), ("client_fingerprint", "fp")):
@@ -299,13 +277,10 @@ def to_uri(identity: dict, name: str) -> str:
     for source, target in (("public_key", "pbk"), ("short_id", "sid"), ("spider_x", "spx")):
         if source in tls.get("reality", {}):
             query[target] = tls["reality"][source]
-    if "pin_sha256" in tls:
-        query["pcs"] = tls["pin_sha256"]
     for source, target in (
         ("host", "host"),
         ("path", "path"),
         ("service_name", "serviceName"),
-        ("mode", "mode"),
         ("header_type", "headerType"),
     ):
         if source in options:

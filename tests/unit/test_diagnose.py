@@ -92,8 +92,7 @@ def test_clash_unsupported_type_is_named():
 def test_mapping_features():
     from app.diagnose import _features
 
-    assert _features(vless(transport="xhttp", security="tls")) == ["xhttp"]
     assert _features(vless(transport="raw")) == ["raw"]
-    pinned = vless(security="tls", extensions={"vless_uri": {"pcs": "ab" * 32}})
-    assert _features(pinned) == ["pcs_fingerprint"]
+    header = vless(transport="tcp", transport_options={"header_type": "http", "host": "a.example"})
+    assert _features(header) == ["tcp_http_header"]
     assert _features(vless()) == ["baseline"]

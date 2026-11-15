@@ -59,12 +59,8 @@ def _features(identity: dict) -> list[str]:
     found = []
     if identity.get("transport") == "raw":
         found.append("raw")
-    if d.get("transport") in ("xhttp", "httpupgrade"):
-        found.append(d["transport"])
     if options.get("header_type") == "http":
         found.append("tcp_http_header")
-    if "pin_sha256" in tls:
-        found.append("pcs_fingerprint")
     if "spider_x" in tls.get("reality", {}):
         found.append("reality_spider_x")
     return found or ["baseline"]

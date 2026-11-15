@@ -45,20 +45,10 @@ DROP_IF_NONE = {"headerType", "header_type", "quicSecurity", "security"}
 INSECURE_KEYS = ("skip-cert-verify", "allowInsecure", "insecure", "allow_insecure")
 # Fields a VLESS entry sometimes inherits from VMess templates; VLESS ignores them.
 VLESS_STRAY = {"alterId", "alter_id", "cipher"}
-# v2rayN "pcs": SHA-256 pin of the server certificate (mihomo "fingerprint").
-PIN_DIALECTS = ("vmess_uri", "vless_uri", "trojan_uri")
-XHTTP_MODES = ("auto", "packet-up", "stream-up", "stream-one")
+# Not mapped on purpose (2026-11-15): XHTTP, HTTP Upgrade and v2rayN "pcs" certificate
+# pins converted to mihomo but real nodes then failed HTTPS (2-3% vs ~42% for others,
+# pins 0 of 106): the semantics differ, so they stay RUNTIME_UNSUPPORTED.
 TRANSPORT_ALIASES = {"raw": "tcp"}  # Xray renamed TCP to RAW
-
-
-def _pin(value):
-    """One SHA-256 hex digest (colons allowed), lower-cased; None otherwise."""
-    if not isinstance(value, str):
-        return None
-    digest = value.replace(":", "").strip().lower()
-    if len(digest) == 64 and all(c in "0123456789abcdef" for c in digest):
-        return digest
-    return None
 
 
 def _tls_insecure(d, value):
@@ -107,20 +97,8 @@ def compatible(identity: dict) -> dict:
                     continue
             if dialect == "clash" and key in VLESS_STRAY and d["protocol"] == "vless":
                 continue
-            if dialect in PIN_DIALECTS and key == "pcs":
-                if value in NONE_VALUES:
-                    continue
-                pin, tls = _pin(value), d.get("tls", {})
-                secured = d.get("security") in ("tls", "reality") or (
-                    d["protocol"] == "trojan" and d.get("security") is None
-                )
-                if pin and secured and tls.get("pin_sha256", pin) == pin:
-                    d["tls"] = {**tls, "pin_sha256": pin}
-                    continue
-            if dialect == "vless_uri" and key == "mode" and d.get("transport") == "xhttp":
-                if value in XHTTP_MODES:
-                    d.setdefault("transport_options", {})["mode"] = value
-                    continue
+            if key == "pcs" and value in NONE_VALUES:
+                continue  # an empty pin field pins nothing
             if dialect == "vless_uri" and key == "headerType" and value == "http":
                 options = d.setdefault("transport_options", {})
                 if d.get("transport") == "tcp" and options.get("header_type", value) == value:
