@@ -218,6 +218,7 @@ class Catalog:
                 "last_seen_at",
                 "last_checked_at",
                 "last_success_at",
+                "exit_observed_at",
                 "next_full_check_at",
                 "evidence_updated_at",
                 "metrics_updated_at",

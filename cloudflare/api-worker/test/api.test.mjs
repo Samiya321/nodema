@@ -345,6 +345,9 @@ scans.finalize(run['id'])`);
     assert.equal(node.name, "🇯🇵SG->JP|Unknown 01");
     assert.equal(node.node_group, "SELF_HOSTED");
     assert.equal(node.history.length, 1);
+    assert.equal(node.identity.raw_entry_country, "SG");
+    assert.equal(node.identity_flags, 0);
+    assert.equal(node.exit_observed_at, node.last_checked_at);
     const aliases = await (
       await request(`/api/nodes/${nodeId}/aliases`)
     ).json();
@@ -375,6 +378,9 @@ fill_missing(session_factory(make_engine(os.environ['DATABASE_URL'])))`);
     assert.ok(Array.isArray(compact.items[0]));
     assert.ok(!compact.fields.includes("server_host"));
     assert.ok(!compact.fields.includes("probe_metadata"));
+    assert.ok(compact.fields.includes("identity_flags"));
+    assert.ok(compact.fields.includes("exit_observed_at"));
+    assert.ok(!compact.fields.includes("identity"));
     const listed = compact.items
       .map((row) =>
         Object.fromEntries(compact.fields.map((f, i) => [f, row[i]])),

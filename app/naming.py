@@ -2,6 +2,7 @@
 this mirror validates templates and serves the optional local API."""
 
 import string
+from ipaddress import ip_address
 
 from app.domain import AssetError
 
@@ -37,10 +38,12 @@ def flag(country: str | None) -> str:
 
 
 def route(entry: str | None, exit_country: str | None) -> str:
-    """HK->SG when entry and exit differ, a single code when they match."""
+    """Keep an unknown entry distinct from a same-country observation."""
     if exit_country is None:
         return "?" if entry is None else f"{entry}->?"
-    if entry is None or entry == exit_country:
+    if entry is None:
+        return f"?->{exit_country}"
+    if entry == exit_country:
         return exit_country
     return f"{entry}->{exit_country}"
 
@@ -59,7 +62,15 @@ def render_name(
     seq: int | None = None,
     variant: str | None = None,
     ip_type: str | None = None,
+    entry_ips: list[str] | None = None,
+    exit_ip: str | None = None,
 ) -> str:
+    if entry_ips and len(entry_ips) == 1 and exit_ip and exit_country:
+        try:
+            if ip_address(entry_ips[0]) == ip_address(exit_ip):
+                entry_country = exit_country
+        except ValueError:
+            pass
     try:
         if len(template) > 200 or any(ord(c) < 32 for c in template):
             raise ValueError

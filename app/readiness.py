@@ -5,7 +5,7 @@ import sqlalchemy as sa
 from app.checker.health import HealthChecker
 from app.domain import AssetError
 
-SCHEMA_REVISION = "0022_uk_probes"
+SCHEMA_REVISION = "0023_identity_naming"
 
 
 def readiness(assets, settings, *, network=False, checker_factory=None):

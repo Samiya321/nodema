@@ -44,7 +44,7 @@ export async function nodeDetail(id) {
     ),
     accessSection(n, access, vantage),
     obs?.echo_source === "fallback"
-      ? h("p", { class: "callout" }, "节点可用，但它的出口访问不了检测用的 Echo（Cloudflare），已通过备用地址确认连通，所以落地国家、ASN 暂时未知，名称不编号。")
+      ? h("p", { class: "callout" }, "备用地址已确认代理连通，本轮未观测到出口 IP。已有落地资料来自历史检测，不能用本次检测时间判断其新鲜度。")
       : null,
     h(
       "div",
@@ -54,9 +54,11 @@ export async function nodeDetail(id) {
         ["协议", `${n.protocol} / ${n.transport || "—"} / ${n.security || "—"}`],
         ["入口", h("code", {}, `${n.server_host}:${n.server_port}`)],
         ["入口解析", obs?.entry_ips?.join("、")],
-        ["入口地区 / ASN", `${n.entry_country || "—"} / ${n.entry_asn ? "AS" + n.entry_asn : "—"}`],
+        ["入口地区 / ASN（GeoLite 原始值）", `${n.identity?.raw_entry_country || "未知"} / ${n.entry_asn ? "AS" + n.entry_asn : "—"}`],
         ["落地 IP", n.exit_ip ? h("span", {}, h("code", {}, n.exit_ip), n.server_node_count > 1 ? h("span", { class: "tag" }, `同服务器 ×${n.server_node_count}`) : null) : null],
-        ["落地位置", [n.exit_country, n.exit_region, n.exit_ip_city || obs?.exit_city].filter(Boolean).join(" · ") || null],
+        ["落地国家（Echo，缺失回退 GeoLite）", n.exit_country],
+        ["ip-api 位置（独立数据源）", [n.identity?.ipapi_country, n.exit_region, n.exit_ip_city].filter(Boolean).join(" · ") || null],
+        ["出口 IP 最后观测", n.exit_ip ? (n.exit_observed_at ? date(n.exit_observed_at) : "时间未知（历史明细已清理）") : null],
         ["IP 归属（org）", n.exit_org],
         ["ISP", n.exit_isp],
         ["IP 类型", n.exit_ip_type ? `${IP_TYPE[n.exit_ip_type]}${n.exit_ip_proxy ? "，被标记为 VPN/代理" : ""}（ip-api 数据库标记，非实测）` : null],
@@ -72,6 +74,7 @@ export async function nodeDetail(id) {
         ["下次完整复查", n.next_full_check_at ? date(n.next_full_check_at) : "按计划"],
       ]),
     ),
+    identitySection(n),
     h(
       "div",
       { class: "row" },
@@ -129,6 +132,29 @@ export async function nodeDetail(id) {
   );
 }
 
+function identitySection(n) {
+  const i = n.identity;
+  if (!i) return null;
+  const flags = n.identity_flags || 0;
+  const messages = [
+    flags & 1 ? "入口唯一解析 IP 与已观测出口 IP 相同，名称统一采用落地国家；同 IP 不证明同一物理机房。" : null,
+    flags & 2 ? "国家归属源有分歧，不能据此确认物理中转或机房位置。" : null,
+    flags & 4 ? "ASN 来源有分歧，下方分别保留各来源的数值与组织文本。" : null,
+    flags & 8 ? "当前展示的是历史落地资料；本轮没有重新确认出口。" : null,
+    flags & 16 ? "入口国家未知，名称以 ? 标明。" : null,
+  ].filter(Boolean);
+  return h("section", { class: "stack" }, h("h3", {}, "归属依据"),
+    h("p", { class: "hint" }, "国家、组织与 ISP 都是数据库元数据；只实测代理出口 IP，不据此推断回程或线路类型。运营商简称优先使用已核实或手动设置的 ASN 别名。"),
+    ...messages.map((m) => h("p", { class: "callout" }, m)),
+    pairs([
+      ["出口国家来源", i.exit_country_source === "echo" ? "Echo / Cloudflare" : i.exit_country_source === "geolite" ? "GeoLite" : "Echo 优先，GeoLite 回退（旧记录未细分）"],
+      ["GeoLite 出口国家 / ASN（本轮）", [i.geolite_exit_country, i.geolite_exit_asn ? `AS${i.geolite_exit_asn}` : null].filter(Boolean).join(" / ") || null],
+      ["检测保存的 ASN / 组织原文", [i.observed_exit_asn ? `AS${i.observed_exit_asn}` : null, i.observed_exit_org].filter(Boolean).join(" · ") || null],
+      ["ip-api ASN / AS 组织", [i.ipapi_asn ? `AS${i.ipapi_asn}` : null, i.ipapi_as_org].filter(Boolean).join(" · ") || null],
+      ["ip-api 查询时间", i.ipapi_queried_at ? date(i.ipapi_queried_at) : null],
+    ]));
+}
+
 // Other nodes landing on the same server (same exit IP), usually other protocols.
 function siblings(n) {
   const box = h("div", {}, h("p", { class: "muted small" }, "加载中…"));
@@ -148,7 +174,7 @@ function siblings(n) {
       ),
     )
     .catch(() => box.replaceChildren(h("p", { class: "muted small" }, "无法加载同服务器节点。")));
-  return h("section", {}, h("h3", {}, `同一落地服务器（${n.server_node_count} 个节点）`), h("p", { class: "hint" }, "这些节点落地 IP 相同，通常是同一台服务器上的不同协议或入口，共用一个序号。"), box);
+  return h("section", {}, h("h3", {}, `相同落地 IP（${n.server_node_count} 个节点）`), h("p", { class: "hint" }, "这些节点观测到的落地 IP 相同，共用一个序号；同 IP 也可能来自共享出口或任播，不证明同一台服务器。"), box);
 }
 
 async function toggleEnabled(button, node) {

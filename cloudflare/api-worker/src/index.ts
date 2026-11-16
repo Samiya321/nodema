@@ -312,14 +312,14 @@ export async function handle(
         /^[\w.-]+\/[\w.-]+$/.test(env.GITHUB_REPOSITORY) &&
         Boolean(env.GITHUB_DISPATCH_TOKEN) &&
         Boolean(env.GITHUB_WORKFLOW_REF);
-      if (version !== "0022_uk_probes")
+      if (version !== "0023_identity_naming")
         return json({
           ready: false,
           checks: { schema: false, dispatch: dispatchReady },
         });
       const checks = {
         database: true,
-        schema: version === "0022_uk_probes",
+        schema: version === "0023_identity_naming",
         storage: "PLAINTEXT",
         dispatch: dispatchReady,
       };

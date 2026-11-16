@@ -94,6 +94,37 @@ def test_all_dns_addresses_keep_separate_geoip_evidence(
     assert all(r["organization"] == "Synthetic ASN" and r["queried_at"] for r in entries)
 
 
+@pytest.mark.parametrize("echo_asn,expected", [(None, "Geo Org"), (64502, "Echo Org")])
+def test_asn_organization_uses_the_same_source_as_its_number(
+    monkeypatch,
+    monitor_settings,
+    fixture_bytes,
+    echo_asn,
+    expected,
+):
+    import app.checker.health as module
+
+    monkeypatch.setattr(module.socket, "create_connection", lambda *a, **k: nullcontext())
+
+    class OrgGeo(Geo):
+        def lookup(self, ip):
+            return {**super().lookup(ip), "organization": "Geo Org"}
+
+    class OrgEcho(Echo):
+        def request(self, port=None):
+            return {**super().request(port), "asn": echo_asn, "org": "Echo Org"}
+
+    identity = parse_document(fixture_bytes("sample_vless.txt")).nodes[0].identity
+    identity["server_host"] = "198.51.100.1"
+    result = HealthChecker(
+        monitor_settings, runtime=Runtime(), echo=OrgEcho(), geoip=OrgGeo()
+    ).check(identity, "N000001")
+    assert result.exit_asn_org == expected
+    assert result.geoip_metadata["exit"]["asn_source"] == (
+        "geolite" if echo_asn is None else "echo"
+    )
+
+
 def test_tcp_success_proxy_failure_is_not_up(monkeypatch, monitor_settings, fixture_bytes):
     import app.checker.health as module
 

@@ -312,6 +312,7 @@ class NodeCurrentStatus(Base):
         sa.ForeignKey("test_results.id", ondelete="SET NULL")
     )
     last_exit_ip: Mapped[str | None] = mapped_column(sa.Text)
+    exit_observed_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
     last_exit_country: Mapped[str | None] = mapped_column(sa.Text)
     last_exit_asn: Mapped[int | None] = mapped_column(sa.BigInteger)
     last_http_duration_ms: Mapped[int | None]

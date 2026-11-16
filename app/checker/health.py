@@ -490,12 +490,15 @@ class HealthChecker:
                 "ip": data["ip"],
                 **geo,
                 "queried_at": datetime.now(UTC).isoformat(),
+                "country_source": "echo" if data.get("country") else "geolite",
+                "asn_source": "echo" if data.get("asn") is not None else "geolite",
             }
             result.exit_country = data.get("country") or geo["country"]
             result.exit_asn = data.get("asn") if data.get("asn") is not None else geo["asn"]
             # Prefer the GeoLite organization only when it describes the same ASN.
             same_asn = geo.get("asn") == result.exit_asn
-            result.exit_asn_org = data.get("org") or (geo.get("organization") if same_asn else None)
+            echo_org = data.get("org") if data.get("asn") == result.exit_asn else None
+            result.exit_asn_org = echo_org or (geo.get("organization") if same_asn else None)
             result.exit_city = geo["city"]
             result.status = (
                 "DEGRADED" if result.http_duration_ms > self.settings.degraded_http_ms else "UP"

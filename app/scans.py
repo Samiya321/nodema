@@ -954,6 +954,7 @@ class ScanService:
                     "consecutive_failures": int(result.status == "DOWN"),
                     "last_result_id": result.id,
                     "last_exit_ip": result.exit_ip,
+                    "exit_observed_at": result.checked_at if success and result.exit_ip else None,
                     "last_exit_country": result.exit_country,
                     "last_exit_asn": result.exit_asn,
                     "last_exit_asn_org": result.exit_asn_org,
@@ -1026,6 +1027,7 @@ class ScanService:
             )
             for key in (
                 "last_exit_ip",
+                "exit_observed_at",
                 "last_exit_country",
                 "last_exit_asn",
                 "last_exit_asn_org",
@@ -1033,9 +1035,24 @@ class ScanService:
                 "entry_country",
                 "entry_asn",
             ):
-                # A missing GeoIP/Echo field never erases what was known: names (and
-                # their stable numbers) would otherwise flip between groups.
+                # Preserve historical identity on fallback or missing fields for the
+                # same IP. Never attach the old IP's country/ASN to a newly seen IP.
                 updates[key] = sa.func.coalesce(excluded[key], getattr(NodeCurrentStatus, key))
+            new_exit = sa.and_(
+                excluded.last_exit_ip.is_not(None),
+                excluded.last_exit_ip.is_distinct_from(NodeCurrentStatus.last_exit_ip),
+            )
+            for key in ("last_exit_country", "last_exit_asn", "last_exit_asn_org"):
+                changed = new_exit
+                if key == "last_exit_asn_org":
+                    changed = sa.or_(
+                        new_exit,
+                        sa.and_(
+                            excluded.last_exit_asn.is_not(None),
+                            excluded.last_exit_asn.is_distinct_from(NodeCurrentStatus.last_exit_asn),
+                        ),
+                    )
+                updates[key] = sa.case((changed, excluded[key]), else_=updates[key])
             session.execute(
                 statement.on_conflict_do_update(
                     index_elements=[NodeCurrentStatus.node_id],

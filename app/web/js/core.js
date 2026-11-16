@@ -202,10 +202,10 @@ export function flag(country) {
 export function route(entry, exit) {
   const chip = h("span", { class: "route" });
   if (!exit && !entry) chip.append(h("span", { class: "code mute" }, "—"));
-  else if (!entry || entry === exit) chip.append(h("span", { class: "code" }, exit || entry));
+  else if (entry === exit) chip.append(h("span", { class: "code" }, exit));
   else
     chip.append(
-      h("span", { class: "code from" }, entry),
+      h("span", { class: "code from" }, entry || "?"),
       h("span", { class: "arrow", "aria-label": "到" }, "→"),
       h("span", { class: "code" }, exit || "?"),
     );

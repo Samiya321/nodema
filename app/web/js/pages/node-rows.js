@@ -43,7 +43,7 @@ export const COLUMNS = {
   rtt: ["延迟", number("peak_rtt_ms"), "asc"],
   udp: ["UDP", (a, b) => udpRank(a) - udpRank(b) || (a.udp_ms ?? 1e9) - (b.udp_ms ?? 1e9), "asc"],
   avail: ["7 天可用", (a, b) => nullsLast(ratio(a), ratio(b), (x, y) => x - y) || (a.checked_7d ?? 0) - (b.checked_7d ?? 0), "desc"],
-  route: ["线路", text((n) => (n.entry_country || "") + (n.exit_country || "")), "asc"],
+  route: ["入口 / 落地", text((n) => (n.entry_country || "") + (n.exit_country || "")), "asc"],
   operator: ["落地运营商", text(operatorOf), "asc"],
   checked: ["最近检测", text((n) => n.last_checked_at), "desc"],
 };
@@ -130,7 +130,7 @@ function week(n) {
 function route(n) {
   const code = (c, cls) => h("span", { class: "code " + cls }, c ? `${flag(c)} ${c}` : "?");
   if (!n.entry_country && !n.exit_country) return h("span", { class: "faint" }, "—");
-  if (!n.entry_country || n.entry_country === n.exit_country) return h("span", { class: "route" }, code(n.exit_country || n.entry_country, "to"));
+  if (n.entry_country === n.exit_country) return h("span", { class: "route" }, code(n.exit_country, "to"));
   return h("span", { class: "route" }, code(n.entry_country, "from"), h("span", { class: "arrow", "aria-label": "到" }, "→"), code(n.exit_country, "to"));
 }
 
@@ -144,7 +144,8 @@ function operatorCell(n) {
 
 export function nodeRow(n, picked, onPick) {
   const ipType = n.exit_ip_type ? IP_TYPE[n.exit_ip_type] + (n.exit_ip_proxy ? "·代理标记" : "") : "";
-  const meta = [n.short_id, n.protocol, KIND[n.node_group] || "", ipType, n.server_node_count > 1 ? `同服务器 ${n.server_node_count} 个` : "", n.enabled ? "" : "已停用", n.present_source_count ? "" : "上游已移除"].filter(Boolean);
+  const flags = n.identity_flags || 0;
+  const meta = [n.short_id, n.protocol, KIND[n.node_group] || "", ipType, n.server_node_count > 1 ? `同 IP ${n.server_node_count} 个` : "", flags & 6 ? "归属有分歧" : "", flags & 8 ? "历史落地" : "", n.enabled ? "" : "已停用", n.present_source_count ? "" : "上游已移除"].filter(Boolean);
   return h(
     "tr",
     { class: (n.enabled ? "" : "dim ") + (picked ? "picked" : "") },
@@ -158,7 +159,7 @@ export function nodeRow(n, picked, onPick) {
     h("td", { "data-label": isCarrier(vantage) ? "晚高峰" : "延迟", class: "num" }, latency(n)),
     h("td", { "data-label": "UDP" }, udpCell(n)),
     h("td", { "data-label": "7 天可用" }, week(n)),
-    h("td", { "data-label": "线路" }, route(n)),
+    h("td", { "data-label": "入口 / 落地", title: "IP 数据库归属，不代表已验证的物理中转路线" }, route(n)),
     h("td", { "data-label": "落地运营商", class: "operator" }, operatorCell(n)),
     h("td", { "data-label": "最近检测", class: "num faint-text" }, ago(n.last_checked_at)),
   );

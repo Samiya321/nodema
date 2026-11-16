@@ -181,7 +181,7 @@ def test_keys_and_naming():
             seq=1,
             variant="VLESS",
         )
-        == "🇯🇵JP|Greencloud|xTom 01 VLESS"
+        == "🇯🇵?->JP|Greencloud|xTom 01 VLESS"
     )
     assert render_name("N1", "vless", None, None, "{IPTYPE}{SEQ}", ip_type="HOSTING", seq=3) == (
         "机房03"

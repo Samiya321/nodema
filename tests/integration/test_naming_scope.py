@@ -117,7 +117,7 @@ def test_missing_geoip_never_renumbers_and_same_country_shares_a_group(service, 
     scans.run_shard(run["id"], 0)
     scans.finalize(run["id"])
     assert names(service, monitor_settings) == before
-    # Entry unknown and entry == exit both render "SG": they must not collide.
+    # Unknown entry is explicit; it still shares the landing numbering group.
     with service.sessions.begin() as session:
         session.execute(
             sa.text(
@@ -134,7 +134,8 @@ def test_missing_geoip_never_renumbers_and_same_country_shares_a_group(service, 
         session.execute(sa.text("SELECT nodema_assign_names()"))
     final = names(service, monitor_settings)
     assert len(set(final.values())) == 2
-    assert all(name.startswith("🇸🇬SG|Webbing ") for name in final.values())
+    assert sum(name.startswith("🇸🇬SG|Webbing ") for name in final.values()) == 1
+    assert sum(name.startswith("🇸🇬?->SG|Webbing ") for name in final.values()) == 1
 
 
 def test_requests_survive_and_each_scope_gets_one_run(service, monitor_settings):

@@ -53,3 +53,8 @@
 - [ip-api 字段定义](https://ip-api.com/docs/api:batch)：isp、org、as 分别定义，不应混称。
 - [AS40676 Psychz Networks](https://www.peeringdb.com/asn/40676)、[AS141995 Contabo Asia](https://www.peeringdb.com/asn/141995)、[AS3257 GTT](https://www.peeringdb.com/asn/3257)、[AS3356 Lumen](https://www.peeringdb.com/asn/3356)：用于核对品牌，不据注册/设施国家替换 IP 地理数据。
 - [ARIN AS63150](https://rdap.arin.net/registry/autnum/63150) 的公开名称为 BAGE；[ARIN AS19527](https://rdap.arin.net/registry/autnum/19527) 与 [RIPE AS43515](https://rdap.db.ripe.net/autnum/43515) 对照说明 ASN 不同不一定是不同运营商集团。
+
+
+## 后续用户授权与修复
+
+本审核完成后，用户明确要求“你自己想办法修复一下吧”。后续实现见 [归属命名规则](IDENTITY_NAMING.md)，新迁移 `0023_identity_naming`；本文的“未实施/未改名”仅描述原只读审核阶段。发布状态与生产复核见 STATUS/CLOUD_DEPLOYMENT。
