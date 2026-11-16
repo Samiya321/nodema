@@ -185,3 +185,18 @@ UI 额外验证逐行结果、重复提交、390px 布局，以及慢网络下�
 - 验证（经 Pages 域名）：health 200、未认证 401、readiness 为真；`/api/grading-policy`、`/api/probe-status`、`/api/nodes/:id/access` 200；精简列表带 9 个等级字段。手动触发 [entry-probe 43460423446](https://github.com/Samiya321/nodema/actions/runs/43460423446)：匿名额度，157 次测量 / 245 次测试 / 0 失败，写入 240 条；重算 7,904 个节点，三网视角 B 3,511、待定 4,344、C 49（尚无晚高峰样本，S/A 需要若干晚上的测量和 3 天以上检测）。
 - 仓库尚未配置 `GLOBALPING_TOKEN`，当前按匿名额度（每 IP 每小时 250 次）运行。
 - 待观察：晚高峰三网覆盖（总览“接入测量”的三网晚高峰网段数，3–4 晚后核对）；`entry_probe_results` 占用；Neon 每月传输。可在设置 → 质量分级规则 → 接入测量关闭。
+
+
+## 第十七次发布：英国视角与接入样本修复（2026-11-17）
+
+- 代码 `6482b9a`（分支 `codex/uk-probes-production-audit` 快进 main）与 `7d82021`（新视角/规则变更及时重算）。新增 GB，保留既有绝对阈值；优先补齐探针数、不因非高峰差跳过高峰；拒测目标七天冷却；两个探针与两个小时段才证明 TCP 不通；B 的接入未知单独标识；修复名称列溢出和运行提示。聚合生产分析见 [本轮复盘](PRODUCTION_REVIEW_2026_11_17.md)。
+- 生产迁移 `0021_udp_relay` → `0022_uk_probes` 已执行；未修改旧 migration 或生产密钥。新增小型拒测记录表、GB 约束/目录校验，compact 尾部追加 access_band。Worker 发布前后存在严格 readiness 检查的短暂切换窗口。
+- 备份：本机直连 pg_dump 300 秒超时，未形成有效文件。改用原有 [backup 43908687462](https://github.com/Samiya321/nodema/actions/runs/43908687462)，45,282,417 bytes 加密 artifact（保留 20 天）。下载后在独立 PG17 恢复成功（本次无需删除 pg_attver），再演练 0022 升级、降级、再升级。50,396 nodes / 1,014 sources / 54,119 node_sources / 82,211 test_results / 8,268 node_grades / 9,973 entry_probe_results / 8 scan_runs 行数保持。只在隔离本地数据库恢复与测试，生产只做升级；没有恢复线上库。
+- API version `ed231caa-2f15-4ce6-b380-f4d2b72cd109`（代码 6482b9a），Pages https://43cad7f1.nodema-dashboard.pages.dev（代码 7d82021），Echo 未更改。生产入口/改动静态资源 200 且 SHA256 与源码一致；health 200，未认证 readiness 401，认证 readiness=true，GB 状态/目录接口 200，compact 含 access_band。
+- 本地 454 Python / 36 Worker / 3 Echo 通过；随后最终重算变更分级/计划/客户端/真实 PG 集成 29 项通过。分支 [CI 43908667084](https://github.com/Samiya321/nodema/actions/runs/43908667084) 通过。首次 main [43909771141](https://github.com/Samiya321/nodema/actions/runs/43909771141) 在既有合成批量 Reality UDP 回环报 BATCH_UDP_FAILED_B27；同 SHA 分支 CI 和本机 30 节点批量协议回环通过。功能版 [main CI 43910432706](https://github.com/Samiya321/nodema/actions/runs/43910432706) 全部通过，包含真实协议/UDP 批量回环与 100 节点合成流水线。
+- 页面以仅允许 GET 的本机生产镜像核对 1440 px / 1100 px / 375 px 和深色主题；375 px 文档宽度等于视口，说明行未越过单元格，1440 px 英国选项和待补测提示可见。未重新做 20k 节点性能基准；本轮未改列表分组算法。
+- 真实验证 [entry-probe 43910530143](https://github.com/Samiya321/nodema/actions/runs/43910530143)：临时将原本未设置的 PROBE_MAX_TESTS_PER_RUN 设为 120，仅用于本轮验证；测量步骤启动后已删除 Variable，恢复原默认。英国已写入真实结果，运行已成功：2 账号、58 次测量、120 次测试 / 120 条样本，0 失败 / 0 限流；GB 68 条样本覆盖 34 个网段，全部满足两个身份。等级已补齐至 9,646 条，英国 S1/A25，实际页面可见 RTT。没有修改 Globalping tokens、账号并发或免费额度策略。
+
+- 收尾发现该轮等级写回 305.9s（计算 0.1s、读取 2.2s），`f83a0b4` 修复 nullable 字段导致 ORM 插入批次碎片化：隔离真实 PG 中混合已测/未测的 14 行由 5 个 INSERT 批次 变为 1 次且 NULL 语义保持，30 项分级定向回归与本地完整 456 项 Python 回归通过；生产耗时改善留待下一次正常重算验证，不在生产跑性能测试。仅 Actions Python 代码变化，API/Pages/Echo/schema 无需再发布。
+
+- 批量写入最终版 [main CI 43912684700](https://github.com/Samiya321/nodema/actions/runs/43912684700) 通过：456 Python / 36 Worker / 3 Echo，含真实协议/UDP 批量回环、100 节点流水线及 Pages/Worker 构建。私密部署记录与发布后盘点已更新；临时加密下载已移废纸篓，本轮三个隔离容器均移除。

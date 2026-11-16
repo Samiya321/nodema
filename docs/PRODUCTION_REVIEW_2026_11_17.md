@@ -38,11 +38,20 @@
 
 - 查询时数据库约 316 MB。最新**已记录**的 Neon 读数是北京时间 11-16 09:24 的 1.647 GB / 5 GB，重置日 12-01；它不是本轮结束时的实时读数，不能据此保证本周期够用。
 - 7 天保留的详细结果：82,211 次、环境错误 0、超时约 24.8%；来源与节点失效很多，但本轮没有证据支持把它们归因于新协议映射或平台故障。历史执行汇总有 1 次失败，不代表当前还有未完成批次。
-- 分级运行日志 load 0.8s / compute 0.1s / write 13.3s，当前已不是先前 13 分钟的状态；暂不为此重写存储。
+- 原最近一轮分级 load 0.8s / compute 0.1s / write 13.3s；本轮真实验证却是 load 2.2s / compute 0.1s / write **305.9s**，写回仍有明显波动。隔离 PG 回归复现：14 条已测/未测交替记录因 ORM 默认省略 NULL 而分裂成 5 个 INSERT 批次；`f83a0b4` 显式 render_nulls 后为 1 批，NULL 语义保留。[SQLAlchemy 官方说明](https://docs.sqlalchemy.org/en/21/orm/queryguide/dml.html#sending-null-values-in-orm-bulk-insert-statements)与此一致。该优化已进 Actions 代码，真实生产耗时要等下一次正常重算观察；不在生产跑 benchmark。
 - 先观察接入覆盖率、拒测数和补测后各视角分布，再决定是否调整阈值。三网 S=80ms、A=150ms 是“三家都达到”的条件；联通单独已有 36 个 S，三网只有 1 个并不矛盾。
 
 ## 验证与发布
 
-代码在 `codex/uk-probes-production-audit`；本地隔离 PostgreSQL 17 下 **454 Python / 36 Worker / 3 Echo** 全部通过，包含真实 PG 备份恢复与 Worker/Python/SQL 贯通。Ruff lint/format、修改 JS 语法、Dashboard TypeScript 与构建通过。仅有既有 Starlette/httpx 弃用提示。
+代码 `6482b9a`（功能）、`7d82021`（及时重算）及 `f83a0b4`（批量写入）已发布到 main；本地隔离 PostgreSQL 17 下 **456 Python / 36 Worker / 3 Echo** 全部通过，包含真实 PG 备份恢复与 Worker/Python/SQL 贯通。Ruff lint/format、修改 JS 语法、Dashboard TypeScript 与构建通过。仅有既有 Starlette/httpx 弃用提示。
 
-本节随发布补充 commit、CI、备份恢复证据和资源版本。当前不得把本地验证写成生产已生效。
+发布前 [备份 43908687462](https://github.com/Samiya321/nodema/actions/runs/43908687462) 已隔离恢复并演练 0022 升级/降级/再升级，50,396 个节点及相关表行数保持。API `ed231caa-2f15-4ce6-b380-f4d2b72cd109`，Pages https://43cad7f1.nodema-dashboard.pages.dev，生产 schema `0022_uk_probes`。生产 health/readiness、未认证 401、英国目录与状态、compact access_band、前端资源匹配均通过。
+
+功能版 [main CI 43910432706](https://github.com/Samiya321/nodema/actions/runs/43910432706) 通过（包含完整回归、真实协议与 UDP 批量回环、100 节点流水线）；新视角与保存规则强制重算的最终定向回归 29 项通过。上一 main CI 有一次既有批量 Reality UDP 回环失败，后续本地和最终 main CI 均通过；不据一次失败改生产协议参数。临时备份用完移到废纸篓，云端加密 artifact 按 20 天保留。
+
+
+真实 [entry-probe 43910530143](https://github.com/Samiya321/nodema/actions/runs/43910530143) 已成功：2 个账号，58 次测量 / 120 次测试 / 120 条样本，失败与限流均 0；GB 68 条样本、34 个网段，每个均满足两个探针身份。原本未设置的 PROBE_MAX_TESTS_PER_RUN 临时设为 120，测量步骤开始后即删除，已恢复默认。重算后 9,646 条等级，英国 S 1 / A 25 / B 610 / C 53 / 待定 689；实际页面英国视角已显示测得 RTT（并非所有节点都已覆盖）。三网为 S 1 / A 3 / B 335 / C 118 / D 460 / 待定 461。三网缺失的晚高峰样本等北京时间 19:30–23:30 补齐。拒测冷却在本轮没有命中（合成回归已覆盖），不能把这次 0 失败归因于拒测缓存。
+
+发布后完整只读盘点：节点、来源、关联、检测明细及批次行数不变；等级新增英国后从 8,268 到 9,646 条，接入结果由 9,973 到 10,081 条。临时备份已移废纸篓，两个本轮隔离测试/恢复容器已清理；收尾批量写入验证使用的独立测试容器已移除。
+
+批量写入最终版 `f83a0b4` 本地隔离 PG17 完整回归 **456 项通过**，分级定向回归 **30 项通过**；批量插入回归先在旧版复现 5 个 INSERT 批次导致的断言失败，再以新版验证 1 个 INSERT 批次和 NULL 值保留。最终 [main CI 43912684700](https://github.com/Samiya321/nodema/actions/runs/43912684700) 通过：456 Python / 36 Worker / 3 Echo，含真实协议回环与 100 节点流水线。

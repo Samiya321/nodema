@@ -1,6 +1,6 @@
 # 项目接管指南
 
-更新：2026-11-16。面向新会话、其他 agent 和另一台机器的维护者；先读根目录 AGENTS.md。
+更新：2026-11-17。面向新会话、其他 agent 和另一台机器的维护者；先读根目录 AGENTS.md。
 
 ## 当前可核对的基线
 
@@ -12,6 +12,7 @@
 - **2026-11-14 已发布 `3b4509b`**：共用凭据（≥5 节点、≥2 服务器）的节点算机场，迁移 head `0020_shared_credentials`；接入测量由 API Worker cron 每小时触发。
 - **2026-11-15 已发布 `3b68418`**：UDP 检测（Wi-Fi Calling）、中转入口算机场、Neon 流量读数、节点页重做（ASN 排行）；迁移 head `0021_udp_relay`。数据库已搬到新 Neon 项目（ID 见私密 deployment-state）。
 - **2026-11-16 已发布 `81c3c01`**：Globalping 多账户 token 轮询，Secret `GLOBALPING_TOKENS` 已由用户配置；Pages https://08bda24d.nodema-dashboard.pages.dev。main CI 43883188456 通过，schema 仍为 `0021_udp_relay`；真实运行与验证范围见 [CLOUD_DEPLOYMENT.md](CLOUD_DEPLOYMENT.md)。
+- **2026-11-17 已发布 `6482b9a` / `7d82021` / `f83a0b4`**：英国 GB、接入补测与拒测冷却、等级列布局和待补测标识；schema `0022_uk_probes`。Pages https://43cad7f1.nodema-dashboard.pages.dev，API version `ed231caa-2f15-4ce6-b380-f4d2b72cd109`。生产分布、备份恢复和验证范围见 [本轮复盘](PRODUCTION_REVIEW_2026_11_17.md)。
 - 当前没有已知待补的本轮代码缺口。用户真实节点、大陆体验、长期配额、生产恢复不属于已完成的合成验收证明。不得把“基础链路通过”写成所有公网参数都已保证可用。
 
 先看 git 与实际云端状态。历史记录中的“尚未导入真实节点”和表行数不代表此刻数据库为空；用户可以随时从 Dashboard 导入，禁止据此清库。
@@ -36,7 +37,7 @@
 | 批量链接 | 普通订阅和 Sub-Store API 可混合，每行一个，每批 100 个/128 KiB，单 URL 8 KiB；逐行结果、去重、一次调度 |
 | 检测 | DNS/TCP 预检、缓存、失败冷却和必要的完整代理 HTTPS；无下载测速、不做任意网段扫描 |
 | 节点分级（2026-11-13，覆盖旧“大陆参考”） | 只记录能实测证明的东西。按视角（三网/电信/联通/移动/香港/新加坡）给 S/A/B/C/D/待定：等级 = 接入档（Globalping 社区探针 TCP ping 入口，三网用北京时间晚高峰）与稳定档（7 天日可用率）中较差的一项。线路只记录三网去程实测经过的 ASN；`line_type` 仍为 UNKNOWN，不判断 IPLC/IEPL/CN2，不推断回程，不提取机场自称线路名。界面不再显示 P1/P2/P3 理论等级和人工线路声明（数据保留）。用户接受把入口 IP 发给 Globalping（测量数据公开）；不做本机测量。账号配置见下行新决策 |
-| 英国与采样修复（2026-11-17） | 新增英国 GB 独立视角，海外全天中位数；优先补齐不同探针，服务拒测冷却七天，不作为节点失败。保留原阈值与三网最差规则，缺接入的 B 标明待补测。实现待发布，详见 PRODUCTION_REVIEW_2026_11_17.md |
+| 英国与采样修复（2026-11-17） | 新增英国 GB 独立视角，海外全天中位数；优先补齐不同探针，服务拒测冷却七天，不作为节点失败。保留原阈值与三网最差规则，缺接入的 B 标明待补测。已发布 `6482b9a` / `7d82021` / `f83a0b4`、schema `0022_uk_probes`，详见 PRODUCTION_REVIEW_2026_11_17.md |
 | Globalping 多账户（2026-11-16） | 用户要求覆盖旧“只用一个账号”的限制：支持多账户 token 轮询。Secret `GLOBALPING_TOKENS`（换行/逗号/空白分隔、去重）优先，兼容 `GLOBALPING_TOKEN`；仅两者均为空时匿名。逐账户查免费剩余额度、各留 5 次并预扣并发预算，401/403/429 跳过该账户，全部不可用则停止；不自动花积分。单次总预算上限默认 5000，可用仓库变量降低。同一账号的不同 token 共享额度；使用仍受 Globalping 条款约束。配置与验证边界见 NODE_GRADING_DESIGN.md 第 0 节 |
 | 共用凭据算机场（2026-11-14） | 同一 UUID/密码被 ≥5 个节点、≥2 个服务器地址共用即算机场节点（迁移 0020）。每日检测范围保持“仅自建”：用户确认这批节点（当时 28,242 个，7,684 个可用）不再每日检测，结果过期后自然退出等级与订阅 |
 | UDP 检测（2026-11-15） | 为 Wi-Fi Calling 记录“经节点的 UDP 通不通”：HTTPS 通过后经同一 mihomo 监听做 SOCKS5 UDP ASSOCIATE，发 STUN（备用 DNS），共 4 次尝试、每次新关联，一次丢包不判失败。只能证明到公共 STUN/DNS 的 UDP，不对运营商 ePDG 发 IKE 包。Clash 导出对未声明仅 TCP 的节点写 `udp: true` |
@@ -94,7 +95,7 @@
 | test_results、node_current_status | 历史检测与当前状态；环境失败不能变成整批节点 DOWN |
 | node_daily_stats、runner_node_summaries、nodes 的累计字段 | 每日统计和累计计数；清理历史不能使已收录/累计检测天数倒退 |
 | node_annotations、quality_policies、quality_policy_revisions | 旧人工证据与理论分级规则（界面只保留标签），不能生成真实线路结论 |
-| entry_probe_results、entry_route_traces、entry_probe_runs | Globalping 测量（保留 14 天）、三网去程 ASN、每次运行的计数；不写目标到日志 |
+| entry_probe_results、entry_route_traces、entry_probe_runs、entry_probe_rejections | Globalping 测量（保留 14 天）、三网去程 ASN、每次运行的计数；不写目标到日志 |
 | node_grades、grading_policy、grading_policy_revisions | 按视角的节点等级（Actions 计算，Worker 只读）与分级规则版本 |
 | naming_rules、naming_revisions | 命名模板和修订 |
 | catalog_state | 目录 epoch、导出预算、历史日期关闭水位；不要手改数值绕过失效或归档保护 |
