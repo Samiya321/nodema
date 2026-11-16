@@ -43,7 +43,7 @@ function probePanel(status) {
           h("dt", {}, "最近一次"),
           h("dd", {}, `${ago(latest.started_at)}${latest.peak ? "（晚高峰）" : ""} · ${latest.tests} 次测试`),
           h("dt", {}, "今天已用"),
-          h("dd", {}, `${status.tests_today} 次（${latest.authenticated ? "账号额度每小时 500" : "匿名额度每小时 250"}）`),
+          h("dd", {}, `${status.tests_today} 次（${latest.authenticated ? "账号模式，按剩余额度运行" : "匿名模式，按剩余额度运行"}）`),
           h("dt", {}, "已覆盖网段"),
           h("dd", {}, `${status.prefixes_graded} 个（7 天内）；三网晚高峰 ${status.prefixes_peak} 个；HK/SG ${status.prefixes_overseas} 个`),
           h("dt", {}, "在线家宽探针"),

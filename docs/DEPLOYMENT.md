@@ -87,8 +87,12 @@ Pages Functions 将 `/api/*` 和 `/subscriptions/*` 转发给 Worker 服务绑�
 | `FINGERPRINT_KEY_B64` | 独立 HMAC 密钥 |
 | `ECHO_TOKEN` | 仅用于另行保护的 Echo，可留空 |
 | `BACKUP_DATABASE_URL` | 可选备份直连地址，缺省使用 DATABASE_URL |
+| `GLOBALPING_TOKENS` | 可选 Globalping 多账户 token，换行或逗号分隔；优先于旧单 token，实际使用须符合服务方授权 |
+| `GLOBALPING_TOKEN` | 兼容旧单 token；仅 `GLOBALPING_TOKENS` 为空时使用；两者均空才用匿名 |
 
 仓库 vars：`ENCRYPTION_KEY_ID`（缺省 local-v1）、`ECHO_URL`。入口 GeoIP/ASN 默认使用 GitHub 的 P3TERX/GeoLite.mmdb Release，无需 MaxMind 账号。可选 Secrets `MAXMIND_ACCOUNT_ID` 和 `MAXMIND_LICENSE_KEY` 同时配置后，auto 模式优先使用官方源；仓库变量 `GEOIP_DOWNLOAD_PROVIDER` 可显式选择 auto/github/maxmind/disabled。
+
+接入测量支持仓库变量 `PROBE_CONCURRENCY`（默认 6）和 `PROBE_MAX_TESTS_PER_RUN`（所有账户合计、默认 5000、允许 0–5000）。始终受逐账户免费剩余额度约束，各账户留 5 次；多个 token 对应同一账号不会增加额度。配置示例及跳过/停止行为见 [节点分级设计第 0 节](NODE_GRADING_DESIGN.md#0-实现与设计的差异)。只配置 GitHub Secret 不会更新本地代码，只有默认分支发布了新工作流后才会读取 `GLOBALPING_TOKENS`。
 
 - `export-build.yml`：保存、编辑或重试订阅方案时调用；Actions 生成并发布当前成品，独立于长时间健康检测任务。
 - `source-sync.yml`（Sync sources）：只在 Dashboard 点击“同步来源”时调用；拉取已请求或到期的来源、生成 Sub-Store 子来源、刷新机场流量并发布订阅，**不检测节点**。导入/编辑来源不会自动启动它。

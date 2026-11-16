@@ -2,6 +2,14 @@
 
 新会话/其他 agent 先读 [接管指南](HANDOFF.md)；生产操作和凭据读取边界见 [生产操作手册](PRODUCTION_OPERATIONS.md)。
 
+2026-11-16 增量（**代码验证完成，发布中**，分支 `codex/globalping-token-pool`，基于 `5f091f3`；schema head 仍为 `0021_udp_relay`，最终发布证据待补）：
+
+- 用户要求 Globalping 从单账号改为多账户 token 轮询，覆盖旧单账号配置约定。新增 Secret `GLOBALPING_TOKENS`（换行/逗号/空白分隔、去重、优先于兼容的 `GLOBALPING_TOKEN`），两者均空才匿名。
+- 每账号读取免费剩余额度、留 5 次，锁内预扣并发请求预算，创建按顺序轮询；401/403/429 跳过该账号，全部不可用则停止。结果沿用创建时的 token，查询 429 在期限内重试同一测量。未知额度不猜、不将积分计入预算，网络等结果不确定的创建不重发；同账号多个 token 仍共享服务端额度。
+- 单次合计上限 `PROBE_MAX_TESTS_PER_RUN` 默认 5000，工作流读取同名仓库 Variable；并发仍为 6。修复限流取消排队任务后 `CancelledError` 导致收尾失败。日志仅新增账户数量、不可用数量和限流数量；运行记录 `remaining` 为可用账户合计，无需迁移。总览改为“账号模式，按剩余额度运行”。
+- 验证：隔离 PG17 下全量 Python 回归 **446 项通过**（309 秒，包含真实 PG 备份/恢复；1 条既有 Starlette/httpx 弃用提示）；随后最终预算上限版本的客户端/并发预算/分级/轮询集成测试 **38 项通过**。全仓 Ruff lint/format、修改 JS 语法、`git diff --check` 通过。无 CI 链接（尚未推送），没有使用真实 token 或对真实节点发起测量。
+- 发布边界：Python 与工作流须发布到默认分支后才供后续 Actions 使用，文案须发布 Pages；本轮未更改 GitHub Secrets、数据库或云端资源。多账户配置、预算与条款边界见 [节点分级设计第 0 节](NODE_GRADING_DESIGN.md#0-实现与设计的差异)。
+
 截至 2026-11-09，Actions 预生成订阅和长期扫描明细归档两项主要代码缺口已补齐，相关 API、Dashboard、迁移、工作流与回归均已接通。2026-11-11 已发布用户云端实例并完成基础链路验收，见 [云端部署记录](CLOUD_DEPLOYMENT.md)。逐项核对见 [交付审查](CONVERSATION_COMPLETENESS_REVIEW.md)。
 
 | 范围 | 代码状态 | 验证与边界 |

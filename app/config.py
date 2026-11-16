@@ -1,4 +1,5 @@
 import base64
+import re
 
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -57,12 +58,13 @@ class Settings(BaseSettings):
     ipinfo_time_budget_seconds: int = Field(default=720, ge=0, le=3600)
     ipinfo_timeout_seconds: float = Field(default=15, gt=0, le=60)
     echo_token: SecretStr = SecretStr("")
-    # Entry measurements: Globalping public probes. One registered token when set,
-    # otherwise the anonymous per-IP limit (never both in one run).
+    # Entry measurements: a token pool takes precedence over the legacy single token.
+    # Anonymous mode is used only when neither is configured.
     globalping_url: str = Field(default="https://api.globalping.io/v1", pattern=r"^https://[^\s]+$")
     globalping_token: SecretStr = SecretStr("")
+    globalping_tokens: SecretStr = SecretStr("")
     probe_concurrency: int = Field(default=6, ge=1, le=16)
-    probe_max_tests_per_run: int = Field(default=500, ge=0, le=5000)
+    probe_max_tests_per_run: int = Field(default=5000, ge=0, le=5000)
     probe_time_budget_seconds: int = Field(default=1500, ge=60, le=3300)
     probe_timeout_seconds: float = Field(default=20, gt=0, le=60)
     dns_timeout_seconds: float = Field(default=3, gt=0, le=30)
@@ -104,6 +106,13 @@ class Settings(BaseSettings):
     scan_timezone: str = "Asia/Shanghai"
     maxmind_account_id: SecretStr = SecretStr("")
     maxmind_license_key: SecretStr = SecretStr("")
+
+    def globalping_credentials(self) -> list[str]:
+        raw = self.globalping_tokens.get_secret_value()
+        tokens = [token for token in re.split(r"[\s,]+", raw.strip()) if token]
+        if not tokens:
+            tokens = [self.globalping_token.get_secret_value().strip()]
+        return list(dict.fromkeys(token for token in tokens if token))
 
     def fingerprint_key(self) -> bytes:
         try:

@@ -1,9 +1,8 @@
 """Minimal Globalping API client (https://globalping.io, public measurement network).
 
 Measurement data is public by measurement ID, so only entry IPs (never hostnames,
-credentials or node names) are sent. One registered token is used when configured,
-otherwise the anonymous per-IP limit; the two are never combined (Globalping terms,
-section 5). Response bodies and targets never reach logs.
+credentials or node names) are sent. This client owns one credential; pool.py handles
+account selection. Response bodies and targets never reach logs.
 """
 
 import json
@@ -20,7 +19,7 @@ MEASUREMENT_ID = re.compile(r"^[A-Za-z0-9]{1,64}$")
 
 
 class RateLimited(Exception):
-    """The hourly limit is used up; stop creating measurements this run."""
+    """The API refused this request because of a rate limit."""
 
 
 NOT_FOUND_GRACE = 10.0  # seconds a new measurement may read as 404
@@ -229,6 +228,13 @@ class Client:
         while True:
             try:
                 _, data = self._request("GET", f"/measurements/{identifier}")
+            except RateLimited:
+                # Result polling has a per-measurement limit, independent of the
+                # account's creation quota. Never create the measurement again.
+                if time.monotonic() - started > deadline_seconds:
+                    raise ApiError("TIMEOUT") from None
+                sleep(1.0)
+                continue
             except ApiError as error:
                 if error.code != "HTTP_404" or time.monotonic() - started > NOT_FOUND_GRACE:
                     raise

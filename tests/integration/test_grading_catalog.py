@@ -334,3 +334,66 @@ def test_overseas_measurement_falls_back_to_any_probe(service, monitor_settings,
     ]
     assert overseas and all("tags" not in loc for r in overseas for loc in r["locations"])
     assert all(len(r["locations"]) == 1 for r in overseas) and summary["failed_codes"] == {}
+
+
+@pytest.mark.parametrize("exhausted", [False, True])
+def test_probe_round_uses_configured_account_pool(
+    service, monitor_settings, fixture_bytes, monkeypatch, exhausted
+):
+    from pydantic import SecretStr
+
+    from app.probes import globalping
+
+    seed(service, monitor_settings, fixture_bytes)
+    clients = []
+
+    class AccountClient(FakeClient):
+        def __init__(self, base, token, timeout):
+            super().__init__()
+            self.token = token
+            self.remaining = 500
+            self.waited = []
+            clients.append(self)
+
+        def limits(self):
+            if self.token == "bad":
+                raise globalping.ApiError("HTTP_401")
+            return self.remaining
+
+        def create(self, body):
+            if exhausted:
+                raise globalping.RateLimited()
+            self.remaining -= sum(loc.get("limit", 1) for loc in body["locations"])
+            return self.token + super().create(body)
+
+        def wait(self, identifier):
+            assert identifier.startswith(self.token)
+            self.waited.append(identifier)
+            return super().wait(identifier.removeprefix(self.token))
+
+    monkeypatch.setattr(globalping, "Client", AccountClient)
+    settings = monitor_settings.model_copy(
+        update={
+            "globalping_tokens": SecretStr("one\ntwo,bad,one"),
+            "globalping_token": SecretStr("legacy-ignored"),
+            "probe_concurrency": 4,
+        }
+    )
+    summary = runner.run(
+        service.sessions, settings, clock=lambda: datetime(2026, 11, 13, 4, tzinfo=UTC)
+    )
+    assert summary["status"] == "OK" and summary["budget"] == 990
+    assert summary["accounts"] == 3 and [c.token for c in clients] == ["one", "two", "bad"]
+    if exhausted:
+        assert summary["rate_limited"] > 0 and summary["accounts_rate_limited"] == 2
+        assert summary["accounts_unavailable"] == 3
+        assert summary["measurements"] == 0
+    else:
+        assert summary["accounts_unavailable"] == 1 and summary["rate_limited"] == 0
+        assert all(c.requests and c.waited for c in clients[:2])
+        assert summary["tests"] > 0 and summary["stored"] > 0
+    with service.sessions() as session:
+        row = session.scalars(sa.select(EntryProbeRun)).one()
+        expected_remaining = 0 if exhausted else sum(c.remaining for c in clients[:2])
+        assert row.remaining == expected_remaining
+        assert row.authenticated and row.tests == summary["tests"]

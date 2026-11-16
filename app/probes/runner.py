@@ -5,7 +5,7 @@ Only counts reach the output/logs; targets and response bodies never do.
 
 import random
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import CancelledError, ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -16,6 +16,7 @@ from app.database.models import EntryProbeResult, EntryProbeRun, EntryRouteTrace
 from app.grading import CARRIERS, is_peak
 from app.probes import globalping, planner
 from app.probes.policy import load_policy
+from app.probes.pool import ClientPool
 
 BEIJING = ZoneInfo("Asia/Shanghai")
 WINDOW = timedelta(days=7)
@@ -157,7 +158,9 @@ def carrier_asns(probes: list[globalping.Probe]) -> tuple[dict[str, list[int]], 
     return {c: sorted(v) for c, v in carriers.items()}, counts
 
 
-def _measure(client: globalping.Client, task: planner.Task) -> tuple[planner.Task, str, list]:
+def _measure(
+    client: globalping.Client | ClientPool, task: planner.Task
+) -> tuple[planner.Task, str, list]:
     request = task.request()
     try:
         identifier = client.create(request)
@@ -230,17 +233,25 @@ def _rows(task: planner.Task, identifier: str, results: list, peak: bool, measur
     return pings, traces
 
 
-def run(sessions, settings, *, client: globalping.Client | None = None, clock=None) -> dict:
+def run(
+    sessions, settings, *, client: globalping.Client | ClientPool | None = None, clock=None
+) -> dict:
     clock = clock or (lambda: datetime.now(UTC))
     with sessions() as session:
         policy = load_policy(session)
     if not policy["probe_enabled"]:
         return {"status": "DISABLED"}
-    client = client or globalping.Client(
-        settings.globalping_url,
-        settings.globalping_token.get_secret_value(),
-        settings.probe_timeout_seconds,
-    )
+    if client is None:
+        credentials = settings.globalping_credentials()
+        clients = [
+            globalping.Client(settings.globalping_url, token, settings.probe_timeout_seconds)
+            for token in credentials
+        ]
+        client = (
+            ClientPool(clients, reserve=RESERVE, max_tests=settings.probe_max_tests_per_run)
+            if clients
+            else globalping.Client(settings.globalping_url, timeout=settings.probe_timeout_seconds)
+        )
     started = clock()
     summary = {
         "status": "OK",
@@ -262,7 +273,8 @@ def run(sessions, settings, *, client: globalping.Client | None = None, clock=No
         with sessions() as session:
             nodes = load_nodes(session, settings.freshness_hours, policy["coverage"])
             history = load_history(session, policy)
-        budget = max(0, min(remaining - RESERVE, settings.probe_max_tests_per_run))
+        available = client.available if isinstance(client, ClientPool) else remaining - RESERVE
+        budget = max(0, min(available, settings.probe_max_tests_per_run))
         tasks = planner.plan(
             planner.group(nodes),
             history,
@@ -280,6 +292,8 @@ def run(sessions, settings, *, client: globalping.Client | None = None, clock=No
             for future in as_completed(pending):
                 try:
                     task, identifier, results = future.result()
+                except CancelledError:
+                    continue
                 except globalping.RateLimited:
                     summary["rate_limited"] += 1
                     for other in pending:
@@ -314,6 +328,10 @@ def run(sessions, settings, *, client: globalping.Client | None = None, clock=No
         {k: summary[k] for k in ("measurements", "tests", "stored", "failed", "rate_limited")}
     )
     run_row["remaining"] = client.remaining
+    if isinstance(client, ClientPool):
+        summary["accounts"] = len(client.accounts)
+        summary["accounts_unavailable"] = sum(not a.enabled for a in client.accounts)
+        summary["accounts_rate_limited"] = client.rate_limited
     with sessions.begin() as session:
         session.add(EntryProbeRun(started_at=started, finished_at=clock(), **run_row))
     return {**summary, "peak": peak, "authenticated": client.authenticated}

@@ -1,6 +1,6 @@
 # 项目接管指南
 
-更新：2026-11-14。面向新会话、其他 agent 和另一台机器的维护者；先读根目录 AGENTS.md。
+更新：2026-11-16。面向新会话、其他 agent 和另一台机器的维护者；先读根目录 AGENTS.md。
 
 ## 当前可核对的基线
 
@@ -34,7 +34,8 @@
 | 来源 | URI/Base64/Clash-Mihomo/sing-box，以及 Loon/Surge/QX 节点列表；Sub-Store /api/subs 提取本地、远程、混合原始订阅，不执行脚本 |
 | 批量链接 | 普通订阅和 Sub-Store API 可混合，每行一个，每批 100 个/128 KiB，单 URL 8 KiB；逐行结果、去重、一次调度 |
 | 检测 | DNS/TCP 预检、缓存、失败冷却和必要的完整代理 HTTPS；无下载测速、不做任意网段扫描 |
-| 节点分级（2026-11-13，覆盖旧“大陆参考”） | 只记录能实测证明的东西。按视角（三网/电信/联通/移动/香港/新加坡）给 S/A/B/C/D/待定：等级 = 接入档（Globalping 社区探针 TCP ping 入口，三网用北京时间晚高峰）与稳定档（7 天日可用率）中较差的一项。线路只记录三网去程实测经过的 ASN；`line_type` 仍为 UNKNOWN，不判断 IPLC/IEPL/CN2，不推断回程，不提取机场自称线路名。界面不再显示 P1/P2/P3 理论等级和人工线路声明（数据保留）。用户接受把入口 IP 发给 Globalping（测量数据公开）；只用一个账号的 token，不注册多个账号、不叠加匿名额度；不做本机测量 |
+| 节点分级（2026-11-13，覆盖旧“大陆参考”） | 只记录能实测证明的东西。按视角（三网/电信/联通/移动/香港/新加坡）给 S/A/B/C/D/待定：等级 = 接入档（Globalping 社区探针 TCP ping 入口，三网用北京时间晚高峰）与稳定档（7 天日可用率）中较差的一项。线路只记录三网去程实测经过的 ASN；`line_type` 仍为 UNKNOWN，不判断 IPLC/IEPL/CN2，不推断回程，不提取机场自称线路名。界面不再显示 P1/P2/P3 理论等级和人工线路声明（数据保留）。用户接受把入口 IP 发给 Globalping（测量数据公开）；不做本机测量。账号配置见下行新决策 |
+| Globalping 多账户（2026-11-16） | 用户要求覆盖旧“只用一个账号”的限制：支持多账户 token 轮询。Secret `GLOBALPING_TOKENS`（换行/逗号/空白分隔、去重）优先，兼容 `GLOBALPING_TOKEN`；仅两者均为空时匿名。逐账户查免费剩余额度、各留 5 次并预扣并发预算，401/403/429 跳过该账户，全部不可用则停止；不自动花积分。单次总预算上限默认 5000，可用仓库变量降低。同一账号的不同 token 共享额度；使用仍受 Globalping 条款约束。配置与验证边界见 NODE_GRADING_DESIGN.md 第 0 节 |
 | 共用凭据算机场（2026-11-14） | 同一 UUID/密码被 ≥5 个节点、≥2 个服务器地址共用即算机场节点（迁移 0020）。每日检测范围保持“仅自建”：用户确认这批节点（当时 28,242 个，7,684 个可用）不再每日检测，结果过期后自然退出等级与订阅 |
 | UDP 检测（2026-11-15） | 为 Wi-Fi Calling 记录“经节点的 UDP 通不通”：HTTPS 通过后经同一 mihomo 监听做 SOCKS5 UDP ASSOCIATE，发 STUN（备用 DNS），共 4 次尝试、每次新关联，一次丢包不判失败。只能证明到公共 STUN/DNS 的 UDP，不对运营商 ePDG 发 IKE 包。Clash 导出对未声明仅 TCP 的节点写 `udp: true` |
 | 中转入口算机场（2026-11-15） | 同一服务器、同一凭据、≥5 个节点且落地 ≥3 个国家，算机场中转（扩展 0020 规则，检测发布后也会重算） |
@@ -66,6 +67,7 @@
 | app/checker/、app/scans.py | Mihomo 运行、预检/代理 HTTPS、租约分片、快照和发布；不在 HTTP 请求内长跑 |
 | app/catalog.py、quality.py、naming.py | 节点组合查询、旧理论规则（界面已隐藏）和展示命名 |
 | app/grading.py、app/probes/ | 节点分级纯规则；Globalping 客户端、每小时测量计划与执行、按视角重算 node_grades（`nodema probe run` / `nodema grade refresh`） |
+| app/probes/pool.py | Globalping 多 token 轮询、逐账户预算预扣、失效/限流跳过和测量所属账号绑定 |
 | app/exports.py、export_render.py、conversion.py、password_conversion.py | Actions 导出构建、转换、成员/版本、租约/条件发布 |
 | app/geoip_update.py | 官方/GitHub MMDB 下载验证、私密临时包 |
 | app/backup.py、usage.py、actions_usage.py | 加密备份/恢复、数值用量与可信 Actions 统计 |
