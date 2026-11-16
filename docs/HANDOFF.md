@@ -13,7 +13,7 @@
 - **2026-11-15 已发布 `3b68418`**：UDP 检测（Wi-Fi Calling）、中转入口算机场、Neon 流量读数、节点页重做（ASN 排行）；迁移 head `0021_udp_relay`。数据库已搬到新 Neon 项目（ID 见私密 deployment-state）。
 - **2026-11-16 已发布 `81c3c01`**：Globalping 多账户 token 轮询，Secret `GLOBALPING_TOKENS` 已由用户配置；Pages https://08bda24d.nodema-dashboard.pages.dev。main CI 43883188456 通过，schema 仍为 `0021_udp_relay`；真实运行与验证范围见 [CLOUD_DEPLOYMENT.md](CLOUD_DEPLOYMENT.md)。
 - **2026-11-17 已发布 `6482b9a` / `7d82021` / `f83a0b4`**：英国 GB、接入补测与拒测冷却、等级列布局和待补测标识；schema `0022_uk_probes`。Pages https://43cad7f1.nodema-dashboard.pages.dev，API version `ed231caa-2f15-4ce6-b380-f4d2b72cd109`。生产分布、备份恢复和验证范围见 [本轮复盘](PRODUCTION_REVIEW_2026_11_17.md)。
-- 当前没有已知待补的本轮代码缺口。用户真实节点、大陆体验、长期配额、生产恢复不属于已完成的合成验收证明。不得把“基础链路通过”写成所有公网参数都已保证可用。
+- **2026-11-17 命名只读审核发现待修项**：同 IP 的国家库冲突生成跨国箭头、ASN 名称被 Private Customer 等组织文本误导、未知/历史归属展示不清；详见 [审核记录](NAMING_AUDIT_2026_11_17.md)。这些是已归档的发现与建议，尚未实施或确认新命名政策。用户真实节点、大陆体验、长期配额、生产恢复不属于已完成的合成验收证明。不得把“基础链路通过”写成所有公网参数都已保证可用。
 
 先看 git 与实际云端状态。历史记录中的“尚未导入真实节点”和表行数不代表此刻数据库为空；用户可以随时从 Dashboard 导入，禁止据此清库。
 
