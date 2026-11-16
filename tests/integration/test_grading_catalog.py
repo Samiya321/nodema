@@ -202,6 +202,29 @@ def test_refresh_is_due_for_new_vantages_and_saved_rules(service, monitor_settin
     assert result["grades"] == {"PENDING": 2}
 
 
+def test_mixed_measured_and_missing_grades_stay_in_one_insert_batch(
+    service, monitor_settings, fixture_bytes, db_engine
+):
+    seed(service, monitor_settings, fixture_bytes)
+    measure(service, target(service), rtt=40)
+    inserts = []
+
+    def record(connection, cursor, statement, parameters, context, executemany):
+        if statement.startswith("INSERT INTO node_grades"):
+            inserts.append(1)
+
+    sa.event.listen(db_engine, "before_cursor_execute", record)
+    try:
+        result = refresh.refresh(service.sessions, monitor_settings)
+    finally:
+        sa.event.remove(db_engine, "before_cursor_execute", record)
+    assert result["rows"] == 14 and len(inserts) == 1
+    with service.sessions() as session:
+        rows = session.scalars(sa.select(NodeGrade).where(NodeGrade.vantage == "GB")).all()
+        assert len(rows) == 2
+        assert all(r.access_band is None and r.peak_rtt_ms is None for r in rows)
+
+
 class FakeClient:
     authenticated = True
 

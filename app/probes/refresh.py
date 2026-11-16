@@ -239,7 +239,9 @@ def refresh(sessions, settings, *, if_due: bool = False, clock=None) -> dict:
         session.execute(sa.delete(NodeGrade))
         for start in range(0, len(rows), 2000):
             session.execute(
-                insert(NodeGrade),
+                # Every row supplies the same keys; optional measurement fields
+                # must remain NULL rather than fragmenting ORM batches by vantage.
+                insert(NodeGrade).execution_options(render_nulls=True),
                 [{**row, "computed_at": now} for row in rows[start : start + 2000]],
             )
         after = {(r["node_id"], r["vantage"]): r["grade"] for r in rows}
