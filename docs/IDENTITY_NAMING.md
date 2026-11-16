@@ -38,3 +38,8 @@
 新鲜加密备份 [43926097755](https://github.com/Samiya321/nodema/actions/runs/43926097755) 已恢复至隔离 PG17，`0022` 升至 `0023`；50,396 节点等七表行数不变。全库 2,671 个名称变化，当前 1,391 个可用节点中 166 个变化，名称零重复。精简投影包含新字段，英国 GB 校验保持正常。本机恢复副本 1,370 行精简查询约 0.13 秒，只作为隔离验收，不代表生产性能保证。私密演练汇总在 `private/naming-fix-20261117/restore-evidence.json`。
 
 发布状态、commit、CI、版本与生产复核以 [当前状态](STATUS.md) 和 [云端记录](CLOUD_DEPLOYMENT.md) 的本轮记录为准。
+
+
+## 已发布与复核
+
+代码 `d891e26` + `b76ad80` 已发布到 schema `0023_identity_naming`；main [CI 43928480592](https://github.com/Samiya321/nodema/actions/runs/43928480592) 通过 467 Python / 36 Worker / 3 Echo 与真实回环/合成流水线。API `5c9c3664-61c8-4656-a171-627aa3553c70`，Pages https://43b793dd.nodema-dashboard.pages.dev。生产可用节点同 IP 展示冲突与 Private 品牌简称均为 0；166 个来源分歧、21 个历史落地保留提示。实际分歧节点详情与 1440/390px 布局已查看，未发现名称/等级列交叠。订阅构建 43928935333 成功，但当前方案为 0；检测器的新字段写入待正常完整检测观察，未额外触发全量检测。

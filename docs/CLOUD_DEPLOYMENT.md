@@ -14,6 +14,15 @@
 
 管理员密钥、数据库连接、HMAC/AES 密钥和 GitHub 调度 token 保存在本地 `private/` 以及对应平台 Secrets 中，不在本页或 Git 仓库公开。
 
+## 2026-11-17 第十八次发布：归属证据、保守命名与历史落地
+
+- 用户在只读审核后授权直接修复；代码 `d891e26` + `b76ad80` 快进合入 main。分支 [CI 43927688684](https://github.com/Samiya321/nodema/actions/runs/43927688684) 与 main [CI 43928480592](https://github.com/Samiya321/nodema/actions/runs/43928480592) 通过：467 Python / 36 Worker / 3 Echo，包含真实协议与 UDP 回环、100 节点流水线、Worker/Pages 构建。具体规则见 [IDENTITY_NAMING.md](IDENTITY_NAMING.md)。
+- 新鲜加密备份 [43926097755](https://github.com/Samiya321/nodema/actions/runs/43926097755)（约 45.3 MB，云端保留 20 天）在隔离 PG17 恢复并演练 `0022 -> 0023`；七表行数不变、名称零重复，全库 2,671 个/当前可用 166 个名称变化。改名不改变节点资产 ID、短编号、指纹或订阅 token；已改品牌所属组的序号可能变化。迁移前确认无活动扫描租约/接入测量。
+- 生产于北京时间 02:25:38 完成 `0023_identity_naming`。新增出口观测时间并从实际同 IP 成功明细回填；不覆盖 GeoIP 原始值。唯一入口 IP=出口 IP 的国家差异不再渲染成跨国箭头；未知入口显示 `?`，五个已核实 ASN 别名及精确占位文本防护生效。API version `5c9c3664-61c8-4656-a171-627aa3553c70`，Pages deployment `43b793dd-c117-43c4-ad71-8665febed83d`，https://43b793dd.nodema-dashboard.pages.dev。Echo 未变；未改密钥或增加付费服务。
+- 生产只读复核：health/静态模块 200、未认证 readiness 401、认证 readiness 为真；首页、CSS 与四个相关 JS 文件 SHA 与源码相同。1,391 个可用节点，同 IP 展示冲突 0、Private 品牌简称 0；932 个同 IP、166 个来源分歧提示、21 个历史落地提示；抽查完整节点保留原入口国家和出口观测时间，英国 GB 端点正常。
+- 浏览器通过仅允许 GET 的本地镜像读真实生产 API，静态资源已验证与生产一致；1440px/390px 均无页面横向溢出、名称/等级列交叠。实际分歧节点详情显示原始 GeoLite 入口、各来源 ASN/国家与出口观测时间；截图脱敏后才查看，私密证据在 `private/naming-fix-20261117/`。只读镜像与专用浏览器检查结束后关闭。
+- [export-build 43928935333](https://github.com/Samiya321/nodema/actions/runs/43928935333) 成功。生产订阅方案当前 0 个（活动 0、未就绪 0），未创建验收用订阅，不把零队列构建当作真实非空下载证明。检测器新来源标记和出口原子更新待下一次正常完整检测体现，已通过隔离回归；未为了此次展示修复再触发全量检测。本机临时加密备份用完移入废纸篓，隔离容器清理，云端加密 artifact 保留。
+
 ## 2026-11-16 第十六次发布：Globalping 多账户 token 轮询（无迁移）
 
 - 代码 `81c3c01`，从 `codex/globalping-token-pool` 快进合并并推送 main。[分支 CI 43882425604](https://github.com/Samiya321/nodema/actions/runs/43882425604)、[main CI 43883188456](https://github.com/Samiya321/nodema/actions/runs/43883188456) 全部通过：447 Python、36 Worker、3 Echo，含真实 PG 备份恢复、协议回环握手和 100 节点合成流水线。本机 Pages check/build/Functions build 通过。
