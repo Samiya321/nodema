@@ -1049,7 +1049,9 @@ class ScanService:
                         new_exit,
                         sa.and_(
                             excluded.last_exit_asn.is_not(None),
-                            excluded.last_exit_asn.is_distinct_from(NodeCurrentStatus.last_exit_asn),
+                            excluded.last_exit_asn.is_distinct_from(
+                                NodeCurrentStatus.last_exit_asn
+                            ),
                         ),
                     )
                 updates[key] = sa.case((changed, excluded[key]), else_=updates[key])
