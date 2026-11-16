@@ -161,7 +161,7 @@ function grading(data, refresh) {
     ),
     h("h3", {}, "大陆三网接入（晚高峰中位数）"),
     bandTable("CN", p.bands.CN),
-    h("h3", {}, "香港 / 新加坡接入（全天中位数）"),
+    h("h3", {}, "香港 / 新加坡 / 英国接入（全天中位数）"),
     bandTable("OVERSEAS", p.bands.OVERSEAS),
     h("label", { class: "check" }, h("input", { type: "checkbox", name: "s_requires_clean_exit", checked: p.s_requires_clean_exit }), "S 要求落地 IP 没有 ip-api 代理标记"),
     h("h3", {}, "接入测量"),
@@ -173,7 +173,7 @@ function grading(data, refresh) {
       field("晚高峰结束", h("input", { name: "peak_end", type: "time", value: p.peak_end })),
       field("覆盖范围", select("coverage", [["ALL", "全部可用节点"], ["EXPORTS", "只覆盖订阅方案里的节点"]], p.coverage), "额度不够时选后者"),
     ),
-    h("p", { class: "hint" }, "Globalping token 存在 GitHub 仓库 Secret（GLOBALPING_TOKEN），不能在这里填写或查看；没有 token 时使用匿名额度（每小时 250 次）。规则保存后，下一次测量运行（每小时）会按新规则重新定档。"),
+    h("p", { class: "hint" }, "Globalping token 存在 GitHub 仓库 Secret（GLOBALPING_TOKENS，多账户；兼容 GLOBALPING_TOKEN），不能在这里填写或查看；两者均未配置时使用匿名额度。测量每小时运行，等级在每日检测收尾、晚高峰结束或距上次计算超过 12 小时时更新。"),
     h("div", { class: "row end" }, h("button", { type: "button", class: "quiet", onclick: () => fill(data.defaults) }, "恢复默认值"), h("button", { type: "submit", class: "primary" }, "保存规则")),
   );
   function fill(values) {

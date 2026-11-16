@@ -12,8 +12,13 @@ from zoneinfo import ZoneInfo
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import insert
 
-from app.database.models import EntryProbeResult, EntryProbeRun, EntryRouteTrace
-from app.grading import CARRIERS, is_peak
+from app.database.models import (
+    EntryProbeRejection,
+    EntryProbeResult,
+    EntryProbeRun,
+    EntryRouteTrace,
+)
+from app.grading import CARRIERS, OVERSEAS, is_peak
 from app.probes import globalping, planner
 from app.probes.policy import load_policy
 from app.probes.pool import ClientPool
@@ -80,16 +85,22 @@ SELECT prefix,
     THEN min(last) FILTER (WHERE NOT peak AND vantage LIKE 'CN-%') END last_idle,
   max(last) FILTER (WHERE vantage='HK') last_hk,
   max(last) FILTER (WHERE vantage='SG') last_sg,
+  max(last) FILTER (WHERE vantage='GB') last_gb,
+  max(probes) FILTER (WHERE vantage='HK') probes_hk,
+  max(probes) FILTER (WHERE vantage='SG') probes_sg,
+  max(probes) FILTER (WHERE vantage='GB') probes_gb,
   bool_or(NOT peak AND vantage LIKE 'CN-%' AND probes>=:min_probes AND (rtt IS NULL OR rtt>:rtt
     OR (sent>0 AND (1-received::float/sent)*100>:loss))) poor
 FROM (SELECT prefix,vantage,bool_or(peak) peak,min(probes) probes,max(last) last,
         sum(sent) sent,sum(received) received,max(rtt) rtt
-      FROM q GROUP BY prefix,vantage,CASE WHEN vantage IN ('HK','SG') THEN false ELSE peak END) x
+      FROM q GROUP BY prefix,vantage,
+        CASE WHEN vantage IN ('HK','SG','GB') THEN false ELSE peak END) x
 GROUP BY prefix
 """
 TARGETS_SQL = """
 SELECT target,max(measured_at) FILTER (WHERE purpose='REACH') last,
   count(*)>=2 AND bool_and(received=0)
+    AND count(DISTINCT date_trunc('hour',measured_at))>=2
     AND count(DISTINCT coalesce(probe_asn::text,'')||'|'||coalesce(probe_city,''))>=2 dead
 FROM entry_probe_results WHERE measured_at>:since GROUP BY target
 HAVING max(measured_at) FILTER (WHERE purpose='REACH') IS NOT NULL
@@ -100,7 +111,14 @@ HAVING max(measured_at) FILTER (WHERE purpose='REACH') IS NOT NULL
 def load_history(session, policy: dict) -> planner.History:
     since = datetime.now(UTC) - WINDOW
     limits = policy["bands"]["CN"]["B"]
-    peak_probes, last_peak, last_idle, last_overseas, poor = {}, {}, {}, {}, set()
+    peak_probes, last_peak, last_idle, last_overseas, overseas_probes, poor = (
+        {},
+        {},
+        {},
+        {},
+        {},
+        set(),
+    )
     for row in session.execute(
         sa.text(HISTORY_SQL),
         {
@@ -113,8 +131,9 @@ def load_history(session, policy: dict) -> planner.History:
         peak_probes[row.prefix] = row.peak_probes or 0
         last_peak[row.prefix] = row.last_peak
         last_idle[row.prefix] = row.last_idle
-        last_overseas[(row.prefix, "HK")] = row.last_hk
-        last_overseas[(row.prefix, "SG")] = row.last_sg
+        for region in OVERSEAS:
+            last_overseas[(row.prefix, region)] = getattr(row, "last_" + region.lower())
+            overseas_probes[(row.prefix, region)] = getattr(row, "probes_" + region.lower()) or 0
         if row.poor:
             poor.add(row.prefix)
     last_reach, dead = {}, set()
@@ -137,6 +156,14 @@ def load_history(session, policy: dict) -> planner.History:
         last_peak=last_peak,
         last_idle=last_idle,
         last_overseas=last_overseas,
+        overseas_probes=overseas_probes,
+        blocked=frozenset(
+            session.scalars(
+                sa.select(EntryProbeRejection.ip).where(
+                    EntryProbeRejection.retry_after > sa.func.now()
+                )
+            )
+        ),
         idle_poor=frozenset(poor),
         last_reach=last_reach,
         dead=frozenset(dead),
@@ -146,7 +173,7 @@ def load_history(session, policy: dict) -> planner.History:
 
 def carrier_asns(probes: list[globalping.Probe]) -> tuple[dict[str, list[int]], dict[str, int]]:
     carriers: dict[str, set[int]] = {c: set() for c in CARRIERS}
-    counts = {c: 0 for c in (*CARRIERS, "HK", "SG")}
+    counts = {c: 0 for c in (*CARRIERS, *OVERSEAS)}
     for probe in probes:
         vantage = planner.vantage_of(probe.country, probe.asn, probe.network)
         if vantage in CARRIERS:
@@ -169,7 +196,7 @@ def _measure(
         if task.kind != "QUALITY_OVERSEAS" or error.code != "HTTP_422":
             raise
         request["locations"] = [
-            {"country": item["country"], "limit": 1} for item in request["locations"]
+            {"country": item["country"], "limit": item["limit"]} for item in request["locations"]
         ]
         identifier = client.create(request)
     return task, identifier, client.wait(identifier)
@@ -261,6 +288,7 @@ def run(
         "failed": 0,
         "rate_limited": 0,
         "failed_codes": {},  # error code -> count; never targets
+        "failed_kinds": {},  # task kind / transport; never targets
     }
     peak = is_peak(beijing_minute(started), policy)
     run_row = {"peak": peak, "authenticated": client.authenticated}
@@ -288,7 +316,8 @@ def run(
         summary.update(planned=len(tasks), budget=budget, nodes=len(nodes))
         deadline = time.monotonic() + settings.probe_time_budget_seconds
         with ThreadPoolExecutor(max_workers=settings.probe_concurrency) as pool:
-            pending = {pool.submit(_measure, client, task) for task in tasks}
+            pending = {pool.submit(_measure, client, task): task for task in tasks}
+            blocked = set()
             for future in as_completed(pending):
                 try:
                     task, identifier, results = future.result()
@@ -303,6 +332,14 @@ def run(
                     summary["failed"] += 1
                     codes = summary["failed_codes"]
                     codes[error.code] = codes.get(error.code, 0) + 1
+                    kind = pending[future].kind + "/" + pending[future].protocol
+                    kinds = summary["failed_kinds"]
+                    kinds[kind] = kinds.get(kind, 0) + 1
+                    if error.code == "TARGET_NOT_ALLOWED":
+                        blocked.add(pending[future].ip)
+                        for other, task in pending.items():
+                            if task.ip in blocked:
+                                other.cancel()
                     continue
                 summary["measurements"] += 1
                 summary["tests"] += task.cost
@@ -319,6 +356,18 @@ def run(
                 if time.monotonic() > deadline:
                     for other in pending:
                         other.cancel()
+        if blocked:
+            with sessions.begin() as session:
+                for ip in blocked:
+                    statement = insert(EntryProbeRejection).values(
+                        ip=ip, retry_after=clock() + timedelta(days=7)
+                    )
+                    session.execute(
+                        statement.on_conflict_do_update(
+                            index_elements=[EntryProbeRejection.ip],
+                            set_={"retry_after": statement.excluded.retry_after},
+                        )
+                    )
     except globalping.RateLimited:
         summary["rate_limited"] += 1
     except globalping.ApiError as error:

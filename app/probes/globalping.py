@@ -175,6 +175,17 @@ class Client:
             self._note(error.headers)
             if error.code == 429:
                 raise RateLimited() from None
+            if error.code == 400:
+                # Only this allowlisted validation fact escapes the response body.
+                # A blocked target is not an unreachable node, and retrying its
+                # other ports/probe types cannot make the service accept it.
+                try:
+                    detail = json.loads(error.read(16_384))
+                    target_error = detail.get("error", {}).get("params", {}).get("target")
+                except (ValueError, AttributeError, OSError):
+                    target_error = None
+                if target_error == '"target" is a blacklisted address or domain':
+                    raise ApiError("TARGET_NOT_ALLOWED") from None
             raise ApiError(f"HTTP_{error.code}") from None
         except (urllib.error.URLError, TimeoutError, OSError):
             raise ApiError("NETWORK") from None

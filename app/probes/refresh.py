@@ -18,6 +18,7 @@ from sqlalchemy.dialects.postgresql import insert
 from app.database.models import NodeGrade
 from app.grading import (
     CARRIERS,
+    OVERSEAS,
     Access,
     NodeFacts,
     Sample,
@@ -25,6 +26,7 @@ from app.grading import (
     combine_cn,
     grade_node,
     prefix_access,
+    repeated_failure,
 )
 from app.probes import planner
 from app.probes.policy import load_policy
@@ -107,11 +109,7 @@ def load(session, fresh_hours: int):
 
 
 def _reach_failed(samples: list[Sample]) -> bool:
-    return (
-        len(samples) >= 2
-        and len({s.probe for s in samples}) >= 2
-        and all(s.received == 0 for s in samples)
-    )
+    return repeated_failure(samples)
 
 
 def compute(nodes, stability, quality, reach, traces, policy) -> list[dict]:
@@ -144,7 +142,7 @@ def compute(nodes, stability, quality, reach, traces, policy) -> list[dict]:
             reach.get(entry.target or "", [])
         )
         carriers = {}
-        for vantage in (*CARRIERS, "HK", "SG"):
+        for vantage in (*CARRIERS, *OVERSEAS):
             # HK/SG probes only reach their local CF data centre: never use those samples.
             skip = not entry.prefix or (cdn and vantage not in CARRIERS)
             access = Access() if skip else access_for(entry.prefix, vantage, target)

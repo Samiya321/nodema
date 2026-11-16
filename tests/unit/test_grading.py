@@ -29,7 +29,16 @@ NOW = datetime(2026, 11, 13, 13, 0, tzinfo=UTC)  # 21:00 Beijing
 
 def samples(rtts, *, target="198.51.100.1:443", peak=True, received=16, probes=2, jitter=2.0):
     return [
-        Sample(target, 16, received, rtt if received else None, jitter, peak, f"p{i % probes}", NOW)
+        Sample(
+            target,
+            16,
+            received,
+            rtt if received else None,
+            jitter,
+            peak,
+            f"p{i % probes}",
+            NOW - timedelta(hours=i),
+        )
         for i, rtt in enumerate(rtts)
     ]
 
@@ -91,6 +100,15 @@ def test_dead_target_is_excluded_and_marks_only_its_nodes():
     assert not shared.unreachable and shared.loss == 0 and shared.rtt == 51
     own = access_stats(dead + alive, "198.51.100.9:443", True, POLICY)
     assert own.unreachable
+
+
+def test_one_failed_round_does_not_prove_unreachability():
+    from dataclasses import replace
+
+    failed = samples([0, 0], received=0)
+    same_round = [replace(s, measured_at=NOW) for s in failed]
+    assert not access_stats(same_round, failed[0].target, True, POLICY).unreachable
+    assert access_stats(failed, failed[0].target, True, POLICY).unreachable
 
 
 def test_grades_take_the_worse_band_and_explain_it():
@@ -180,15 +198,15 @@ def test_peak_plan_buys_only_carrier_samples_within_budget():
     tasks = planner.plan(
         groups, planner.History(), CARRIERS, now=NOW, peak=True, budget=7, min_probes=2
     )
-    assert [t.kind for t in tasks] == ["QUALITY_CN", "QUALITY_CN"] and sum(
-        t.cost for t in tasks
-    ) == 6
+    assert [t.kind for t in tasks] == ["QUALITY_CN"] and sum(t.cost for t in tasks) == 6
     request = tasks[0].request()
     assert request["type"] == "ping" and request["measurementOptions"]["packets"] == 16
     assert {loc["asn"] for loc in request["locations"]} == {4134, 4837, 9808}
     assert all(loc["tags"] == ["eyeball-network"] for loc in request["locations"])
-    poor = planner.History(idle_poor=frozenset({"198.51.100", "203.0.113", "cf"}))
-    assert planner.plan(groups, poor, CARRIERS, now=NOW, peak=True, budget=99, min_probes=2) == []
+    poor = planner.History(
+        idle_poor=frozenset({"198.51.100", "203.0.113", "cf"}), peak_probes={p: 2 for p in groups}
+    )
+    assert planner.plan(groups, poor, CARRIERS, now=NOW, peak=True, budget=99, min_probes=2)
 
 
 def test_off_peak_plan_covers_reach_overseas_idle_and_routes():
@@ -212,13 +230,19 @@ def test_off_peak_plan_covers_reach_overseas_idle_and_routes():
     )
     assert any(t.prefix == planner.CF_PREFIX and t.kind == "QUALITY_CN" for t in tasks)
     # HK fresh, SG missing: only SG is bought again, one location per measurement.
-    half = planner.History(last_overseas={(p, "HK"): NOW for p in groups})
+    half = planner.History(
+        last_overseas={(p, "HK"): NOW for p in groups},
+        overseas_probes={(p, "HK"): 2 for p in groups},
+    )
     again = planner.plan(groups, half, CARRIERS, now=NOW, peak=False, budget=999, min_probes=2)
     regions = {loc["country"] for t in again if t.kind == "QUALITY_OVERSEAS" for loc in t.locations}
-    assert regions == {"SG"} and all(t.cost == 1 for t in again if t.kind == "QUALITY_OVERSEAS")
+    assert regions == {"SG", "GB"} and all(
+        t.cost == 2 for t in again if t.kind == "QUALITY_OVERSEAS"
+    )
     recent = planner.History(
         last_reach={t.target: NOW for t in reach},
         last_overseas={(p, r): NOW for p in groups for r in planner.OVERSEAS},
+        overseas_probes={(p, r): 2 for p in groups for r in planner.OVERSEAS},
         last_idle={p: NOW for p in groups},
         last_trace={p: NOW - timedelta(days=1) for p in groups},
     )
@@ -244,6 +268,63 @@ def test_carrier_classification():
     assert planner.carrier_of(56048, "China Mobile Communicaitons") == "CN-CM"
     assert planner.carrier_of(37963, "Hangzhou Alibaba Advertising") is None
     assert planner.vantage_of("HK", 1, None) == "HK" and planner.vantage_of("JP", 1, None) is None
+    assert planner.vantage_of("GB", 1, None) == "GB"
+
+
+def test_incomplete_samples_are_bought_again_even_when_recent_or_poor():
+    groups = planner.group(nodes())
+    history = planner.History(
+        last_overseas={(p, r): NOW for p in groups for r in planner.OVERSEAS},
+        overseas_probes={(p, r): 1 for p in groups for r in planner.OVERSEAS},
+        idle_poor=frozenset(groups),
+        peak_probes={p: 1 for p in groups},
+    )
+    tasks = planner.plan(groups, history, CARRIERS, now=NOW, peak=False, budget=99, min_probes=2)
+    assert {t.locations[0]["country"] for t in tasks if t.kind == "QUALITY_OVERSEAS"} == {
+        "HK",
+        "SG",
+        "GB",
+    }
+    assert all(t.cost == 2 for t in tasks if t.kind == "QUALITY_OVERSEAS")
+    peak = planner.plan(groups, history, CARRIERS, now=NOW, peak=True, budget=99, min_probes=2)
+    assert peak and all(t.cost == 6 for t in peak)
+
+
+def test_service_rejected_ip_is_not_bought_or_used_as_representative():
+    groups = planner.group(nodes())
+    blocked = frozenset(n.ip for n in nodes() if n.ip)
+    for peak in (False, True):
+        assert not planner.plan(
+            groups,
+            planner.History(blocked=blocked),
+            CARRIERS,
+            now=NOW,
+            peak=peak,
+            budget=99,
+            min_probes=2,
+        )
+
+
+@pytest.mark.parametrize(
+    "detail,code",
+    [
+        (
+            {"error": {"params": {"target": '"target" is a blacklisted address or domain'}}},
+            "TARGET_NOT_ALLOWED",
+        ),
+        ({"error": {"params": {"port": "sensitive response body"}}}, "HTTP_400"),
+        ([], "HTTP_400"),
+    ],
+)
+def test_client_only_classifies_allowlisted_target_rejection(detail, code):
+    def opener(request, timeout):
+        raise urllib.error.HTTPError(
+            request.full_url, 400, "bad request", {}, io.BytesIO(json.dumps(detail).encode())
+        )
+
+    with pytest.raises(globalping.ApiError) as error:
+        globalping.Client("https://api.example.test/v1", opener=opener).create({})
+    assert str(error.value) == code
 
 
 RESULT = {
@@ -401,7 +482,8 @@ def test_compute_caches_prefix_figures_without_changing_results():
     dead_target = "104.16.0.99:443"
     for v in CARRIERS:
         quality[("cf", v)] += [
-            Sample(dead_target, 3, 0, None, None, True, f"p{i}", now) for i in range(4)
+            Sample(dead_target, 3, 0, None, None, True, f"p{i}", now - timedelta(hours=i))
+            for i in range(4)
         ]
     nodes = [
         SimpleNamespace(

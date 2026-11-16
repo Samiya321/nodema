@@ -95,7 +95,10 @@ export function headRow(sortKey, direction, onSort, pickAll) {
 }
 
 function gradeCell(n) {
-  if (n.quality_grade) return h("span", { class: "grade-cell" }, gradeBadge(n.quality_grade, vantage, { withVantage: false }), n.status === "DEGRADED" ? badge(n.status) : null);
+  if (n.quality_grade) {
+    const incomplete = n.quality_grade === "B" && n.access_band === null;
+    return h("span", { class: "grade-cell" + (incomplete ? " needs-probes" : ""), title: incomplete ? "接入探针样本不足，暂时封顶 B；不代表实测接入为 B" : null }, gradeBadge(n.quality_grade, vantage, { withVantage: false }), incomplete ? h("span", { class: "faint" }, "接入待补测") : null, n.status === "DEGRADED" ? badge(n.status) : null);
+  }
   if (isAvailable(n)) return h("span", { class: "ungraded", title: n.exit_asn === 13335 ? "落地是 Cloudflare：不测、不分级" : "下次计算等级时补上" }, n.exit_asn === 13335 ? "CF 落地" : "未分级");
   return badge(n.status);
 }

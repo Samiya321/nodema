@@ -16,9 +16,9 @@ from datetime import datetime
 
 from app.domain import AssetError
 
-VANTAGES = ("CN-CT", "CN-CU", "CN-CM", "CN", "HK", "SG")
+VANTAGES = ("CN-CT", "CN-CU", "CN-CM", "CN", "HK", "SG", "GB")
 CARRIERS = ("CN-CT", "CN-CU", "CN-CM")
-OVERSEAS = ("HK", "SG")
+OVERSEAS = ("HK", "SG", "GB")
 BANDS = ("S", "A", "B", "C")
 GRADES = ("S", "A", "B", "C", "D", "PENDING")
 VANTAGE_NAMES = {
@@ -28,6 +28,7 @@ VANTAGE_NAMES = {
     "CN": "三网",
     "HK": "香港",
     "SG": "新加坡",
+    "GB": "英国",
 }
 BAND_NAMES = {"S": "优", "A": "良", "B": "中", "C": "差"}
 
@@ -153,11 +154,18 @@ def _median(values: Iterable[float | None]) -> float | None:
     return round(statistics.median(clean), 1) if clean else None
 
 
-def _all_failed(samples: list[Sample], policy: dict) -> bool:
+def repeated_failure(samples: list[Sample]) -> bool:
+    """Two probe identities across two hourly periods; a single round is not proof."""
     probes = {s.probe for s in samples}
+    periods = {
+        s.measured_at.replace(minute=0, second=0, microsecond=0)
+        for s in samples
+        if s.measured_at is not None
+    }
     return (
         len(samples) >= 2
-        and len(probes) >= min(2, policy["min_probes"])
+        and len(probes) >= 2
+        and len(periods) >= 2
         and all(s.received == 0 for s in samples)
     )
 
@@ -178,7 +186,7 @@ def prefix_access(samples: list[Sample], carrier: bool, policy: dict) -> tuple["
     by_target: dict[str, list[Sample]] = {}
     for sample in samples:
         by_target.setdefault(sample.target, []).append(sample)
-    dead = {t for t, group in by_target.items() if _all_failed(group, policy)}
+    dead = {t for t, group in by_target.items() if repeated_failure(group)}
     usable = [s for s in samples if s.target not in dead]
     last = max((s.measured_at for s in samples if s.measured_at), default=None)
     chosen = [s for s in usable if s.peak] if carrier else usable

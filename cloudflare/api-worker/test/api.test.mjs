@@ -1605,7 +1605,7 @@ for i in range(3):
  scans.finalize(run['id'])`);
   const db = await connect();
   try {
-    for (const vantage of ["CN-CT", "CN-CU", "CN-CM", "HK", "SG"])
+    for (const vantage of ["CN-CT", "CN-CU", "CN-CM", "HK", "SG", "GB"])
       for (const probe of [1, 2])
         await db.query(
           "INSERT INTO entry_probe_results(target,prefix,purpose,vantage,protocol,peak,probe_asn,probe_city,sent,received,rtt_avg,jitter) VALUES('198.51.100.77:443','198.51.100','QUALITY',$1,'TCP',$2,$3,'Synthetic',16,16,$4,1)",
@@ -1645,7 +1645,7 @@ print(json.dumps(refresh.refresh(session_factory(make_engine(os.environ['DATABAS
   assert.equal((await request("/api/nodes?vantage=US")).status, 400);
   const access = await (await request(`/api/nodes/${hk.items[0].id}/access`)).json();
   assert.equal(access.prefix, "198.51.100");
-  assert.deepEqual(Object.keys(access.grades).sort(), ["CN", "CN-CM", "CN-CT", "CN-CU", "HK", "SG"]);
+  assert.deepEqual(Object.keys(access.grades).sort(), ["CN", "CN-CM", "CN-CT", "CN-CU", "GB", "HK", "SG"]);
   assert.equal((await request(`/api/nodes/${crypto.randomUUID()}/access`)).status, 404);
   const status = await (await request("/api/probe-status?vantage=HK")).json();
   assert.ok(status.grades.S >= 2);
@@ -1668,6 +1668,7 @@ print(json.dumps(refresh.refresh(session_factory(make_engine(os.environ['DATABAS
   assert.equal(defaulted.vantage, "CN-CU");
   const cases = [
     {},
+    { default_vantage: "GB" },
     { default_vantage: "US" },
     { min_probes: 0 },
     { peak_start: "24:00" },

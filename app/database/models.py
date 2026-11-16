@@ -793,6 +793,14 @@ class EntryRouteTrace(Base):
     measurement_id: Mapped[str | None] = mapped_column(sa.Text)
 
 
+class EntryProbeRejection(Base):
+    """A target the public measurement service refuses; never a node failure."""
+
+    __tablename__ = "entry_probe_rejections"
+    ip: Mapped[str] = mapped_column(sa.Text, primary_key=True)
+    retry_after: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True))
+
+
 class EntryProbeRun(Base):
     __tablename__ = "entry_probe_runs"
     __table_args__ = (sa.Index("idx_entry_probe_runs_time", sa.text("started_at DESC")),)

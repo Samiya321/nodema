@@ -9,6 +9,7 @@ export const VANTAGES = [
   ["CN-CM", "移动"],
   ["HK", "香港"],
   ["SG", "新加坡"],
+  ["GB", "英国"],
 ];
 export const vantageName = (v) => VANTAGES.find(([k]) => k === v)?.[1] || v;
 // Carrier vantages (and the three-carrier view) read the evening peak; HK/SG a median.

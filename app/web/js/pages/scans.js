@@ -68,7 +68,7 @@ async function probeRuns() {
         { label: "写入", class: "num", render: (r) => r.stored },
         { label: "失败", class: "num", render: (r) => r.failed },
         { label: "额度用尽", class: "num", render: (r) => r.rate_limited },
-        { label: "问题", render: (r) => (r.error_code ? PROBE_ERRORS[r.error_code] || r.error_code : "—") },
+        { label: "问题", render: (r) => (r.error_code ? PROBE_ERRORS[r.error_code] || r.error_code : r.failed ? "部分请求失败（见运行日志）" : "—") },
       ],
       status.runs || [],
       { empty: empty("还没有接入测量", "部署后每小时自动运行一次。") },

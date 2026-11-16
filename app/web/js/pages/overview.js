@@ -45,7 +45,7 @@ function probePanel(status) {
           h("dt", {}, "今天已用"),
           h("dd", {}, `${status.tests_today} 次（${latest.authenticated ? "账号模式，按剩余额度运行" : "匿名模式，按剩余额度运行"}）`),
           h("dt", {}, "已覆盖网段"),
-          h("dd", {}, `${status.prefixes_graded} 个（7 天内）；三网晚高峰 ${status.prefixes_peak} 个；HK/SG ${status.prefixes_overseas} 个`),
+          h("dd", {}, `${status.prefixes_graded} 个（7 天内）；三网晚高峰 ${status.prefixes_peak} 个；港新英 ${status.prefixes_overseas} 个`),
           h("dt", {}, "在线家宽探针"),
           h("dd", {}, ["CN-CT", "CN-CU", "CN-CM"].map((c) => `${vantageName(c)} ${latest.probes?.[c] ?? "?"}`).join(" · ")),
         )
@@ -59,6 +59,7 @@ function probeNotes(status) {
   const latest = status?.latest;
   if (!latest) return notes;
   if (latest.error_code) notes.push(["bad", `接入测量失败：${PROBE_ERRORS[latest.error_code] || latest.error_code}`, "#/scans?tab=probes"]);
+  else if (latest.failed) notes.push(["warn", `上次接入测量有 ${latest.failed} 个请求失败，成功 ${latest.measurements} 次；不代表节点不可用`, "#/scans?tab=probes"]);
   if (status.rate_limited_7d) notes.push(["warn", `接入测量 7 天内 ${status.rate_limited_7d} 次触达 Globalping 额度`, "#/scans?tab=probes"]);
   for (const c of ["CN-CT", "CN-CU", "CN-CM"])
     if ((latest.probes?.[c] ?? 2) < 2) notes.push(["warn", `${vantageName(c)}在线家宽探针少于 2 个，该运营商的等级会停在待定或最高 B`, "#/scans?tab=probes"]);

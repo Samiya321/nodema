@@ -3,7 +3,13 @@ from datetime import UTC, datetime, timedelta
 import pytest
 import sqlalchemy as sa
 
-from app.database.models import EntryProbeResult, EntryProbeRun, EntryRouteTrace, NodeGrade
+from app.database.models import (
+    EntryProbeRejection,
+    EntryProbeResult,
+    EntryProbeRun,
+    EntryRouteTrace,
+    NodeGrade,
+)
 from app.domain import AssetError
 from app.exports import ExportService
 from app.probes import planner, refresh, runner
@@ -64,7 +70,7 @@ def test_grades_are_computed_filtered_sorted_and_explained(
             )
         )
     first = refresh.refresh(service.sessions, monitor_settings)
-    assert first["nodes"] == 2 and first["rows"] == 12 and first["grades"] == {"PENDING": 2}
+    assert first["nodes"] == 2 and first["rows"] == 14 and first["grades"] == {"PENDING": 2}
     with service.sessions.begin() as session:
         session.execute(
             sa.text(
@@ -75,7 +81,7 @@ def test_grades_are_computed_filtered_sorted_and_explained(
             )
         )
     measure(service, port, rtt=40)
-    measure(service, port, rtt=20, vantages=("HK", "SG"), peak=False)
+    measure(service, port, rtt=20, vantages=("HK", "SG", "GB"), peak=False)
     with service.sessions.begin() as session:
         session.add(
             EntryRouteTrace(
@@ -99,6 +105,7 @@ def test_grades_are_computed_filtered_sorted_and_explained(
     assert catalog.page({"vantage": "CN-CU", "route_asn": "4809"})["total"] == 0
     assert catalog.page({"max_peak_rtt_ms": "30"})["total"] == 0
     assert catalog.page({"vantage": "HK", "quality_grade": "S"})["total"] == 2
+    assert catalog.page({"vantage": "GB", "quality_grade": "S"})["total"] == 2
     assert catalog.page({"best_per_server": True})["total"] == 1
     assert catalog.page({"cross_border": True})["total"] == 2
     assert catalog.page({"unreachable": True})["total"] == 0
@@ -114,7 +121,7 @@ def test_grades_are_computed_filtered_sorted_and_explained(
             {"f": '{"vantage":"CN"}'},
         )
         fields = compact["fields"]
-        assert fields[-11:] == [
+        assert fields[-12:] == [
             "quality_grade",
             "quality_score",
             "peak_rtt_ms",
@@ -126,6 +133,7 @@ def test_grades_are_computed_filtered_sorted_and_explained(
             "icmp_only",
             "udp",
             "udp_ms",
+            "access_band",
         ]
         assert compact["items"][0][fields.index("quality_grade")] == "S"
         access = session.scalar(sa.text("SELECT nodema_node_access(:id)"), {"id": node["id"]})
@@ -136,10 +144,11 @@ def test_grades_are_computed_filtered_sorted_and_explained(
             "CN",
             "HK",
             "SG",
+            "GB",
         }
         assert (
             access["traces"]["CN-CT"]["hop_asns"] == [4134, 4809, 64510]
-            and len(access["measurements"]) == 10
+            and len(access["measurements"]) == 12
         )
         status = session.scalar(sa.text("SELECT nodema_probe_status('CN')"))
         assert (
@@ -242,7 +251,12 @@ class FakeClient:
                         },
                     }
                 )
-        return results
+        # The public API can return up to location.limit different probes.
+        expanded = []
+        for result, location in zip(results, body["locations"], strict=True):
+            for i in range(location.get("limit", 1)):
+                expanded.append({**result, "probe": {**result["probe"], "city": f"X{i}"}})
+        return expanded
 
 
 def test_probe_round_plans_measures_and_records_counts(service, monitor_settings, fixture_bytes):
@@ -300,7 +314,7 @@ def test_cloudflare_landings_are_neither_measured_nor_graded(
             {"id": excluded},
         )
     result = refresh.refresh(service.sessions, monitor_settings)
-    assert result["nodes"] == 1 and result["rows"] == 6
+    assert result["nodes"] == 1 and result["rows"] == 7
     with service.sessions() as session:
         graded = set(session.scalars(sa.select(NodeGrade.node_id).distinct()))
         assert graded == {kept}
@@ -334,6 +348,33 @@ def test_overseas_measurement_falls_back_to_any_probe(service, monitor_settings,
     ]
     assert overseas and all("tags" not in loc for r in overseas for loc in r["locations"])
     assert all(len(r["locations"]) == 1 for r in overseas) and summary["failed_codes"] == {}
+
+
+def test_service_rejection_is_remembered_without_marking_nodes_down(
+    service, monitor_settings, fixture_bytes
+):
+    _, catalog, _ = seed(service, monitor_settings, fixture_bytes)
+    before = catalog.page()["items"]
+
+    class Rejected(FakeClient):
+        def create(self, body):
+            self.requests.append(body)
+            raise AssetApiError("TARGET_NOT_ALLOWED")
+
+    from app.probes.globalping import ApiError as AssetApiError
+
+    client = Rejected()
+    summary = runner.run(service.sessions, monitor_settings, client=client)
+    assert summary["failed_codes"]["TARGET_NOT_ALLOWED"] > 0 and summary["stored"] == 0
+    with service.sessions() as session:
+        rejections = session.scalars(sa.select(EntryProbeRejection)).all()
+        assert len(rejections) == 1
+        assert rejections[0].retry_after > datetime.now(UTC) + timedelta(days=6)
+    again = runner.run(service.sessions, monitor_settings, client=Rejected())
+    assert again["planned"] == 0
+    assert [(n["id"], n["status"]) for n in catalog.page()["items"]] == [
+        (n["id"], n["status"]) for n in before
+    ]
 
 
 @pytest.mark.parametrize("exhausted", [False, True])

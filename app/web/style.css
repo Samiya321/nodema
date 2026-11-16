@@ -285,6 +285,8 @@ th.num .sort { justify-content: flex-end; }
 .grade.g-S { --g: var(--g-S); } .grade.g-A { --g: var(--g-A); } .grade.g-B { --g: var(--g-B); } .grade.g-C { --g: var(--g-C); } .grade.g-D { --g: var(--g-D); }
 .grade-v { color: var(--ink-3); }
 .grade-cell { display: inline-flex; gap: 6px; align-items: center; }
+.grade-cell.needs-probes { display: inline-grid; justify-items: start; gap: 3px; white-space: nowrap; }
+.grade-cell.needs-probes > .faint { font-size: 11px; }
 .ungraded { display: inline-flex; align-items: center; height: 22px; padding: 0 7px; border-radius: 6px; font-size: 12px; color: var(--ink-3); border: 1px dashed var(--line-2); white-space: nowrap; }
 .grade-dist { display: inline-flex; align-items: center; gap: 10px; min-width: 0; flex-wrap: wrap; }
 .grade-bar { display: inline-flex; gap: 2px; width: 120px; height: 8px; border-radius: 4px; overflow: hidden; background: var(--press); flex: none; }
@@ -398,11 +400,11 @@ table.nodes tr.picked td { background: var(--pick); }
 .sort.on { color: var(--ink); font-weight: 600; }
 .sort-mark { font-size: 11px; opacity: 0.35; }
 .sort.on .sort-mark { opacity: 1; }
-.name-td { max-width: 360px; }
+.name-td { min-width: 240px; max-width: 360px; }
 .name-td .node-name { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.name-td button.link { display: grid; max-width: 100%; }
+.name-td button.link { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; width: 100%; max-width: 100%; overflow: hidden; text-align: left; }
 .name-td button.link:hover .node-name { text-decoration: underline; text-underline-offset: 3px; }
-.node-meta { display: flex; gap: 10px; font-size: 12px; color: var(--ink-3); white-space: nowrap; overflow: hidden; }
+.node-meta { display: flex; gap: 10px; min-width: 0; max-width: 100%; font-size: 12px; color: var(--ink-3); white-space: nowrap; overflow: hidden; }
 .rtt { display: inline-grid; justify-items: end; line-height: 1.25; }
 .rtt strong { font-weight: 600; }
 .rtt .loss { font-size: 11.5px; color: var(--ink-3); }

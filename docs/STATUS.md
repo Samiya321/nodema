@@ -2,6 +2,8 @@
 
 新会话/其他 agent 先读 [接管指南](HANDOFF.md)；生产操作和凭据读取边界见 [生产操作手册](PRODUCTION_OPERATIONS.md)。
 
+2026-11-17 增量（开发中，尚未部署）：英国 GB 接入测量与视角；修复接入样本不足却按新鲜度跳过、非高峰差导致不买高峰样本、Globalping 黑名单目标重复请求、名称说明溢出覆盖等级；缺接入的 B 标注待补测。保持原 S/A 阈值与三网最差规则。生产实际分布、复现证据与验证见 [本轮生产复盘](PRODUCTION_REVIEW_2026_11_17.md)。新 head `0022_uk_probes`，发布前须新鲜加密备份与隔离恢复。
+
 2026-11-16 增量（**已提交、推送并发布**，代码 `81c3c01`，由 `codex/globalping-token-pool` 快进合并到 main；schema head 仍为 `0021_udp_relay`）：
 
 - 用户要求 Globalping 从单账号改为多账户 token 轮询，覆盖旧单账号配置约定。新增 Secret `GLOBALPING_TOKENS`（换行/逗号/空白分隔、去重、优先于兼容的 `GLOBALPING_TOKEN`），两者均空才匿名。

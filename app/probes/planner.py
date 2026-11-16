@@ -18,7 +18,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
-from app.grading import CARRIERS
+from app.grading import CARRIERS, OVERSEAS
 
 CLOUDFLARE_ASN = 13335
 CF_PREFIX = "cf"
@@ -27,7 +27,6 @@ EXCLUDED_EXIT_ASNS = frozenset({CLOUDFLARE_ASN})
 # HK/SG users sit on home broadband; datacentre probes next to the server read ~1 ms.
 # Each region is its own measurement: a home probe that fails to run in one region
 # must not make the other region's fresh sample be bought again.
-OVERSEAS = ("HK", "SG")
 HOME_BROADBAND = ("eyeball-network",)
 REACH_EVERY = timedelta(days=2)
 IDLE_EVERY = timedelta(days=3)
@@ -92,7 +91,7 @@ def carrier_of(asn: int | None, network: str | None) -> str | None:
 def vantage_of(country: str | None, asn: int | None, network: str | None) -> str | None:
     if country == "CN":
         return carrier_of(asn, network)
-    return country if country in ("HK", "SG") else None
+    return country if country in OVERSEAS else None
 
 
 # Private/reserved addresses are never sent to the public probe network. Tests that
@@ -162,6 +161,8 @@ class History:
     last_peak: dict = field(default_factory=dict)  # prefix -> oldest carrier peak sample
     last_idle: dict = field(default_factory=dict)  # prefix -> oldest carrier idle sample
     last_overseas: dict = field(default_factory=dict)  # (prefix, "HK"/"SG") -> datetime
+    overseas_probes: dict = field(default_factory=dict)  # (prefix, region) -> distinct probes
+    blocked: frozenset = frozenset()  # bare IPs the service refuses; not dead nodes
     idle_poor: frozenset = frozenset()  # prefixes already worse than band B off-peak
     last_reach: dict = field(default_factory=dict)  # target -> datetime
     dead: frozenset = frozenset()  # targets whose every sample failed
@@ -204,19 +205,24 @@ class Task:
         }
 
 
-def representative(prefix: Prefix, dead: frozenset, rotate: int) -> tuple[str, str] | None:
-    alive = sorted((t for t in prefix.tcp if t not in dead), key=lambda t: (-prefix.tcp[t], t))
+def representative(
+    prefix: Prefix, dead: frozenset, rotate: int, blocked: frozenset = frozenset()
+) -> tuple[str, str] | None:
+    alive = sorted(
+        (t for t in prefix.tcp if t not in dead and t.rsplit(":", 1)[0] not in blocked),
+        key=lambda t: (-prefix.tcp[t], t),
+    )
     if alive:
         if prefix.key == CF_PREFIX:  # anycast: spread over the shared class
             return alive[rotate % len(alive)], "TCP"
         return alive[0], "TCP"
-    if prefix.icmp:
-        return sorted(prefix.icmp)[0], "ICMP"
+    if available := prefix.icmp - blocked:
+        return sorted(available)[0], "ICMP"
     return None
 
 
 def carrier_locations(
-    carriers: dict[str, list[int]], chosen: Iterable[str], rng: random.Random
+    carriers: dict[str, list[int]], chosen: Iterable[str], rng: random.Random, limit: int = 1
 ) -> tuple:
     """One home-broadband probe per carrier, on a randomly picked carrier ASN that has
     online probes (spreads samples over distinct probes)."""
@@ -229,7 +235,7 @@ def carrier_locations(
                     ("country", "CN"),
                     ("asn", rng.choice(asns)),
                     ("tags", ("eyeball-network",)),
-                    ("limit", 1),
+                    ("limit", limit),
                 )
             )
     return tuple(locations)
@@ -259,20 +265,22 @@ def plan(
     rotate = int(now.timestamp() // 3600)
     candidates: list[tuple[tuple, Task]] = []
     for key, prefix in prefixes.items():
-        chosen = representative(prefix, history.dead, rotate)
+        chosen = representative(prefix, history.dead, rotate, history.blocked)
         if chosen is None:
             continue
         target, protocol = chosen
         if peak:
-            if key in history.idle_poor:
-                continue  # already poor off-peak; the evening only gets worse
+            # Poor off-peak results cannot stand in for a measured peak result.
             need = [c for c in CARRIERS if carriers.get(c)]
             if not need:
                 continue
             probes = history.peak_probes.get(key, 0)
             oldest = _age(history.last_peak.get(key), now)
-            locations = carrier_locations(carriers, need, rng)
-            task = Task("QUALITY_CN", key, target, protocol, _thaw(locations), len(locations), True)
+            limit = min_probes if probes < min_probes else 1
+            locations = carrier_locations(carriers, need, rng, limit)
+            task = Task(
+                "QUALITY_CN", key, target, protocol, _thaw(locations), len(locations) * limit, True
+            )
             candidates.append(((probes >= min_probes, probes, -oldest), task))
             continue
         need = [c for c in CARRIERS if carriers.get(c)]
@@ -287,11 +295,14 @@ def plan(
             )
         for region in OVERSEAS if key != CF_PREFIX else ():
             age = _age(history.last_overseas.get((key, region)), now)
-            if age >= OVERSEAS_EVERY.total_seconds():
-                location = {"country": region, "tags": list(HOME_BROADBAND), "limit": 1}
-                task = Task("QUALITY_OVERSEAS", key, target, protocol, (location,), 1, False)
+            probes = history.overseas_probes.get((key, region), 0)
+            if probes < min_probes or age >= OVERSEAS_EVERY.total_seconds():
+                location = {"country": region, "tags": list(HOME_BROADBAND), "limit": min_probes}
+                task = Task(
+                    "QUALITY_OVERSEAS", key, target, protocol, (location,), min_probes, False
+                )
                 candidates.append(
-                    ((age != float("inf"), -age / OVERSEAS_EVERY.total_seconds()), task)
+                    ((probes >= min_probes, -age / OVERSEAS_EVERY.total_seconds()), task)
                 )
         if protocol == "TCP" and key != CF_PREFIX:
             trace_age = _age(history.last_trace.get(key), now)
@@ -302,6 +313,8 @@ def plan(
                     ((trace_age != float("inf"), -trace_age / TRACE_EVERY.total_seconds()), task)
                 )
             for each in prefix.tcp:
+                if each.rsplit(":", 1)[0] in history.blocked:
+                    continue
                 reach_age = _age(history.last_reach.get(each), now)
                 if reach_age >= REACH_EVERY.total_seconds():
                     task = Task(

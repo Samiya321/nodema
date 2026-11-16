@@ -3,7 +3,7 @@
 import { SafeError } from "./crypto.js";
 import type { Row, Rows } from "./catalog.js";
 
-export const VANTAGES = ["CN-CT", "CN-CU", "CN-CM", "CN", "HK", "SG"];
+export const VANTAGES = ["CN-CT", "CN-CU", "CN-CM", "CN", "HK", "SG", "GB"];
 
 export const DEFAULT_GRADING = {
   default_vantage: "CN",
