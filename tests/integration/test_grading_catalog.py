@@ -190,6 +190,18 @@ def test_grading_policy_versions_and_validation(service):
         policies.set({"min_probes": 9})
 
 
+def test_refresh_is_due_for_new_vantages_and_saved_rules(service, monitor_settings, fixture_bytes):
+    seed(service, monitor_settings, fixture_bytes)
+    refresh.refresh(service.sessions, monitor_settings)
+    assert refresh.refresh(service.sessions, monitor_settings, if_due=True) == {"skipped": True}
+    with service.sessions.begin() as session:
+        session.execute(sa.delete(NodeGrade).where(NodeGrade.vantage == "GB"))
+    assert refresh.refresh(service.sessions, monitor_settings, if_due=True)["rows"] == 14
+    GradingPolicyService(service.sessions).set({"min_checked_days": 4})
+    result = refresh.refresh(service.sessions, monitor_settings, if_due=True)
+    assert result["grades"] == {"PENDING": 2}
+
+
 class FakeClient:
     authenticated = True
 

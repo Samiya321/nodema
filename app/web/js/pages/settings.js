@@ -173,7 +173,7 @@ function grading(data, refresh) {
       field("晚高峰结束", h("input", { name: "peak_end", type: "time", value: p.peak_end })),
       field("覆盖范围", select("coverage", [["ALL", "全部可用节点"], ["EXPORTS", "只覆盖订阅方案里的节点"]], p.coverage), "额度不够时选后者"),
     ),
-    h("p", { class: "hint" }, "Globalping token 存在 GitHub 仓库 Secret（GLOBALPING_TOKENS，多账户；兼容 GLOBALPING_TOKEN），不能在这里填写或查看；两者均未配置时使用匿名额度。测量每小时运行，等级在每日检测收尾、晚高峰结束或距上次计算超过 12 小时时更新。"),
+    h("p", { class: "hint" }, "Globalping token 存在 GitHub 仓库 Secret（GLOBALPING_TOKENS，多账户；兼容 GLOBALPING_TOKEN），不能在这里填写或查看；两者均未配置时使用匿名额度。测量每小时运行，等级在每日检测收尾、晚高峰结束或距上次计算超过 12 小时时更新；新增视角或保存规则会在下一轮补算。"),
     h("div", { class: "row end" }, h("button", { type: "button", class: "quiet", onclick: () => fill(data.defaults) }, "恢复默认值"), h("button", { type: "submit", class: "primary" }, "保存规则")),
   );
   function fill(values) {

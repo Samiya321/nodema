@@ -15,10 +15,11 @@ from zoneinfo import ZoneInfo
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import insert
 
-from app.database.models import NodeGrade
+from app.database.models import GradingPolicy, NodeGrade
 from app.grading import (
     CARRIERS,
     OVERSEAS,
+    VANTAGES,
     Access,
     NodeFacts,
     Sample,
@@ -212,7 +213,14 @@ def refresh(sessions, settings, *, if_due: bool = False, clock=None) -> dict:
         policy = load_policy(session)
         if if_due:
             last = session.scalar(sa.select(sa.func.max(NodeGrade.computed_at)))
-            if not due(last, (clock or (lambda: datetime.now(UTC)))(), policy):
+            present = set(session.scalars(sa.select(NodeGrade.vantage).distinct()))
+            updated = session.scalar(sa.select(GradingPolicy.updated_at))
+            changed_policy = last is not None and updated is not None and updated > last
+            if (
+                present == set(VANTAGES)
+                and not changed_policy
+                and not due(last, (clock or (lambda: datetime.now(UTC)))(), policy)
+            ):
                 return {"skipped": True}
         nodes, stability, quality, reach, traces = load(session, settings.freshness_hours)
     loaded = perf_counter()
