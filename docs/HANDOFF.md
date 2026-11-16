@@ -11,6 +11,7 @@
 - **2026-11-14 已发布 `b23585e`**：CF 落地不测不分级、CF 入口不再用港新样本、港新家宽探针、前端与节点页重做；迁移 head `0019_grade_exclusions`。发布记录见 [CLOUD_DEPLOYMENT.md](CLOUD_DEPLOYMENT.md)。
 - **2026-11-14 已发布 `3b4509b`**：共用凭据（≥5 节点、≥2 服务器）的节点算机场，迁移 head `0020_shared_credentials`；接入测量由 API Worker cron 每小时触发。
 - **2026-11-15 已发布 `3b68418`**：UDP 检测（Wi-Fi Calling）、中转入口算机场、Neon 流量读数、节点页重做（ASN 排行）；迁移 head `0021_udp_relay`。数据库已搬到新 Neon 项目（ID 见私密 deployment-state）。
+- **2026-11-16 已发布 `81c3c01`**：Globalping 多账户 token 轮询，Secret `GLOBALPING_TOKENS` 已由用户配置；Pages https://08bda24d.nodema-dashboard.pages.dev。main CI 43883188456 通过，schema 仍为 `0021_udp_relay`；真实运行与验证范围见 [CLOUD_DEPLOYMENT.md](CLOUD_DEPLOYMENT.md)。
 - 当前没有已知待补的本轮代码缺口。用户真实节点、大陆体验、长期配额、生产恢复不属于已完成的合成验收证明。不得把“基础链路通过”写成所有公网参数都已保证可用。
 
 先看 git 与实际云端状态。历史记录中的“尚未导入真实节点”和表行数不代表此刻数据库为空；用户可以随时从 Dashboard 导入，禁止据此清库。

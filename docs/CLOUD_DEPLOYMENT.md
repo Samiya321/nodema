@@ -14,6 +14,15 @@
 
 管理员密钥、数据库连接、HMAC/AES 密钥和 GitHub 调度 token 保存在本地 `private/` 以及对应平台 Secrets 中，不在本页或 Git 仓库公开。
 
+## 2026-11-16 第十六次发布：Globalping 多账户 token 轮询（无迁移）
+
+- 代码 `81c3c01`，从 `codex/globalping-token-pool` 快进合并并推送 main。[分支 CI 43882425604](https://github.com/Samiya321/nodema/actions/runs/43882425604)、[main CI 43883188456](https://github.com/Samiya321/nodema/actions/runs/43883188456) 全部通过：447 Python、36 Worker、3 Echo，含真实 PG 备份恢复、协议回环握手和 100 节点合成流水线。本机 Pages check/build/Functions build 通过。
+- 新工作流从 `GLOBALPING_TOKENS` Secret 读取多个账户 token，按账户免费剩余额度规划并轮询，兼容旧 `GLOBALPING_TOKEN`。每账户留 5 次，单次合计最多 5000，遇创建 401/403/429 跳过账户，不退回匿名、不主动用积分。用户已自行添加新 Secret 并删除旧 Secret，本次只核对名称，未读取或修改凭据。
+- Pages 生产部署 `08bda24d-7340-48bc-a2ab-55ce14d68eaa`，https://08bda24d.nodema-dashboard.pages.dev，生产域名 https://nodema-dashboard.pages.dev 已确认新文案。API Worker/Echo 未重新发布；schema 仍为 `0021_udp_relay`，未迁移或改写生产设置、来源、节点。
+- 只读 HTTP 验证：生产首页、模块、health 200；未认证 readiness 401，认证 readiness 200 且 database/schema/dispatch 均为真。API 直连与 Pages 代理均正常。
+- 按用户发布授权手动运行现有 [entry-probe 43883212661](https://github.com/Samiya321/nodema/actions/runs/43883212661)，代码为 `81c3c01`，北京时间 22:11:54–22:22:08 成功。识别 **2 个账户，0 个不可用，0 个账户限流**；按当时免费剩余规划合计预算 608，计划 202 次测量，完成 **200 次测量 / 600 次测试**，写入 456 条样本；另有 **2 次 HTTP 400**，仅保留错误码计数，原因没有响应体证据，不推断为节点失效或 token 失效。整轮 `status=OK`、认证为真、限流 0，等级/订阅后续步骤成功。600 次完成测试超过单账户本轮上限，证明多个账户实际参与。
+- 验证边界：本次证明新 Secret 能被默认分支工作流读取、2 个账户通过额度查询并实际参与测量，不能保证未来第三方探针、额度或所有测量参数永远成功。本轮未创建账号、未增加付费服务、未导入或删除来源/节点。
+
 ## 已完成验证
 
 - 本地 284 项 Python、30 项 Worker、3 项 Echo 测试，共 317 项通过；对应代码的 [GitHub 回归](https://github.com/Samiya321/nodema/actions/runs/42900459248) 通过，包含真实 PostgreSQL 恢复、19 个 loopback 配置握手和 100 节点合成全链路。

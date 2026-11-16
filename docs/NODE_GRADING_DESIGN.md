@@ -4,7 +4,7 @@
 
 ## 0. 实现与设计的差异
 
-- **多账户 token（2026-11-16，未部署）**：用户新要求覆盖此前“只用一个账号”的配置限制。支持 `GLOBALPING_TOKENS` Secret，详见下方配置说明；本节优先于历史设计中的单账号容量估算。Globalping 仍按用户账号计额，同一账号的多个 token 不会增加额度。
+- **多账户 token（2026-11-16，已部署 `81c3c01`）**：用户新要求覆盖此前“只用一个账号”的配置限制。支持 `GLOBALPING_TOKENS` Secret，详见下方配置说明；本节优先于历史设计中的单账号容量估算。Globalping 仍按用户账号计额，同一账号的多个 token 不会增加额度。
 - **计算位置**：等级在 Python（`app/grading.py`、`app/probes/refresh.py`）计算后写入 `node_grades`，SQL/Worker 只读；没有 `entry_probe_targets`/`entry_probe_summaries` 表，计划器每小时从 `entry_probe_results` 的 SQL 聚合读取历史。
 - **Cloudflare 入口**（2026-11-14 起）：只用三网探针测 CF 任播边缘（反映各运营商到 CF 的接入）。香港/新加坡探针只能连到本地 CF 机房（约 1 ms），不代表节点，因此不测；已有的这类样本在定档时忽略，港新视角显示“接入未测，最高 B”并给出原因。此前这一份 1 ms 样本曾被套用到约 1,600 个 CF 入口节点上。
 - **Cloudflare 落地**（2026-11-14 起，用户决定“不需要 CF 的落地”）：落地 ASN 为 13335 的节点不发起接入测量、不定档。迁移 0019 让“当前可用但没有等级行”的节点显示为“不分级”（NULL），不再算作待定；它们不进入等级筛选、按等级排序和每台服务器取最佳。每日检测照常进行，落地 ASN 只能由每日检测得知；节点本身不自动停用。
@@ -26,7 +26,7 @@
 
 官方 [API 规格](https://github.com/jsdelivr/globalping/blob/master/public/v1/spec.yaml)以用户账号计限额；[服务条款](https://globalping.io/terms/terms)第 5、6 节限制通过额外账号规避限额。多凭据支持不等于服务方授予额外额度，实际使用须符合其授权范围。实现没有注册账号、换 Runner/IP 或购买积分的逻辑。
 
-本轮仅在合成 HTTP 响应和隔离 PostgreSQL 中验证；未配置真实多账户 Secret，未对真实节点发起测量，未发布到生产。Python/工作流发布到默认分支后才供后续 Actions 使用；总览文案需单独发布 Pages。
+`81c3c01` 已发布到默认分支和 Pages；main CI 43883188456 通过（447 Python、36 Worker、3 Echo）。用户已自行设置多账户 Secret，发布时只核对名称、不读取值。真实验证运行 43883212661 的最终账户统计与验证边界见 [云端记录](CLOUD_DEPLOYMENT.md)。
 
 ## 1. 目标
 

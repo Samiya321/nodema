@@ -2,13 +2,13 @@
 
 新会话/其他 agent 先读 [接管指南](HANDOFF.md)；生产操作和凭据读取边界见 [生产操作手册](PRODUCTION_OPERATIONS.md)。
 
-2026-11-16 增量（**代码验证完成，发布中**，分支 `codex/globalping-token-pool`，基于 `5f091f3`；schema head 仍为 `0021_udp_relay`，最终发布证据待补）：
+2026-11-16 增量（**已提交、推送并发布**，代码 `81c3c01`，由 `codex/globalping-token-pool` 快进合并到 main；schema head 仍为 `0021_udp_relay`）：
 
 - 用户要求 Globalping 从单账号改为多账户 token 轮询，覆盖旧单账号配置约定。新增 Secret `GLOBALPING_TOKENS`（换行/逗号/空白分隔、去重、优先于兼容的 `GLOBALPING_TOKEN`），两者均空才匿名。
 - 每账号读取免费剩余额度、留 5 次，锁内预扣并发请求预算，创建按顺序轮询；401/403/429 跳过该账号，全部不可用则停止。结果沿用创建时的 token，查询 429 在期限内重试同一测量。未知额度不猜、不将积分计入预算，网络等结果不确定的创建不重发；同账号多个 token 仍共享服务端额度。
 - 单次合计上限 `PROBE_MAX_TESTS_PER_RUN` 默认 5000，工作流读取同名仓库 Variable；并发仍为 6。修复限流取消排队任务后 `CancelledError` 导致收尾失败。日志仅新增账户数量、不可用数量和限流数量；运行记录 `remaining` 为可用账户合计，无需迁移。总览改为“账号模式，按剩余额度运行”。
-- 验证：隔离 PG17 下全量 Python 回归 **446 项通过**（309 秒，包含真实 PG 备份/恢复；1 条既有 Starlette/httpx 弃用提示）；随后最终预算上限版本的客户端/并发预算/分级/轮询集成测试 **38 项通过**。全仓 Ruff lint/format、修改 JS 语法、`git diff --check` 通过。无 CI 链接（尚未推送），没有使用真实 token 或对真实节点发起测量。
-- 发布边界：Python 与工作流须发布到默认分支后才供后续 Actions 使用，文案须发布 Pages；本轮未更改 GitHub Secrets、数据库或云端资源。多账户配置、预算与条款边界见 [节点分级设计第 0 节](NODE_GRADING_DESIGN.md#0-实现与设计的差异)。
+- 验证：隔离 PG17 下全量 Python 回归 **446 项通过**（309 秒，包含真实 PG 备份/恢复；1 条既有 Starlette/httpx 弃用提示）；随后最终预算上限版本的客户端/并发预算/分级/轮询集成测试 **38 项通过**。全仓 Ruff lint/format、修改 JS 语法、`git diff --check` 通过。[分支 CI 43882425604](https://github.com/Samiya321/nodema/actions/runs/43882425604) 与 [main CI 43883188456](https://github.com/Samiya321/nodema/actions/runs/43883188456) 通过：447 Python、36 Worker、3 Echo，含真实 PG 恢复、协议回环和 100 节点流水线。
+- 发布：Pages https://08bda24d.nodema-dashboard.pages.dev，生产域名新文案已确认；首页/模块/health 200、未认证 readiness 401、认证 readiness 为真。用户已自行删除旧 Secret 并设置 `GLOBALPING_TOKENS`，仅核对名称，未读取或改写值。API Worker/Echo/数据库 schema 未变。真实验证 [entry-probe 43883212661](https://github.com/Samiya321/nodema/actions/runs/43883212661) 成功：识别 2 个账户、0 个不可用、0 个账户限流，合计预算 608，完成 200 次测量 / 600 次测试，写入 456 条样本；2 次测量请求返回 HTTP 400（只记录错误码，未保存响应体/目标到日志）。600 次测试超过单账户本轮上限，已证明多个账户实际参与。该证据不保证今后无额度或第三方探针错误。多账户配置与预算见 [节点分级设计第 0 节](NODE_GRADING_DESIGN.md#0-实现与设计的差异)，完整发布证据见 [CLOUD_DEPLOYMENT.md](CLOUD_DEPLOYMENT.md)。
 
 截至 2026-11-09，Actions 预生成订阅和长期扫描明细归档两项主要代码缺口已补齐，相关 API、Dashboard、迁移、工作流与回归均已接通。2026-11-11 已发布用户云端实例并完成基础链路验收，见 [云端部署记录](CLOUD_DEPLOYMENT.md)。逐项核对见 [交付审查](CONVERSATION_COMPLETENESS_REVIEW.md)。
 
