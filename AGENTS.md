@@ -14,7 +14,7 @@
 
 ## 必须保持的边界
 
-- 生产：Cloudflare Pages + TypeScript Worker API + PostgreSQL（目前 Neon Free）+ Python GitHub Actions。严格免费，接受休眠/额度限制，不使用用户服务器，不增加付费服务。
+- 生产：Cloudflare Pages + TypeScript Worker API + PostgreSQL 17（用户于 2026-11-18 指定的云主机自建）+ Python GitHub Actions。严格免费，接受休眠和额度限制。该主机仅为本项目运行数据库和 Cloudflare Tunnel，计算仍在 Actions。
 - 拉取、解析、实际代理检测、订阅转换在 Actions。Worker 保存/查询/调度并提供已生成订阅；Python FastAPI 是可选本地入口。
 - 不做下载速度测试、网段扫描、IPLC/IEPL/CN2 自动判断。只记录能实测证明的东西：节点等级来自 Globalping 社区探针对入口的 TCP 实测（三网/HK/SG）和每日完整检测，标明来源与局限；不推断回程、不提取机场自称的线路名。设计见 docs/NODE_GRADING_DESIGN.md。
 - 数据库按用户选择明文保存；保留 HMAC 去重、鉴权，AES 用于备份、MMDB 临时包和旧库转换。不要重新生成或更换生产密钥来解决连库/测试问题。

@@ -1,6 +1,6 @@
 # 云端部署记录
 
-部署日期：2026-11-11（北京时间）。已发布生产页面、API 和 Echo，使用 Neon Free PostgreSQL 与标准 GitHub Actions Runner；本次没有开通或升级付费套餐，没有使用自有服务器、R2 或 Redis。
+初次部署于 2026-11-11（北京时间）。2026-11-18 数据库迁到用户指定云主机。生产仍使用 Pages、Worker 和标准 GitHub 托管 Runner，未开通新的付费服务。
 
 | 服务 | 地址 / 状态 |
 | --- | --- |
@@ -8,11 +8,19 @@
 | API | https://nodema-api.simb.workers.dev；管理接口需要管理员鉴权 |
 | Echo | https://nodema-echo.simb.workers.dev；仅返回调用者的观测信息 |
 | 源码 | https://github.com/Samiya321/nodema |
-| 数据库 | Neon Free，PostgreSQL 17，美国东部；2026-11-14 搬到新项目（见下方第十三次记录），当前 schema 见最新发布记录 |
+| 数据库 | 自建 PostgreSQL 17.12，用户指定云主机，目录 `/root/nodema-postgres`；当前 schema `0023_identity_naming`。迁移前 Neon 保留为只读回退来源 |
 | API 数据库权限 | 独立角色，授予业务 DML；数据库迁移使用单独的 owner 连接 |
-| Hyperdrive | 已禁用查询缓存，origin 连接数限制为 5 |
+| Hyperdrive | 经 Workers VPC 和 Cloudflare Tunnel 连接本机数据库；禁用查询缓存，源站连接数限制 5 |
 
 管理员密钥、数据库连接、HMAC/AES 密钥和 GitHub 调度 token 保存在本地 `private/` 以及对应平台 Secrets 中，不在本页或 Git 仓库公开。
+
+## 2026-11-18 第十九次发布：迁移到自建 PostgreSQL
+
+- 用户指定云主机并授权部署。PostgreSQL 17.12 和 cloudflared 在 `/root/nodema-postgres` 的独立 Compose 项目运行。数据库和连接器指标只监听回环。Cloudflare VPC 验证数据库 CA 与名称，GitHub 托管 Runner 用受限 SSH 账号连接并校验主机密钥和 PostgreSQL TLS。Worker 与迁移使用独立数据库角色。原数据库加密密钥、HMAC、管理员鉴权和调度凭据继续使用。
+- [演练备份 44226425547](https://github.com/Samiya321/nodema/actions/runs/44226425547) 在隔离库完整还原。隔离 Worker 和 [GitHub Runner 演练 44228333703](https://github.com/Samiya321/nodema/actions/runs/44228333703) 验证成功，后者实际经 SSH 转发用 Docker PostgreSQL 客户端生成 AES 加密备份。
+- 暂停写工作流，旧 Neon 库默认只读。恢复 [切换备份 44229140683](https://github.com/Samiya321/nodema/actions/runs/44229140683)；数据库 schema `0023_identity_naming`，逐表核对 38 张表行数，以及 4 个视图、34 个函数、11 个触发器、71 个索引、142 个约束和关键 ID 摘要。56,597 个节点、1,076 条来源、123,153 条检测明细、42,798 条当前状态和 15,559 条接入样本，订阅方案 0。未执行裁剪迁移。
+- Actions/Compose `a92e037`、用量 `e790273`、连接器指标绑定 `b2e5925`；[main CI 44229386266](https://github.com/Samiya321/nodema/actions/runs/44229386266) 通过。生产保留原 Hyperdrive binding，源站改为 VPC。API version `573c2fa7-fa3c-4260-80b6-4c10f9da7cda`，Pages https://f00a9941.nodema-dashboard.pages.dev 。Pages 与 Worker 认证 readiness 返回 200，未认证返回 401，首页 health 200，用量页模块 SHA 与源码一致，旧 Neon 实时告警已移除，历史读数保留。
+- 恢复原有工作流和 Worker 调度。移除用于节省 Neon 出站的暂缓备份变量。新库通过 [加密备份 44230237908](https://github.com/Samiya321/nodema/actions/runs/44230237908) 成功产出约 54 MB artifact，保留至北京时间 12 月 8 日 11:26；[用量 44230508395](https://github.com/Samiya321/nodema/actions/runs/44230508395) 在新库写入工作流账本和数据库容量采样。旧 Neon 实例保留只读，发生故障应先处理切换后产生的写入再决定回退。详见 [生产手册](PRODUCTION_OPERATIONS.md#自建-postgresql-运维)。
 
 ## 2026-11-17 第十八次发布：归属证据、保守命名与历史落地
 

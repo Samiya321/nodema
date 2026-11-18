@@ -1,10 +1,10 @@
 # 生产接管与操作手册
 
-更新：2026-11-11。先读 AGENTS.md 与 HANDOFF.md；这是已有实例维护流程，不是新建资源教程。以下生产写操作仅在具体任务已授权、核对目标后执行；本文件自身不授权恢复、删库或轮换密钥。已有明确授权不必重复询问。
+更新：2026-11-18。先读 AGENTS.md 与 HANDOFF.md；这是已有实例维护流程，不是新建资源教程。以下生产写操作仅在具体任务已授权、核对目标后执行；本文件自身不授权恢复、删库或轮换密钥。已有明确授权不必重复询问。
 
 ## 身份、环境与资料位置
 
-本机根目录为 `REPOSITORY_ROOT`，命令默认从仓库根运行。公开仓库 main 只有源码；生产数据在 Neon，不在 Git。private 被 Git 和 Docker build context 忽略。
+本机根目录为 `REPOSITORY_ROOT`，命令默认从仓库根运行。公开仓库 main 只放源码和文档，生产 PostgreSQL 数据留在已授权的云主机。private 被 Git 和 Docker build context 忽略。
 
 - `private/README.md`：本机私密资料索引、资源与认证说明。
 - `private/deployment-state.json`：资源 ID、部署 commit/版本与历史验收标记；不是实时状态。
@@ -99,9 +99,18 @@ gh workflow run export-build.yml --repo Samiya321/nodema --ref main
 
 等级重算（`nodema grade refresh`）每次重写约 4 万行，只在 Actions 内运行（`daily-check.yml` 收尾、`entry-probe.yml` 到期时）。从国内本机对 Neon 执行会因上传慢而持续数十分钟并长期持有事务，2026-11-14 实测超过 40 分钟后中止。
 
+## 自建 PostgreSQL 运维
+
+- 主机在用户授权的服务器上，配置、数据、证书和 Tunnel token 位于 `/root/nodema-postgres`。主机地址、SSH 管理身份和资源 ID 见本机私密交接。只在该子目录用 `docker compose -f compose.yml -f tunnel.yml ps` 检查本项目。
+- PostgreSQL 17 和 cloudflared 通过 Docker Compose 管理。PostgreSQL 和 cloudflared 指标仅监听回环。生产 Worker 经 Hyperdrive → Workers VPC → Cloudflare Tunnel 连接，源站证书和主机名使用自建 CA 校验。使用 `curl -fsS http://127.0.0.1:20241/ready` 检查本机连接器是否在线，再从生产 Pages 检查认证 readiness。
+- GitHub 托管 Runner 通过专用 SSH 账号转发至数据库，只允许本地转发到固定数据库端口。仓库 Secret `NODEMA_POSTGRES_SSH` 包含专用密钥、SSH 主机公钥和数据库公开 CA，`NODEMA_DATABASE_VIA_SSH=true` 启用私有连接。备份 Job 的 PostgreSQL 客户端容器使用 GitHub Linux Runner 的 host 网络访问回环并挂载 CA。数据库 URL 仍分别通过三个原有 Secrets 下发。
+- 三个运行入口保留 TLS 校验及 owner/API 角色隔离。宿主机上通过 `docker compose exec -T postgres psql -p 25432 -U postgres` 执行限定的维护操作。轮换服务器 TLS 证书前用 `openssl verify -purpose sslserver -verify_ip 127.0.0.1` 和已上传 CA 校验，更新后重载 PostgreSQL。更换 CA 时同步 Cloudflare VPC 与 Actions 信任链；更换 SSH 主机密钥时经可信管理会话核对后更新 GitHub Secret。
+- 当前主机还承载其他业务。优先观察容器是否重启、内存和磁盘水位、Actions 是否完成，以及最近一次异机加密备份是否实际产出。升级镜像前完成新鲜备份及隔离恢复演练。
+- 退回旧库前暂停写入，核对切换后是否已有新记录。需要保留的新系统写入应先备份、迁回并验证，再解除旧库只读和恢复入口。旧 Neon 库保留用于回退，需考虑剩余出站额度。运行用量页面保留 Neon 历史样本，自建流量使用主机/云厂商的实际计量。
+
 ## 备份、恢复与数据库搬家
 
-数据库明文不表示备份可公开。每周加密 artifact 仅保留 7 天；GeoIP 密文包保留 1 天。GitHub artifact 不是无限期灾备；如果需要长期恢复点，应另行私下保存加密备份与对应密钥，分开保管。失去 AES 密钥就无法解密对应备份。
+加密数据库备份每月 1、15 日（UTC）上传为 Actions artifact，保留 20 天；GeoIP 密文包保留 1 天。GitHub artifact 不是无限期灾备；如果需要长期恢复点，应另行私下保存加密备份与对应密钥，分开保管。失去 AES 密钥就无法解密对应备份。
 
 `private/cloud-backup-smoke.nma` 是最初云端备份验收文件，不是最新生产快照；不能拿它覆盖用户后来导入的数据。恢复前核对文件时间、来源、AES key ID、目标 DB 与最近一次隔离恢复证据。
 
