@@ -9,7 +9,7 @@ services:
     security_opt: [no-new-privileges:true]
     mem_limit: 96m
     memswap_limit: 128m
-    command: [tunnel, --no-autoupdate, run, --token-file, /run/nodema/tunnel-token]
+    command: [tunnel, --no-autoupdate, --metrics, 127.0.0.1:20241, run, --token-file, /run/nodema/tunnel-token]
     volumes:
       - ./secrets/tunnel-token:/run/nodema/tunnel-token:ro
     logging:
