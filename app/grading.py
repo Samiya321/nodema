@@ -333,12 +333,11 @@ def grade_node(facts: NodeFacts, vantage: str, access: Access, policy: dict) -> 
 
 
 def combine_cn(carriers: dict[str, Grade]) -> Grade:
-    """Three-carrier grade: the worst carrier decides; one missing carrier caps at B."""
+    """Three-carrier grade: a proved failure wins, otherwise take the worst grade."""
     grades = [carriers[c] for c in CARRIERS if c in carriers]
     if not grades:
         raise ValueError("no carrier grades")
-    ranked = sorted(grades, key=lambda g: GRADES.index(g.grade))
-    worst = ranked[-1]
+    worst = max(grades, key=lambda g: (g.unreachable, GRADES.index(g.grade)))
     reasons = [f"{VANTAGE_NAMES[c]} {carriers[c].grade}" for c in CARRIERS if c in carriers]
     reasons.append("三网取最差的一家")
     failed = [VANTAGE_NAMES[c] for c in CARRIERS if c in carriers and carriers[c].unreachable]

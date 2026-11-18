@@ -687,6 +687,9 @@ print(json.dumps(Usage(session_factory(make_engine(os.environ['DATABASE_URL'])))
   const overview = await (await request("/api/overview")).json();
   assert.equal(overview.latest_completed_scan.kind, "DAILY");
   assert.ok(overview.latest_scan.shards);
+  const attention = await (await request("/api/overview/attention")).json();
+  assert.ok(Array.isArray(attention.airports) && Array.isArray(attention.substores));
+  assert.equal(typeof attention.has_exports, "boolean");
   for (const key of ["UUID", "password", "token_hash", "config_data"])
     assert.ok(!JSON.stringify(value).includes(key));
 });
@@ -1429,10 +1432,24 @@ print(json.dumps({'status':result['status'],'count':run['node_count']}))`),
   assert.equal(air.traffic_total, 1000);
   assert.equal(air.usable, true);
   assert.equal(air.up_count, 1);
+  assert.equal(air.stale_up_count, 0);
   assert.equal(air.url_host, "air.example");
   assert.ok(!JSON.stringify(airports).includes("synthetic-air-secret"));
   const provider = airports.providers.find((p) => p.id === air.provider_id);
   assert.equal(provider.name, "Synthetic Air");
+  const db = await connect();
+  try {
+    await db.query("UPDATE node_current_status SET last_checked_at=now()-interval '37 hours' WHERE node_id IN (SELECT node_id FROM node_sources WHERE source_id=$1)", [created.id]);
+    const stale = (await (await request("/api/airports")).json()).sources.find((s) => s.id === created.id);
+    assert.deepEqual([stale.up_count, stale.stale_up_count, stale.node_count], [0, 1, 1]);
+    await db.query("UPDATE node_current_status SET last_checked_at=now() WHERE node_id IN (SELECT node_id FROM node_sources WHERE source_id=$1)", [created.id]);
+    await db.query("UPDATE node_sources SET is_present=false WHERE source_id=$1", [created.id]);
+    const removed = (await (await request("/api/airports")).json()).sources.find((s) => s.id === created.id);
+    assert.deepEqual([removed.up_count, removed.stale_up_count, removed.node_count], [0, 0, 1]);
+    await db.query("UPDATE node_sources SET is_present=true WHERE source_id=$1", [created.id]);
+  } finally {
+    await db.end();
+  }
   const renamed = await (
     await request(`/api/providers/${provider.id}`, {
       method: "PATCH",

@@ -191,6 +191,10 @@ def test_generic_mainland_failures_are_reported_without_marking_carriers_down(mo
     }
     assert grades["CN"]["grade"] == "D"
     assert any("触发 D 的运营商视角：联通" in reason for reason in grades["CN"]["reasons"])
+    still_pending = {
+        row["vantage"]: row for row in refresh.compute([node], {}, quality, {}, {}, POLICY)
+    }
+    assert still_pending["CN"]["grade"] == "D"
 
 
 def nodes():
