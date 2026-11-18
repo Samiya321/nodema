@@ -80,7 +80,7 @@ PY
 | 订阅返回 503 | 常见为待生成、失效或新鲜度到期；看方案状态/成员资格，再 retry 或运行 export-build，不手改 invalidated/revision/成品字段 |
 | 订阅 404/鉴权失败 | 检查 token、撤销、到期；不要将完整私有 URL 贴到公开 issue。旧 token hash 不能还原原 token，确需更换由用户触发 |
 | 入口国家/ASN 未知 | 看 geoip-pack 输出；缺记录/校验失败/未安装 MMDB 都可能，不代表节点 DOWN。GitHub 源无需新建 MaxMind 账号，确认 GeoIP provider 即可 |
-| DB/TLS 连接失败 | Neon 可能休眠、网络可能暂时不通；核对连接角色、TLS、CA、Hyperdrive。保留 verify-full，不关闭 TLS、不重建库 |
+| DB/TLS 连接失败 | 检查 PostgreSQL、cloudflared、Hyperdrive 或 Actions 的 SSH 转发状态。核对连接角色、CA 和 PostgreSQL TLS 主机名，保留 verify-full |
 | 容量或分钟数增长 | 查运行与用量、活跃任务和保留设置；cleanup 会归档并删除过期明细，应了解其影响后执行，不为验收随意运行 |
 
 每日主流程北京时间 04:17 由 API Worker Cron 派发（不受 GitHub 定时延迟影响），备份每月 1、15 日 UTC 21:41（仓库变量 `BACKUP_SKIP_UNTIL=YYYY-MM-DD` 可跳过此日期之前的定时备份）。转换“不支持”的原因可手动运行只读的 `diagnose.yml` 查看（约 3 MB 传输）。手工执行固定工作流前确认本次任务允许生产写入/检测：
@@ -88,6 +88,8 @@ PY
 ```bash
 # 只同步来源（不检测）
 gh workflow run source-sync.yml --repo Samiya321/nodema --ref main
+# 只处理已登记的待同步来源
+gh workflow run source-sync.yml --repo Samiya321/nodema --ref main -f pending_only=true
 # 检测某一范围（SELF_HOSTED / AIRPORT / ALL）
 gh workflow run daily-check.yml --repo Samiya321/nodema --ref main -f scope=SELF_HOSTED
 gh workflow run export-build.yml --repo Samiya321/nodema --ref main
@@ -111,7 +113,7 @@ gh workflow run export-build.yml --repo Samiya321/nodema --ref main
 
 ## 备份、恢复与数据库搬家
 
-加密数据库备份每月 1、15 日（UTC）上传为 Actions artifact，保留 20 天；GeoIP 密文包保留 1 天。GitHub artifact 不是无限期灾备；如果需要长期恢复点，应另行私下保存加密备份与对应密钥，分开保管。失去 AES 密钥就无法解密对应备份。
+加密数据库备份每月 1、15 日（UTC）上传为 Actions artifact，保留 20 天；GeoIP 密文包保留 1 天。用量页按实际备份包显示创建时间和到期时间。排查缺包时检查 run 的上传步骤，定时跳过也可能显示运行成功。需要长期恢复点时，将加密备份与对应密钥分开保管。失去 AES 密钥就无法解密对应备份。
 
 `private/cloud-backup-smoke.nma` 是最初云端备份验收文件，不是最新生产快照；不能拿它覆盖用户后来导入的数据。恢复前核对文件时间、来源、AES key ID、目标 DB 与最近一次隔离恢复证据。
 

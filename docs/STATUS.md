@@ -2,6 +2,8 @@
 
 新会话/其他 agent 先读 [接管指南](HANDOFF.md)；生产操作和凭据读取边界见 [生产操作手册](PRODUCTION_OPERATIONS.md)。
 
+2026-11-18 **两项 P1 和首批 P2 已发布**（API `91bafab`，页面 `c3c52cd`，schema `0023_identity_naming`）。日检可以在同一批次追加一轮未完成分片，原批次剩余 177 项已收尾至 **13,346/13,346**。三网 D 改用运营商自己的重复失败证据，同一批样本复算从 **1,168 降为 1,013**，S/A/B 阈值照旧。机场区分当前可用、上次通过但已过期和历史关联。首页改用 1.6 KB 提醒摘要，手机导航和节点详情已在真实数据上验证。用量页显示实际加密包的创建、到期时间，接入任务写入 Runner 网络采样。下一轮验证正常夜间峰值；普通节点列表仍需服务端分页，生产非空订阅仍待验收。发布及回归证据见 [云端记录](CLOUD_DEPLOYMENT.md#2026-11-18-第二十次发布日检恢复分级证据和页面优化)。
+
 2026-11-18 **旧 Neon 已删除**。删除前通过 [44231649933](https://github.com/Samiya321/nodema/actions/runs/44231649933) 生成自建库加密备份并在独立 PostgreSQL 17 恢复，核对 `0023_identity_naming`、38 张表、56,597 个节点、123,153 条检测明细。旧项目读取确认不存在，生产继续使用自建库，旧采集凭据已移除。
 
 2026-11-18 **生产 PostgreSQL 已迁到用户指定云主机**。schema `0023_identity_naming`，38 张表行数及关键对象一致，56,597 个节点和 123,153 条检测明细完整保留。Worker 经 Hyperdrive/VPC/Tunnel、Actions 经受限 SSH 均实际连通；启用原调度和每月两次异机加密备份。新库备份 [44230237908](https://github.com/Samiya321/nodema/actions/runs/44230237908)、用量记账 [44230508395](https://github.com/Samiya321/nodema/actions/runs/44230508395) 成功。[首轮定时接入 44230924976](https://github.com/Samiya321/nodema/actions/runs/44230924976) 成功并写入 23 条结果；完整日检高峰待下一轮正常执行。迁移时保留的 Neon 库已按用户要求退役，旧流量样本仍可查。代码 `b2e5925`，[main CI 44229386266](https://github.com/Samiya321/nodema/actions/runs/44229386266) 通过，访问及恢复证据见 [云端记录](CLOUD_DEPLOYMENT.md)。
@@ -10,7 +12,7 @@
 
 同日补充 [自建与低价托管比较](POSTGRES_ALTERNATIVES_2026_11_18.md#免费档之外的选择)。10:48 左右 Neon 公网出站 3.582/5 GB，累计约 5.02 CU-hour。OCI 云主机的免费出站有余量，但有缺货与空闲回收条款。付费放宽时，PlanetScale、DigitalOcean 可继续使用托管 PostgreSQL。当前严格免费与服务器边界仍按接管指南执行。
 
-2026-11-18 [生产全量评估](PRODUCTION_REVIEW_2026_11_18.md)（只读，基线 `bd829ec` / `0023_identity_naming`）：Neon 实时采样 3.57/5 GB，页面按近期速度预计约 11 月 20 日耗尽。当前每日检测 39/40 分片完成，177 项待重试，已发布 1,433 个近期可用结果。生产核实机场历史可用计数偏高、三网 D 混用通用失败与分运营商证据。优先处理配额及传输、批次恢复和数据口径；生产健康及认证 readiness 通过，1440/390 px 主要页面可读。本轮交付评估文档，生产修复待安排。
+2026-11-18 [生产全量评估](PRODUCTION_REVIEW_2026_11_18.md)（历史基线 `bd829ec` / `0023_identity_naming`）：当时 Neon 已用 3.57/5 GB，日检 39/40 分片完成，177 项待重试。评估核实了机场历史可用计数偏高、三网 D 混用通用失败与分运营商证据，以及首页与列表的传输开销。数据库迁移、退役和后续修复见上方当日记录。
 
 2026-11-17 命名修复（**已合入 main 并发布**，`d891e26` + `b76ad80`，head `0023_identity_naming`）：同一 IP 的冲突不再生成跨国箭头，未知入口用 `?`；核实五个 ASN 别名并排除 Private Customer 等占位文本；增加出口观测时间和历史/来源分歧提示，修复新 IP/ASN 沿用旧组织的问题。新鲜备份 [43926097755](https://github.com/Samiya321/nodema/actions/runs/43926097755) 已隔离恢复、演练迁移：七表行数不变、名称零重复，1,391 个可用节点中 166 个名称变化。分支 [43927688684](https://github.com/Samiya321/nodema/actions/runs/43927688684) / main [43928480592](https://github.com/Samiya321/nodema/actions/runs/43928480592) CI 通过：467 Python、36 Worker、3 Echo，含真实协议/UDP 回环和 100 节点流水线。API `5c9c3664-61c8-4656-a171-627aa3553c70`；Pages https://43b793dd.nodema-dashboard.pages.dev。生产 1,391 个可用节点中，同 IP 展示冲突 0、Private 品牌简称 0；166 个归属分歧提示、21 个历史落地提示，原始入口证据保留。认证 readiness 为真、未认证 401，生产静态文件与源码一致；真实数据经只读镜像检查 1440/390px 布局，无名称/等级列交叠与页面横向溢出，详情原始来源及观测时间可见。订阅构建 [43928935333](https://github.com/Samiya321/nodema/actions/runs/43928935333) 成功，但生产方案为 0，不能视作实际非空订阅下载验收。检测器的新出口发布/来源标记仍待下一次正常完整检测验证，隔离回归已覆盖。细节见 [归属命名规则](IDENTITY_NAMING.md) 和云端记录。
 
