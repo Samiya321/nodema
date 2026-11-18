@@ -5,7 +5,7 @@ import sqlalchemy as sa
 from app.checker.health import HealthChecker
 from app.domain import AssetError
 
-SCHEMA_REVISION = "0026_maintenance"
+SCHEMA_REVISION = "0027_node_observations"
 
 
 def readiness(assets, settings, *, network=False, checker_factory=None):

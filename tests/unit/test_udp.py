@@ -1,6 +1,9 @@
 import socket
 import struct
 
+import dns.message
+import dns.rcode
+import dns.rrset
 import pytest
 
 from app.checker import udp
@@ -37,12 +40,23 @@ def test_socks_addresses_round_trip():
     assert udp.socks_unwrap(b"\0\0\1\1" + b"x" * 10) is None  # fragmented: dropped
 
 
-def test_dns_answer_must_match_query_id():
+def test_dns_response_requires_matching_question_and_expected_addresses():
     query = udp.dns_query(0x1234)
-    answer = b"\x12\x34\x81\x80" + query[4:]
-    assert udp.dns_answered(answer, 0x1234)
-    assert not udp.dns_answered(answer, 0x9999)
-    assert not udp.dns_answered(query, 0x1234)  # a query, not a response
+    answer = dns.message.make_response(query)
+    assert udp.dns_response(answer.to_wire(), query) == "UNEXPECTED"
+    answer.answer.append(
+        dns.rrset.from_text(udp.DNS_NAME, 60, "IN", "A", "192.0.0.170", "192.0.0.171")
+    )
+    assert udp.dns_response(answer.to_wire(), query) == "VALID"
+    assert udp.dns_response(answer.to_wire(), udp.dns_query(0x9999)) is None
+    assert udp.dns_response(query.to_wire(), query) is None
+    assert (
+        udp.dns_response(answer.to_wire(), dns.message.make_query("example.com", "A", id=query.id))
+        is None
+    )
+    answer.answer.clear()
+    answer.set_rcode(dns.rcode.SERVFAIL)
+    assert udp.dns_response(answer.to_wire(), query) == "ERROR"
 
 
 def test_one_lost_packet_is_retried_not_failed(monkeypatch):
@@ -52,7 +66,7 @@ def test_one_lost_packet_is_retried_not_failed(monkeypatch):
         calls.append(target[0])
         if len(calls) == 1:
             raise TimeoutError
-        return "203.0.113.9"
+        return "203.0.113.9", None
 
     monkeypatch.setattr(udp, "attempt", flaky)
     result = udp.probe(1080, pause=0)
@@ -75,11 +89,12 @@ def test_dns_fallback_success_has_no_exit_ip(monkeypatch):
     def only_dns(port, target, timeout):
         if target[3] != "dns":
             raise TimeoutError
-        return ""
+        return None, "ERROR"
 
     monkeypatch.setattr(udp, "attempt", only_dns)
     result = udp.probe(1080, pause=0)
     assert result.status == "SUCCESS" and result.exit_ip is None
+    assert result.attempts[-1]["dns_response"] == "ERROR"
 
 
 @pytest.mark.parametrize("declared,expected", [(False, "NOT_SUPPORTED"), (None, "SUCCESS")])

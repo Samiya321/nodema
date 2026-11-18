@@ -586,12 +586,20 @@ class ScanService:
                 .where(Node.id.in_(attempts))
             )
             jobs = []
+            recent = now() - timedelta(hours=self.settings.freshness_hours)
             for node, current in rows:
                 identity = json.loads(bytes(node.config_data))
                 context = dict(
                     round_id=str(run_id),
                     next_full_check_at=current.next_full_check_at if current else None,
                     probe_key=current.probe_key if current else None,
+                    retry_echo_timeout=bool(
+                        current
+                        and current.status in ("UP", "DEGRADED")
+                        and current.last_success_at
+                        and current.last_success_at >= recent
+                        and attempts[node.id] == 1
+                    ),
                 )
                 jobs.append((node.id, attempts[node.id], identity, node.short_id, context))
             return sorted(jobs, key=lambda job: str(job[0]))

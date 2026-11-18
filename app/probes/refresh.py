@@ -19,6 +19,7 @@ from sqlalchemy.dialects.postgresql import insert
 from app.database.models import GradingPolicy, NodeGrade
 from app.grading import (
     CARRIERS,
+    FAILURE_WINDOW,
     OVERSEAS,
     VANTAGE_NAMES,
     VANTAGES,
@@ -29,6 +30,7 @@ from app.grading import (
     combine_cn,
     grade_node,
     prefix_access,
+    recent_failure,
     repeated_failure,
 )
 from app.probes import planner
@@ -43,6 +45,7 @@ GRADE_FILTERS = (
     "max_peak_loss",
     "min_avail_7d",
     "unreachable",
+    "endpoint_verified",
     "route_asn",
     "best_per_server",
 )
@@ -54,6 +57,7 @@ EXPORT_FIELDS = (
     "avail_7d",
     "checked_7d",
     "unreachable",
+    "endpoint_verified",
     "route_asns",
 )
 
@@ -122,39 +126,47 @@ def load(session, fresh_hours: int):
     return nodes, stability, quality, reach, traces
 
 
-def compute(nodes, stability, quality, reach, traces, policy) -> list[dict]:
+def compute(nodes, stability, quality, reach, traces, policy, *, now=None) -> list[dict]:
+    now = now or datetime.now(UTC)
     rows: list[dict] = []
-    # Thousands of nodes share one prefix (all Cloudflare entries are "cf"): its
-    # figures are computed once, not once per node (was nodes x samples).
-    prefix_cache: dict[tuple, tuple] = {}
-    last_success = {}
-    for (_, vantage), samples in quality.items():
-        if vantage not in CARRIERS:
-            continue
+    prefix_cache = {}
+    target_cache = {}
+    by_target = defaultdict(list)
+    for (prefix, vantage), samples in quality.items():
         for sample in samples:
-            if sample.received and sample.measured_at:
-                key = (sample.target, vantage)
-                last_success[key] = max(
-                    last_success.get(key, sample.measured_at), sample.measured_at
-                )
+            by_target[prefix, vantage, sample.target].append(sample)
 
-    def access_for(prefix, vantage, target):
-        key = (prefix, vantage)
+    def access_for(entry, vantage):
+        key = (entry.prefix, vantage)
+        carrier = vantage in CARRIERS
+        target_key = (*key, entry.target)
+        if entry.protocol != "hysteria2":
+            if target_key not in target_cache:
+                direct = by_target.get(target_key, [])
+                stats, _ = prefix_access(direct, carrier, policy) if direct else (Access(), set())
+                failure_at = recent_failure(direct, now) if direct else None
+                target_cache[target_key] = replace(
+                    stats,
+                    evidence="ENDPOINT",
+                    failure_at=failure_at,
+                    unreachable=failure_at is not None,
+                    last_measured_at=failure_at or stats.last_measured_at,
+                )
+            exact = target_cache[target_key]
+            if exact.unreachable or exact.sufficient:
+                return exact
         if key not in prefix_cache:
             samples = quality.get(key, [])
-            prefix_cache[key] = (
-                prefix_access(samples, vantage in CARRIERS, policy) if samples else None
-            )
-        cached = prefix_cache[key]
-        if cached is None:
+            prefix_cache[key] = prefix_access(samples, carrier, policy)[0] if samples else Access()
+        estimated = prefix_cache[key]
+        if not estimated.samples:
             return Access()
-        access, dead = cached
-        return replace(access, unreachable=target in dead)
+        evidence = "CF_SHARED" if entry.prefix == planner.CF_PREFIX else "PREFIX"
+        return replace(estimated, evidence="ICMP" if entry.protocol == "hysteria2" else evidence)
 
     for node in nodes:
         ip = planner.ipv4(node.entry_ips)
         entry = planner.EntryNode(node.id, node.protocol, ip, node.server_port, node.entry_asn)
-        target = entry.target if node.protocol != "hysteria2" else ip
         available, checked = stability.get(node.id, (0, 0))
         cdn = entry.prefix == planner.CF_PREFIX
         facts = NodeFacts(node.protocol, entry.target, available, checked, node.is_proxy, cdn)
@@ -168,12 +180,21 @@ def compute(nodes, stability, quality, reach, traces, policy) -> list[dict]:
         for vantage in (*CARRIERS, *OVERSEAS):
             # HK/SG probes only reach their local CF data centre: never use those samples.
             skip = not entry.prefix or (cdn and vantage not in CARRIERS)
-            access = Access() if skip else access_for(entry.prefix, vantage, target)
-            if node.protocol == "hysteria2" and access.unreachable:
-                access = replace(access, unreachable=False)
+            access = Access() if skip else access_for(entry, vantage)
             result = grade_node(facts, vantage, access, policy)
             if vantage in CARRIERS:
-                successful_at = last_success.get((target, vantage))
+                successful_at = (
+                    max(
+                        (
+                            s.measured_at
+                            for s in by_target.get((entry.prefix, vantage, entry.target), ())
+                            if s.received and s.measured_at
+                        ),
+                        default=None,
+                    )
+                    if reach_evidence
+                    else None
+                )
                 evidence = list(reach_evidence[:1])
                 if evidence and successful_at:
                     conflict = (
@@ -212,6 +233,9 @@ def _row(node, vantage, result, available, checked, route, route_at) -> dict:
         "score": result.score,
         "access_band": result.access_band,
         "stability_band": result.stability_band,
+        "access_evidence": access.evidence,
+        "limiting_vantage": result.limiting_vantage,
+        "endpoint_verified": result.endpoint_verified,
         "peak_rtt_ms": access.rtt,
         "idle_rtt_ms": access.idle_rtt,
         "loss": access.loss,
@@ -248,6 +272,40 @@ def _real32(value):
     return None if value is None else unpack("f", pack("f", value))[0]
 
 
+def reach_refresh_due(session, last, moment):
+    """Refresh transitions promptly while keeping the normal quality refresh cadence."""
+    return session.scalar(
+        sa.text("""
+      WITH failed AS (
+        SELECT target,vantage FROM entry_probe_results
+        WHERE purpose='QUALITY' AND protocol='TCP' AND received=0 AND measured_at>:cutoff
+        GROUP BY target,vantage
+        HAVING max(measured_at)>:last
+           AND count(DISTINCT date_trunc('hour',measured_at))>=2
+           AND count(DISTINCT (probe_asn,probe_city))>=2
+      ), down AS (
+        SELECT (a.ip||':'||n.server_port) target,g.vantage
+        FROM node_grades g JOIN nodes n ON n.id=g.node_id
+        JOIN node_current_status c ON c.node_id=n.id JOIN test_results t ON t.id=c.last_result_id
+        CROSS JOIN LATERAL (
+          SELECT ip FROM jsonb_array_elements_text(t.entry_ips) ip
+          WHERE ip ~ '^[0-9]{1,3}([.][0-9]{1,3}){3}$' LIMIT 1
+        ) a
+        WHERE g.unreachable AND g.vantage<>'CN'
+      )
+      SELECT EXISTS(SELECT 1 FROM failed)
+          OR EXISTS(SELECT 1 FROM node_grades WHERE limiting_vantage IS NULL)
+          OR EXISTS(
+        SELECT 1 FROM down d JOIN entry_probe_results r USING (target,vantage)
+        WHERE r.purpose='QUALITY' AND r.protocol='TCP' AND
+          ((r.received>0 AND r.measured_at>:last)
+           OR (r.received=0 AND r.measured_at>:previous_cutoff AND r.measured_at<=:cutoff))
+      )
+    """),
+        {"last": last, "cutoff": moment - FAILURE_WINDOW, "previous_cutoff": last - FAILURE_WINDOW},
+    )
+
+
 def refresh(sessions, settings, *, if_due: bool = False, clock=None) -> dict:
     started = perf_counter()
     with sessions.begin() as session:
@@ -260,15 +318,25 @@ def refresh(sessions, settings, *, if_due: bool = False, clock=None) -> dict:
             present = set(session.scalars(sa.select(NodeGrade.vantage).distinct()))
             updated = session.scalar(sa.select(GradingPolicy.updated_at))
             changed_policy = last is not None and updated is not None and updated > last
+            moment = (clock or (lambda: datetime.now(UTC)))()
             if (
                 present == set(VANTAGES)
                 and not changed_policy
-                and not due(last, (clock or (lambda: datetime.now(UTC)))(), policy)
+                and not due(last, moment, policy)
+                and not reach_refresh_due(session, last, moment)
             ):
                 return {"skipped": True}
         nodes, stability, quality, reach, traces = load(session, settings.freshness_hours)
         loaded = perf_counter()
-        rows = compute(nodes, stability, quality, reach, traces, policy)
+        rows = compute(
+            nodes,
+            stability,
+            quality,
+            reach,
+            traces,
+            policy,
+            now=(clock or (lambda: datetime.now(UTC)))(),
+        )
         computed = perf_counter()
         now = datetime.now(UTC)
         before = {

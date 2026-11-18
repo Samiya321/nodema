@@ -22,6 +22,7 @@ const PERCENT = ["min_success_rate", "max_timeout_rate", "min_lifetime_availabil
 // [key, label, kind, options?]
 export const ADVANCED = [
   ["min_quality_grade", "等级至少（当前视角）", "select", [["", "全部"], ["S", "S"], ["A", "A 及以上"], ["B", "B 及以上"], ["C", "C 及以上"]]],
+  ["endpoint_verified", "端点实测证据", "select", [["", "不限"], ["true", "已确认"], ["false", "未确认"]]],
   ["max_peak_rtt_ms", "晚高峰延迟至多（ms）", "number"],
   ["max_peak_loss", "晚高峰丢包至多（%）", "number"],
   ["min_avail_7d", "7 天可用率至少（%）", "number"],
@@ -34,6 +35,7 @@ export const ADVANCED = [
   ["entry_asn", "入口 ASN 号", "number"],
   ["server_host", "入口主机", "text"],
   ["exit_ip", "出口 IP", "text"],
+  ["stable_exit", "近 7 天出口稳定", "select", [["", "不限"], ["true", "至少 5 天有观测，IP 一致"], ["false", "未达到稳定条件"]]],
   ["exit_ip_type", "落地 IP 类型（ip-api 标记）", "select", [["", "全部"], ["RESIDENTIAL", "家宽"], ["HOSTING", "机房"], ["MOBILE", "移动网络"]]],
   ["exit_ip_proxy", "落地 IP 被 ip-api 标记为代理", "select", [["", "全部"], ["false", "否"], ["true", "是"]]],
   ["udp", "UDP 可用（Wi-Fi Calling）", "select", [["", "全部"], ["true", "只要 UDP 可用"], ["false", "UDP 不可用或未测"]]],
@@ -63,6 +65,7 @@ export function advancedFields(values = {}) {
 
 function display(key, value) {
   if (value === undefined || value === null) return "";
+  if (typeof value === "boolean") return String(value);
   if (PERCENT.includes(key)) return Number(value) * 100;
   if (Array.isArray(value)) return value.join(",");
   return value;
@@ -81,7 +84,7 @@ export function readFilters(form, keys) {
         .split(",")
         .map((t) => t.trim())
         .filter(Boolean);
-    else if (["enabled", "eligible", "exit_ip_proxy", "unreachable", "cross_border", "best_per_server", "udp"].includes(key)) result[key] = raw === "true";
+    else if (["enabled", "eligible", "exit_ip_proxy", "unreachable", "cross_border", "best_per_server", "endpoint_verified", "stable_exit", "udp"].includes(key)) result[key] = raw === "true";
     else result[key] = String(raw).trim();
   }
   return result;

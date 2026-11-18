@@ -317,12 +317,12 @@ th.num .sort { justify-content: flex-end; }
 .reasons { margin: 0; padding-left: 18px; display: grid; gap: 3px; }
 .route-asns { font: 12px var(--mono); color: var(--ink-2); }
 /* Seven-day strip: a bar per day, like a signal meter. */
-.week { display: inline-flex; gap: 2px; align-items: flex-end; vertical-align: middle; }
-.week span { width: 5px; height: 14px; border-radius: 2px; background: var(--press); }
-.week span.ok { background: var(--ok); }
-.week span.bad { background: var(--bad); height: 8px; }
-.week-cell { display: inline-flex; gap: 8px; align-items: center; white-space: nowrap; }
 .week-n { font-size: 12px; color: var(--ink-3); min-width: 26px; }
+.node-timeline { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
+.timeline-day { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; padding: 5px 1px; min-height: 44px; font-size: 11px; white-space: nowrap; border-top: 2px solid var(--mute); }
+.timeline-day[data-status="UP"] { border-top-color: var(--ok); }
+.timeline-day[data-status="DOWN"] { border-top-color: var(--bad); }
+.timeline-day[aria-pressed="true"] { background: var(--pick); }
 
 /* ---------- node list ---------- */
 .vantage-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }

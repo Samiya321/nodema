@@ -67,6 +67,8 @@ FILTER_KEYS = {
     "route_asn",
     "cross_border",
     "unreachable",
+    "endpoint_verified",
+    "stable_exit",
     "best_per_server",
     "udp",
 }
@@ -76,6 +78,8 @@ BOOLEAN_KEYS = (
     "exit_ip_proxy",
     "cross_border",
     "unreachable",
+    "endpoint_verified",
+    "stable_exit",
     "best_per_server",
     "udp",
 )
@@ -290,7 +294,11 @@ class Catalog:
         if node is None:
             raise AssetError("NODE_NOT_FOUND")
         with self.sessions() as session:
-            lineage = session.scalar(sa.text("SELECT nodema_node_lineage(:id)"), {"id": node_id})
+            lineage, observations = session.execute(
+                sa.text("SELECT nodema_node_lineage(:id),nodema_node_observations(:id)"),
+                {"id": node_id},
+            ).one()
+            node["observations"] = observations
             for source in lineage["sources"]:
                 source["source_id"] = UUID(source["source_id"])
                 for key in ("first_seen_at", "last_seen_at"):

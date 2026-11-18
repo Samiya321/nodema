@@ -3,12 +3,16 @@
 Only counts reach the output/logs; targets and response bodies never do.
 """
 
+import ipaddress
 import random
+import re
 import time
 from concurrent.futures import CancelledError, ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
+import dns.exception
+import dns.resolver
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import insert
 
@@ -18,6 +22,7 @@ from app.database.models import (
     EntryProbeRun,
     EntryRouteTrace,
 )
+from app.domain import AssetError
 from app.grading import CARRIERS, OVERSEAS, is_peak
 from app.probes import globalping, planner
 from app.probes.policy import load_policy
@@ -34,7 +39,25 @@ def beijing_minute(moment: datetime) -> int:
     return local.hour * 60 + local.minute
 
 
-def load_nodes(session, fresh_hours: int, coverage: str) -> list[planner.EntryNode]:
+def excluded_ips(settings) -> set[str]:
+    """Keep deployment endpoints out of public measurements."""
+    configured = re.split(r"[,\s]+", settings.probe_excluded_ips.get_secret_value().strip())
+    host = settings.nodema_postgres_ssh_host.get_secret_value().strip()
+    try:
+        excluded = {str(ipaddress.ip_address(value)) for value in configured if value}
+        if host:
+            try:
+                excluded.add(str(ipaddress.ip_address(host)))
+            except ValueError:
+                excluded.update(r.address for r in dns.resolver.resolve(host, "A", lifetime=3))
+    except (ValueError, dns.exception.DNSException):
+        raise AssetError("INVALID_PROBE_EXCLUSIONS") from None
+    return excluded
+
+
+def load_nodes(
+    session, fresh_hours: int, coverage: str, excluded=frozenset()
+) -> list[planner.EntryNode]:
     """Distinct entries (protocol, first IPv4, port, entry ASN) with node counts."""
     scope = (
         " AND n.id IN (SELECT m.node_id FROM export_members m"
@@ -47,7 +70,11 @@ def load_nodes(session, fresh_hours: int, coverage: str) -> list[planner.EntryNo
         sa.text(
             "SELECT n.protocol,n.server_port,c.entry_asn,"
             " (SELECT e FROM jsonb_array_elements_text(coalesce(t.entry_ips,'[]')) e"
-            "   WHERE e ~ '^[0-9]{1,3}([.][0-9]{1,3}){3}$' LIMIT 1) ip,count(*) n"
+            "   WHERE e ~ '^[0-9]{1,3}([.][0-9]{1,3}){3}$' LIMIT 1) ip,count(*) n,"
+            " bool_or(EXISTS(SELECT 1 FROM export_members m"
+            "   JOIN export_artifacts e ON e.id=m.export_id"
+            "   WHERE m.node_id=n.id AND e.revoked_at IS NULL"
+            "   AND (e.expires_at IS NULL OR e.expires_at>now()))) exported"
             " FROM nodes n JOIN node_current_status c ON c.node_id=n.id"
             " JOIN test_results t ON t.id=c.last_result_id"
             " WHERE n.enabled AND c.status IN ('UP','DEGRADED')"
@@ -61,8 +88,10 @@ def load_nodes(session, fresh_hours: int, coverage: str) -> list[planner.EntryNo
     entries = []
     for row in rows:
         ip = planner.ipv4([row.ip]) if row.ip else None
+        if ip in excluded:
+            continue
         entries.extend(
-            planner.EntryNode(None, row.protocol, ip, row.server_port, row.entry_asn)
+            planner.EntryNode(None, row.protocol, ip, row.server_port, row.entry_asn, row.exported)
             for _ in range(min(row.n, 50))
         )
     return entries
@@ -89,6 +118,11 @@ SELECT prefix,
   max(probes) FILTER (WHERE vantage='HK') probes_hk,
   max(probes) FILTER (WHERE vantage='SG') probes_sg,
   max(probes) FILTER (WHERE vantage='GB') probes_gb,
+  array_agg(vantage) FILTER (WHERE probes>=:min_probes AND sent>0
+    AND (peak OR vantage IN ('HK','SG','GB'))
+    AND rtt<=CASE WHEN vantage LIKE 'CN-%' THEN :cn_a_rtt ELSE :overseas_a_rtt END
+    AND (1-received::float/sent)*100<=CASE WHEN vantage LIKE 'CN-%'
+        THEN :cn_a_loss ELSE :overseas_a_loss END) AS likely_high,
   bool_or(NOT peak AND vantage LIKE 'CN-%' AND probes>=:min_probes AND (rtt IS NULL OR rtt>:rtt
     OR (sent>0 AND (1-received::float/sent)*100>:loss))) poor
 FROM (SELECT prefix,vantage,bool_or(peak) peak,min(probes) probes,max(last) last,
@@ -106,10 +140,21 @@ FROM entry_probe_results WHERE measured_at>:since GROUP BY target
 HAVING max(measured_at) FILTER (WHERE purpose='REACH') IS NOT NULL
   OR (count(*)>=2 AND bool_and(received=0))
 """
+ENDPOINTS_SQL = """
+SELECT target,vantage,(vantage LIKE 'CN-%' AND peak) AS peak_period,
+  count(DISTINCT (probe_asn,probe_city)) FILTER (WHERE received>0) probes,
+  count(DISTINCT (measured_at AT TIME ZONE 'Asia/Shanghai')::date)
+    FILTER (WHERE received>0) days,
+  max(measured_at) last,
+  max(measured_at) FILTER (WHERE received>0) success,
+  max(measured_at) FILTER (WHERE received=0) failure
+FROM entry_probe_results WHERE purpose='QUALITY' AND protocol='TCP' AND measured_at>:since
+GROUP BY 1,2,3
+"""
 
 
-def load_history(session, policy: dict) -> planner.History:
-    since = datetime.now(UTC) - WINDOW
+def load_history(session, policy: dict, *, now=None) -> planner.History:
+    since = (now or datetime.now(UTC)) - WINDOW
     limits = policy["bands"]["CN"]["B"]
     peak_probes, last_peak, last_idle, last_overseas, overseas_probes, poor = (
         {},
@@ -119,6 +164,7 @@ def load_history(session, policy: dict) -> planner.History:
         {},
         set(),
     )
+    likely_high = set()
     for row in session.execute(
         sa.text(HISTORY_SQL),
         {
@@ -126,6 +172,10 @@ def load_history(session, policy: dict) -> planner.History:
             "min_probes": policy["min_probes"],
             "rtt": limits["rtt_ms"],
             "loss": limits["loss_pct"],
+            "cn_a_rtt": policy["bands"]["CN"]["A"]["rtt_ms"],
+            "cn_a_loss": policy["bands"]["CN"]["A"]["loss_pct"],
+            "overseas_a_rtt": policy["bands"]["OVERSEAS"]["A"]["rtt_ms"],
+            "overseas_a_loss": policy["bands"]["OVERSEAS"]["A"]["loss_pct"],
         },
     ):
         peak_probes[row.prefix] = row.peak_probes or 0
@@ -136,6 +186,7 @@ def load_history(session, policy: dict) -> planner.History:
             overseas_probes[(row.prefix, region)] = getattr(row, "probes_" + region.lower()) or 0
         if row.poor:
             poor.add(row.prefix)
+        likely_high.update((row.prefix, v) for v in row.likely_high or [])
     last_reach, dead = {}, set()
     for row in session.execute(sa.text(TARGETS_SQL), {"since": since}):
         if row.last:
@@ -168,6 +219,13 @@ def load_history(session, policy: dict) -> planner.History:
         last_reach=last_reach,
         dead=frozenset(dead),
         last_trace=traces,
+        likely_high=frozenset(likely_high),
+        endpoints={
+            (r.target, r.vantage, r.peak_period): planner.EndpointHistory(
+                r.probes, r.days, r.last, r.success, r.failure
+            )
+            for r in session.execute(sa.text(ENDPOINTS_SQL), {"since": since})
+        },
     )
 
 
@@ -268,6 +326,7 @@ def run(
         policy = load_policy(session)
     if not policy["probe_enabled"]:
         return {"status": "DISABLED"}
+    excluded = excluded_ips(settings)
     if client is None:
         credentials = settings.globalping_credentials()
         clients = [
@@ -299,20 +358,25 @@ def run(
         carriers, counts = carrier_asns(client.probes())
         run_row["probes"] = counts
         with sessions() as session:
-            nodes = load_nodes(session, settings.freshness_hours, policy["coverage"])
-            history = load_history(session, policy)
+            nodes = load_nodes(session, settings.freshness_hours, policy["coverage"], excluded)
+            history = load_history(session, policy, now=started)
         available = client.available if isinstance(client, ClientPool) else remaining - RESERVE
         budget = max(0, min(available, settings.probe_max_tests_per_run))
-        tasks = planner.plan(
-            planner.group(nodes),
-            history,
-            carriers,
+        options = dict(
             now=started,
             peak=peak,
-            budget=budget,
             min_probes=policy["min_probes"],
             rng=random.Random(started.timestamp()),
         )
+        prefixes = planner.group(nodes)
+        confirm_budget = budget // 3
+        tasks = planner.plan(prefixes, history, carriers, budget=budget - confirm_budget, **options)
+        confirm = planner.confirmations(
+            nodes, history, carriers, tasks, budget=confirm_budget, **options
+        )
+        if not confirm and confirm_budget:
+            tasks = planner.plan(prefixes, history, carriers, budget=budget, **options)
+        tasks = confirm + tasks
         summary.update(planned=len(tasks), budget=budget, nodes=len(nodes))
         deadline = time.monotonic() + settings.probe_time_budget_seconds
         with ThreadPoolExecutor(max_workers=settings.probe_concurrency) as pool:

@@ -59,8 +59,7 @@ class Observation:
 
 
 ENVIRONMENT_VERDICT_TTL_SECONDS = 20
-# Echo failures after which a second target is tried (not timeouts: a slow or
-# blackholed node would only spend the fallback timeout as well).
+# Retry timeouts through the fallback only for previously working nodes.
 FALLBACK_AFTER = frozenset({"ECHO_REQUEST_FAILED", "ECHO_HTTP_ERROR"})
 FALLBACK_TIMEOUT = 6
 FALLBACK_SOURCE = "fallback"
@@ -227,6 +226,7 @@ class HealthChecker:
         self.resolver = self.cache.resolver
         self.probe_key, self.probe_metadata = "legacy", {}
         self.udp_targets = None  # None: the public STUN/DNS targets in app.checker.udp
+        self._direct_exit = None
         self.context = {}
         self.metrics = {
             key: 0 for key in ("full_checks", "full_samples", "preflight_skips", "cooldown_skips")
@@ -277,6 +277,7 @@ class HealthChecker:
                 time.sleep(2)
                 observation = self.echo.request()
             self._probe_identity(observation)
+            self._direct_exit = ipaddress.ip_address(observation["ip"])
         except AssetError:
             raise AssetError("ECHO_ENVIRONMENT_ERROR") from None
 
@@ -285,6 +286,7 @@ class HealthChecker:
         repeating it: at high concurrency serial preflights dominated short shards."""
         self.probe_key = other.probe_key
         self.probe_metadata = copy.deepcopy(other.probe_metadata)
+        self._direct_exit = other._direct_exit
 
     def environment_ok(self):
         """Direct Echo canary, shared by all workers for a short TTL.
@@ -310,13 +312,21 @@ class HealthChecker:
             return probe()
         return verdict("echo-direct", probe, ENVIRONMENT_VERDICT_TTL_SECONDS)
 
-    def _works_without_echo(self, error, port):
-        """After an Echo failure, a second (non-Cloudflare) target decides UP vs failure."""
+    def _works_without_echo(self, error, port, retry_timeout=False):
+        """Return the fallback request's own duration if it succeeds."""
         url = self.settings.fallback_probe_url
         reachable = getattr(self.echo, "reachable", None)
-        if not url or reachable is None or error.code not in FALLBACK_AFTER:
-            return False
-        return reachable(port, url, min(self.settings.http_timeout_seconds, FALLBACK_TIMEOUT))
+        timeout_allowed = error.code == "ECHO_TIMEOUT" and retry_timeout
+        if (
+            not url
+            or reachable is None
+            or (error.code not in FALLBACK_AFTER and not timeout_allowed)
+        ):
+            return None
+        started = time.monotonic()
+        if reachable(port, url, min(self.settings.http_timeout_seconds, FALLBACK_TIMEOUT)):
+            return milliseconds(started)
+        return None
 
     def _start_runtime(self, proxy):
         """A crashed per-worker runtime is restarted once before reporting an error."""
@@ -448,7 +458,12 @@ class HealthChecker:
         udp = proxy.get("udp") is not False
         if udp:
             proxy["udp"] = True
-        return result, {"proxy": proxy, "hosts": hosts, "udp": udp}
+        return result, {
+            "proxy": proxy,
+            "hosts": hosts,
+            "udp": udp,
+            "retry_echo_timeout": self.context.get("retry_echo_timeout", False),
+        }
 
     def _udp(self, result, ready, port):
         """UDP through the node, after HTTPS has proved it works (Wi-Fi Calling)."""
@@ -480,10 +495,11 @@ class HealthChecker:
             except AssetError as error:
                 if listener is not None and not listener[1]():
                     raise AssetError("MIHOMO_BATCH_CRASHED") from None
-                if not self._works_without_echo(error, port):
+                fallback_ms = self._works_without_echo(error, port, ready.get("retry_echo_timeout"))
+                if fallback_ms is None:
                     raise
                 # The node works; its exit just cannot reach Echo. No landing details.
-                result.http_duration_ms = milliseconds(started)
+                result.http_duration_ms = fallback_ms
                 result.proxy_status = result.http_status = "SUCCESS"
                 result.echo_source = FALLBACK_SOURCE
                 result.precheck_metadata["echo_unreachable"] = error.code
@@ -495,6 +511,9 @@ class HealthChecker:
             result.http_duration_ms = milliseconds(started)
             result.proxy_status = result.http_status = "SUCCESS"
             result.exit_ip = data["ip"]
+            exit_address = ipaddress.ip_address(result.exit_ip)
+            if self._direct_exit is not None and self._direct_exit.version == exit_address.version:
+                result.precheck_metadata["direct_exit_match"] = self._direct_exit == exit_address
             geo = self.geoip.lookup(data["ip"])
             result.geoip_metadata["exit"] = {
                 "ip": data["ip"],

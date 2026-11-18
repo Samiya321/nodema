@@ -61,6 +61,8 @@ export const filterKeys = new Set([
   "route_asn",
   "cross_border",
   "unreachable",
+  "endpoint_verified",
+  "stable_exit",
   "best_per_server",
   "udp",
 ]);
@@ -70,6 +72,8 @@ const booleanKeys = [
   "exit_ip_proxy",
   "cross_border",
   "unreachable",
+  "endpoint_verified",
+  "stable_exit",
   "best_per_server",
   "udp",
 ];

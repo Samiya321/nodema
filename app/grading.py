@@ -12,7 +12,8 @@ import re
 import statistics
 from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
-from datetime import datetime
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from app.domain import AssetError
 
@@ -20,6 +21,10 @@ VANTAGES = ("CN-CT", "CN-CU", "CN-CM", "CN", "HK", "SG", "GB")
 CARRIERS = ("CN-CT", "CN-CU", "CN-CM")
 OVERSEAS = ("HK", "SG", "GB")
 BANDS = ("S", "A", "B", "C")
+BEIJING = ZoneInfo("Asia/Shanghai")
+FAILURE_WINDOW = timedelta(hours=48)
+MIN_S_DAYS = 5
+MIN_S_ACCESS_DAYS = 2
 GRADES = ("S", "A", "B", "C", "D", "PENDING")
 VANTAGE_NAMES = {
     "CN-CT": "电信",
@@ -147,6 +152,10 @@ class Access:
     sufficient: bool = False
     unreachable: bool = False
     last_measured_at: datetime | None = None
+    evidence: str | None = None
+    successful_days: int = 0
+    successful_probes: int = 0
+    failure_at: datetime | None = None
 
 
 def _median(values: Iterable[float | None]) -> float | None:
@@ -170,6 +179,21 @@ def repeated_failure(samples: list[Sample]) -> bool:
     )
 
 
+def recent_failure(samples: list[Sample], now: datetime) -> datetime | None:
+    """Exact endpoint, one vantage, recent failures strictly after its last success."""
+    last_success = max(
+        (s.measured_at for s in samples if s.received and s.measured_at is not None),
+        default=now - FAILURE_WINDOW,
+    )
+    cutoff = max(last_success, now - FAILURE_WINDOW)
+    failed = [
+        s
+        for s in samples
+        if not s.received and s.measured_at is not None and cutoff < s.measured_at <= now
+    ]
+    return max(s.measured_at for s in failed) if repeated_failure(failed) else None
+
+
 def access_stats(
     samples: list[Sample], own_target: str | None, carrier: bool, policy: dict
 ) -> Access:
@@ -188,7 +212,6 @@ def prefix_access(samples: list[Sample], carrier: bool, policy: dict) -> tuple["
         by_target.setdefault(sample.target, []).append(sample)
     dead = {t for t, group in by_target.items() if repeated_failure(group)}
     usable = [s for s in samples if s.target not in dead]
-    last = max((s.measured_at for s in samples if s.measured_at), default=None)
     chosen = [s for s in usable if s.peak] if carrier else usable
     idle = [s for s in usable if not s.peak] if carrier else []
     probes = len({s.probe for s in chosen})
@@ -201,7 +224,15 @@ def prefix_access(samples: list[Sample], carrier: bool, policy: dict) -> tuple["
         samples=len(chosen),
         probes=probes,
         sufficient=probes >= policy["min_probes"] and any(s.received for s in chosen),
-        last_measured_at=last,
+        last_measured_at=max((s.measured_at for s in chosen if s.measured_at), default=None),
+        successful_days=len(
+            {
+                s.measured_at.astimezone(BEIJING).date()
+                for s in chosen
+                if s.measured_at and s.received
+            }
+        ),
+        successful_probes=len({s.probe for s in chosen if s.received}),
     ), dead
 
 
@@ -267,6 +298,8 @@ class Grade:
     access: Access
     unreachable: bool = False
     reasons: list[str] = field(default_factory=list)
+    limiting_vantage: str | None = None
+    endpoint_verified: bool = False
 
 
 def _fmt_access(access: Access, vantage: str) -> str:
@@ -281,9 +314,18 @@ def grade_node(facts: NodeFacts, vantage: str, access: Access, policy: dict) -> 
     reasons: list[str] = []
     stable = stability_band(facts.available_days, facts.checked_days, policy)
     if access.unreachable:
-        reasons.append(f"{VANTAGE_NAMES[vantage]}视角多个探针在不同时段对同一入口重复测量失败")
-        return Grade("D", 0.0, "C", stable, access, True, reasons)
+        last = access.failure_at
+        when = f"，最近 {last.astimezone(BEIJING):%m-%d %H:%M}（北京时间）" if last else ""
+        reasons.append(
+            f"{VANTAGE_NAMES[vantage]}视角近 48 小时对同一入口跨探针、跨时段重复失败{when}"
+        )
+        return Grade("D", 0.0, "C", stable, access, True, reasons, vantage)
     band = access_band(access, vantage, policy)
+    verified = (
+        access.evidence == "ENDPOINT"
+        and access.successful_probes >= policy["min_probes"]
+        and band is not None
+    )
     if facts.target is None:
         reasons.append("入口没有 IPv4 地址（仅 IPv6 或未解析），接入未测，最高 B")
     elif facts.cdn_entry and vantage in OVERSEAS:
@@ -291,6 +333,13 @@ def grade_node(facts: NodeFacts, vantage: str, access: Access, policy: dict) -> 
             f"入口是 Cloudflare CDN：{VANTAGE_NAMES[vantage]}探针只能连到本地 CF 机房"
             "（约 1 ms），测不到节点本身，接入未测，最高 B"
         )
+    elif access.evidence in {"PREFIX", "CF_SHARED", "ICMP"}:
+        label = {
+            "PREFIX": "同网段 TCP 参考",
+            "CF_SHARED": "Cloudflare 共享入口参考",
+            "ICMP": "UDP 入口的 TCP / ICMP 参考",
+        }
+        reasons.append(f"{label[access.evidence]}，端点接入待确认，最高 B")
     elif band is None:
         reasons.append(
             f"{VANTAGE_NAMES[vantage]}接入样本不足（{access.probes} 个探针，"
@@ -298,9 +347,8 @@ def grade_node(facts: NodeFacts, vantage: str, access: Access, policy: dict) -> 
         )
     else:
         reasons.append(f"{_fmt_access(access, vantage)} → {BAND_NAMES[band]}")
-    if facts.protocol == "hysteria2" and band == "S":
-        band = "A"
-        reasons.append("Hysteria2 走 UDP，延迟按同网段 TCP 测得，最高 A")
+        if not verified:
+            reasons.append("端点成功样本的探针来源不足，最高 B")
     if stable is None:
         reasons.append(
             f"7 天内只检测了 {facts.checked_days} 天，至少需要 {policy['min_checked_days']} 天"
@@ -313,11 +361,21 @@ def grade_node(facts: NodeFacts, vantage: str, access: Access, policy: dict) -> 
             access,
             False,
             reasons,
+            vantage,
+            verified,
         )
     reasons.append(
         f"7 天可用 {facts.available_days}/{facts.checked_days} 天 → {BAND_NAMES[stable]}"
     )
-    grade = worse(band or "B", stable)
+    graded_band = band if access.evidence == "ENDPOINT" else None
+    grade = worse(graded_band or "B", stable)
+    if not verified:
+        grade = worse(grade, "B")
+    if grade == "S" and (
+        facts.checked_days < MIN_S_DAYS or access.successful_days < MIN_S_ACCESS_DAYS
+    ):
+        grade = "A"
+        reasons.append(f"S 需要至少 {MIN_S_DAYS} 个检测日和 {MIN_S_ACCESS_DAYS} 个接入成功日")
     if grade == "S" and policy["s_requires_clean_exit"] and facts.exit_ip_proxy:
         grade = "A"
         reasons.append("落地 IP 有 ip-api 代理标记，按规则不给 S")
@@ -329,6 +387,8 @@ def grade_node(facts: NodeFacts, vantage: str, access: Access, policy: dict) -> 
         access,
         False,
         reasons,
+        vantage,
+        verified,
     )
 
 
@@ -337,25 +397,22 @@ def combine_cn(carriers: dict[str, Grade]) -> Grade:
     grades = [carriers[c] for c in CARRIERS if c in carriers]
     if not grades:
         raise ValueError("no carrier grades")
-    worst = max(grades, key=lambda g: (g.unreachable, GRADES.index(g.grade)))
+    worst = max(grades, key=lambda g: (g.unreachable, GRADES.index(g.grade), -(g.score or 0)))
     reasons = [f"{VANTAGE_NAMES[c]} {carriers[c].grade}" for c in CARRIERS if c in carriers]
     reasons.append("三网取最差的一家")
     failed = [VANTAGE_NAMES[c] for c in CARRIERS if c in carriers and carriers[c].unreachable]
     if failed:
         reasons.append(f"触发 D 的运营商视角：{'、'.join(failed)}")
-    worst_access = max(
-        (g.access for g in grades if g.access.rtt is not None),
-        key=lambda a: a.rtt,
-        default=worst.access,
-    )
     return Grade(
         worst.grade,
-        min(g.score or 0 for g in grades),
+        worst.score,
         worst.access_band,
         worst.stability_band,
-        worst_access,
+        worst.access,
         worst.unreachable,
         reasons,
+        worst.limiting_vantage,
+        len(grades) == len(CARRIERS) and all(g.endpoint_verified for g in grades),
     )
 
 

@@ -44,7 +44,7 @@ const sourceColumns =
   "id,name,type,format_hint,enabled,sync_interval_seconds,content_hash,applied_hash,parser_version,last_checked_at,sync_requested_at,last_synced_at,last_sync_status,last_error_code,last_parse_summary,revision,deleted_at," +
   "kind,detected_kind,parent_source_id,origin_label,user_agent,provider_id,traffic_upload,traffic_download,traffic_total,expires_at,userinfo_at,profile_title,profile_url,last_success_at,created_at," +
   "substring(convert_from(url_data,'UTF8') from '^[A-Za-z]+://([^/:?#]+)') AS url_host";
-const SCHEMA_REVISION = "0026_maintenance";
+const SCHEMA_REVISION = "0027_node_observations";
 // Imports and edits never start Actions; the dashboard asks the user to sync/test.
 const MANUAL_PIPELINE = { dispatched: false, reason: "MANUAL_SYNC" };
 function sourceKind(value: unknown): string {
@@ -594,11 +594,16 @@ export async function handle(
           await page(vantage ? { id, vantage } : { id }, "short_id:asc", 0, 1)
         ).items[0];
         if (!node) throw new SafeError("NODE_NOT_FOUND", 404);
-        const lineage = (await rows("SELECT nodema_node_lineage($1) AS lineage", [id]))[0].lineage as Row;
+        const detail = (await rows(
+          "SELECT nodema_node_lineage($1) AS lineage,nodema_node_observations($1) AS observations",
+          [id],
+        ))[0];
+        const lineage = detail.lineage as Row;
         return json({
           ...node,
           sources: lineage.sources,
           exports: lineage.exports,
+          observations: detail.observations,
           published_observation:
             (
               await rows(

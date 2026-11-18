@@ -26,8 +26,8 @@ const EXTRA = [
 ];
 export const SPECS = new Map([...ADVANCED, ...EXTRA].map((spec) => [spec[0], spec]));
 const FOLDED = [
-  ["接入质量", ["max_peak_rtt_ms", "max_peak_loss", "min_avail_7d", "route_asn", "cross_border"]],
-  ["落地", ["asn_label", "exit_asn", "exit_ip", "exit_ip_type", "exit_ip_proxy"]],
+  ["接入质量", ["endpoint_verified", "max_peak_rtt_ms", "max_peak_loss", "min_avail_7d", "route_asn", "cross_border"]],
+  ["落地", ["asn_label", "exit_asn", "exit_ip", "stable_exit", "exit_ip_type", "exit_ip_proxy"]],
   ["入口", ["entry_country", "entry_asn", "server_host", "transport", "security"]],
   ["历史与标签", ["max_http_ms", "min_lifetime_availability", "min_available_days", "min_age_days", "tags", "eligible", "enabled"]],
 ];

@@ -295,6 +295,51 @@ def test_echo_unreachable_from_exit_falls_back_to_a_second_target(
         assert result.status == "UNKNOWN" and result.error_code == "ECHO_HTTP_ERROR"
 
 
+def test_recently_working_node_retries_echo_timeout_and_records_only_fallback_time(
+    monkeypatch, monitor_settings, fixture_bytes
+):
+    import app.checker.health as module
+
+    monkeypatch.setattr(module.socket, "create_connection", lambda *a, **k: nullcontext())
+    clock = [100.0]
+    monkeypatch.setattr(module.time, "monotonic", lambda: clock[0])
+
+    class Slow(Echo):
+        def request(self, port=None):
+            if port:
+                clock[0] += 10
+                raise AssetError("ECHO_TIMEOUT")
+            return super().request()
+
+        def reachable(self, port, url, timeout):
+            assert timeout == 6
+            clock[0] += 0.2
+            return True
+
+    identity = parse_document(fixture_bytes("sample_vless.txt")).nodes[0].identity
+    identity["server_host"] = "198.51.100.1"
+    checker = HealthChecker(monitor_settings, runtime=Runtime(), echo=Slow(), geoip=Geo())
+    checker.set_context(retry_echo_timeout=True)
+    result = checker.check(identity, "N1")
+    assert result.status == "UP" and result.http_duration_ms == 200
+    assert result.precheck_metadata["echo_unreachable"] == "ECHO_TIMEOUT"
+
+
+def test_direct_exit_comparison_saves_only_the_boolean(
+    monkeypatch, monitor_settings, fixture_bytes
+):
+    import app.checker.health as module
+
+    monkeypatch.setattr(module.socket, "create_connection", lambda *a, **k: nullcontext())
+    identity = parse_document(fixture_bytes("sample_vless.txt")).nodes[0].identity
+    identity["server_host"] = "198.51.100.1"
+    checker = HealthChecker(monitor_settings, runtime=Runtime(), echo=Echo(), geoip=Geo())
+    checker.preflight()
+    result = checker.check(identity, "N1")
+    assert result.precheck_metadata["direct_exit_match"] is True
+    assert set(k for k in result.precheck_metadata if "direct" in k) == {"direct_exit_match"}
+
+
 def test_echo_timeouts_do_not_spend_a_fallback(monkeypatch, monitor_settings, fixture_bytes):
     import app.checker.health as module
 

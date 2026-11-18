@@ -15,7 +15,15 @@ import struct
 import time
 from dataclasses import dataclass, field
 
+import dns.exception
+import dns.flags
+import dns.message
+import dns.rcode
+import dns.rdatatype
+
 STUN_MAGIC = 0x2112A442
+DNS_NAME = "ipv4only.arpa."
+DNS_EXPECTED = {"192.0.0.170", "192.0.0.171"}
 # (label, host, port, kind). Hostnames are resolved by the node, not the Runner.
 TARGETS = (
     ("stun-cloudflare", "stun.cloudflare.com", 3478, "stun"),
@@ -67,13 +75,28 @@ def stun_mapped_address(packet: bytes, transaction: bytes) -> str | None:
     return plain
 
 
-def dns_query(ident: int) -> bytes:
-    question = b"".join(bytes([len(p)]) + p for p in (b"example", b"com")) + b"\0"
-    return struct.pack("!HHHHHH", ident, 0x0100, 1, 0, 0, 0) + question + struct.pack("!HH", 1, 1)
+def dns_query(ident: int) -> dns.message.Message:
+    return dns.message.make_query(DNS_NAME, dns.rdatatype.A, id=ident)
 
 
-def dns_answered(packet: bytes, ident: int) -> bool:
-    return len(packet) >= 12 and struct.unpack("!H", packet[:2])[0] == ident and packet[2] & 0x80
+def dns_response(packet: bytes, query: dns.message.Message) -> str | None:
+    try:
+        reply = dns.message.from_wire(packet)
+    except dns.exception.DNSException:
+        return None
+    if not query.is_response(reply) or reply.question != query.question:
+        return None
+    if reply.rcode() != dns.rcode.NOERROR:
+        return "ERROR"
+    if reply.flags & dns.flags.TC:
+        return "UNEXPECTED"
+    addresses = {
+        item.address
+        for rrset in reply.answer
+        if rrset.name == query.question[0].name and rrset.rdtype == dns.rdatatype.A
+        for item in rrset
+    }
+    return "VALID" if addresses == DNS_EXPECTED else "UNEXPECTED"
 
 
 def socks_address(host: str, port: int) -> bytes:
@@ -142,7 +165,7 @@ def associate(port: int, timeout: float):
 
 
 def attempt(port: int, target, timeout: float):
-    """One datagram exchange. Returns the UDP exit IP (STUN), "" (DNS) or raises."""
+    """One exchange, returning the STUN exit address or a DNS response verdict."""
     _, host, target_port, kind = target
     control, relay = associate(port, timeout)
     try:
@@ -152,7 +175,8 @@ def attempt(port: int, target, timeout: float):
             udp.settimeout(timeout)
             transaction = os.urandom(12)
             ident = struct.unpack("!H", transaction[:2])[0]
-            payload = stun_request(transaction) if kind == "stun" else dns_query(ident)
+            query = dns_query(ident) if kind == "dns" else None
+            payload = query.to_wire() if query else stun_request(transaction)
             deadline = time.monotonic() + timeout
             udp.sendto(b"\0\0\0" + socks_address(host, target_port) + payload, relay)
             while time.monotonic() < deadline:
@@ -163,9 +187,9 @@ def attempt(port: int, target, timeout: float):
                 if kind == "stun":
                     exit_ip = stun_mapped_address(data, transaction)
                     if exit_ip:
-                        return exit_ip
-                elif dns_answered(data, ident):
-                    return ""
+                        return exit_ip, None
+                elif verdict := dns_response(data, query):
+                    return None, verdict
             raise TimeoutError
     finally:
         control.close()
@@ -177,17 +201,18 @@ def probe(port: int, *, timeout: float = 2.5, targets=TARGETS, pause: float = 0.
     for target in targets:
         began = time.monotonic()
         try:
-            exit_ip = attempt(port, target, timeout)
+            exit_ip, dns_verdict = attempt(port, target, timeout)
         except Exception as error:  # a broken attempt is a failed attempt, never a crash
             reason = "timeout" if isinstance(error, (TimeoutError, socket.timeout)) else "error"
             result.attempts.append({"target": target[0], "ok": False, "error": reason})
             time.sleep(pause)
             continue
-        result.attempts.append(
-            {"target": target[0], "ok": True, "ms": round((time.monotonic() - began) * 1000)}
-        )
-        result.status, result.exit_ip = "SUCCESS", exit_ip or None
-        result.duration_ms = round((time.monotonic() - began) * 1000)
+        elapsed = round((time.monotonic() - began) * 1000)
+        sample = {"target": target[0], "ok": True, "ms": elapsed}
+        if dns_verdict:
+            sample["dns_response"] = dns_verdict
+        result.attempts.append(sample)
+        result.status, result.exit_ip, result.duration_ms = "SUCCESS", exit_ip, elapsed
         return result
     result.status = "FAILED"
     result.duration_ms = round((time.monotonic() - started) * 1000)

@@ -18,7 +18,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
-from app.grading import CARRIERS, OVERSEAS
+from app.grading import BEIJING, CARRIERS, FAILURE_WINDOW, MIN_S_ACCESS_DAYS, OVERSEAS
 
 CLOUDFLARE_ASN = 13335
 CF_PREFIX = "cf"
@@ -28,7 +28,7 @@ EXCLUDED_EXIT_ASNS = frozenset({CLOUDFLARE_ASN})
 # Each region is its own measurement: a home probe that fails to run in one region
 # must not make the other region's fresh sample be bought again.
 HOME_BROADBAND = ("eyeball-network",)
-REACH_EVERY = timedelta(days=2)
+REACH_EVERY = timedelta(days=7)
 IDLE_EVERY = timedelta(days=3)
 OVERSEAS_EVERY = timedelta(days=2)
 TRACE_EVERY = timedelta(days=30)
@@ -121,6 +121,7 @@ class EntryNode:
     ip: str | None
     port: int
     entry_asn: int | None
+    exported: bool = False
 
     @property
     def target(self) -> str | None:
@@ -167,6 +168,17 @@ class History:
     last_reach: dict = field(default_factory=dict)  # target -> datetime
     dead: frozenset = frozenset()  # targets whose every sample failed
     last_trace: dict = field(default_factory=dict)  # prefix -> oldest carrier trace
+    endpoints: dict = field(default_factory=dict)  # (target, vantage, peak) -> EndpointHistory
+    likely_high: frozenset = frozenset()  # (prefix, vantage) with likely A/S from routing samples
+
+
+@dataclass(frozen=True)
+class EndpointHistory:
+    probes: int = 0
+    days: int = 0
+    last: datetime | None = None
+    success: datetime | None = None
+    failure: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -247,6 +259,104 @@ def _thaw(locations: tuple) -> tuple:
 
 def _age(last: datetime | None, now: datetime) -> float:
     return (now - last).total_seconds() if last else float("inf")
+
+
+def confirmations(nodes, history, carriers, ordinary, *, now, peak, budget, min_probes, rng):
+    """Use a bounded share to confirm exact TCP endpoints and recheck recent failures."""
+    targets = {}
+    for node in nodes:
+        if node.target and node.protocol != "hysteria2" and node.ip not in history.blocked:
+            previous = targets.get(node.target)
+            if previous is None or node.exported:
+                targets[node.target] = node
+    reserved = set()
+    asn_vantage = {asn: v for v, asns in carriers.items() for asn in asns}
+    for task in ordinary:
+        if task.kind.startswith("QUALITY"):
+            for loc in task.locations:
+                vantage = (
+                    asn_vantage.get(loc.get("asn")) if loc["country"] == "CN" else loc["country"]
+                )
+                reserved.add((task.target, vantage))
+    options = []
+    for target, node in targets.items():
+        for vantage in (*CARRIERS, *OVERSEAS):
+            carrier = vantage in CARRIERS
+            if carrier and not carriers.get(vantage):
+                continue
+            if (target, vantage) in reserved or (node.prefix == CF_PREFIX and not carrier):
+                continue
+            prime = history.endpoints.get((target, vantage, carrier), EndpointHistory())
+            off = history.endpoints.get((target, vantage, False), EndpointHistory())
+            last = max((t for t in (prime.last, off.last) if t), default=None)
+            last_success = max((t for t in (prime.success, off.success) if t), default=None)
+            recent_failure = (
+                last is not None
+                and now - last <= FAILURE_WINDOW
+                and last in (prime.failure, off.failure)
+                and (last_success is None or last > last_success)
+            )
+            if _age(last, now) < 45 * 60:
+                continue
+            if not recent_failure:
+                if peak != carrier:
+                    continue
+                if prime.probes >= min_probes and prime.success:
+                    if prime.days < MIN_S_ACCESS_DAYS:
+                        if (
+                            prime.success.astimezone(BEIJING).date()
+                            == now.astimezone(BEIJING).date()
+                        ):
+                            continue
+                    elif _age(prime.last, now) < OVERSEAS_EVERY.total_seconds():
+                        continue
+            qualified_prefix = (
+                history.peak_probes.get(node.prefix, 0) >= min_probes
+                if carrier
+                else history.overseas_probes.get((node.prefix, vantage), 0) >= min_probes
+            )
+            limit = 1 if recent_failure or prime.probes >= min_probes else min_probes
+            options.append(
+                (
+                    (
+                        not recent_failure,
+                        not node.exported,
+                        (node.prefix, vantage) not in history.likely_high,
+                        not qualified_prefix,
+                        -_age(last, now),
+                        target,
+                        vantage,
+                    ),
+                    node,
+                    vantage,
+                    limit,
+                )
+            )
+    tasks = []
+    for _, node, vantage, limit in sorted(options, key=lambda item: item[0]):
+        if limit > budget:
+            continue
+        if vantage in CARRIERS:
+            locations = _thaw(carrier_locations(carriers, [vantage], rng, limit))
+            kind = "QUALITY_CN"
+        else:
+            locations = ({"country": vantage, "tags": list(HOME_BROADBAND), "limit": limit},)
+            kind = "QUALITY_OVERSEAS"
+        tasks.append(
+            Task(
+                kind,
+                node.prefix,
+                node.target,
+                "TCP",
+                locations,
+                limit,
+                peak and vantage in CARRIERS,
+            )
+        )
+        budget -= limit
+        if not budget:
+            break
+    return tasks
 
 
 def plan(

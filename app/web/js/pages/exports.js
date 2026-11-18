@@ -16,12 +16,14 @@ function summary(spec = {}) {
   if (spec.exit_country) parts.push(spec.exit_country);
   if (spec.protocol) parts.push(spec.protocol);
   if (spec.best_per_server) parts.push("每服务器 1 个");
+  if (spec.endpoint_verified === true) parts.push("端点实测已确认");
+  if (spec.stable_exit === true) parts.push("近 7 天出口稳定");
   if (spec.limit && spec.limit < 100000) parts.push(`前 ${spec.limit} 个`);
   return parts.join(" · ") || "全部可用节点";
 }
 const KEYS = ["q", "source_id", "enabled", ...BASIC, ...ADVANCED.map(([k]) => k).filter((k) => !BASIC.includes(k))];
 const RATIO_KEYS = new Set(["min_success_rate", "max_timeout_rate", "min_lifetime_availability", "max_peak_loss", "min_avail_7d"]);
-const BOOL_KEYS = new Set(["enabled", "udp", "best_per_server", "exit_ip_proxy", "unreachable", "cross_border"]);
+const BOOL_KEYS = new Set(["enabled", "udp", "best_per_server", "exit_ip_proxy", "unreachable", "cross_border", "endpoint_verified", "stable_exit"]);
 
 function seedFilters(params) {
   const result = {};

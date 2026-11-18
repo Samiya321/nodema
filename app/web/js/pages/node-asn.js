@@ -18,13 +18,7 @@ function median(values) {
 
 const share = (part, whole) => (whole ? part / whole : null);
 
-// "Good" is S/A; while no node in the loaded set reaches S/A (e.g. entries not probed
-// yet cap at B), the column ranks by B-or-better instead of showing 0% everywhere.
-export function goodGrades(items) {
-  return items.some((n) => n.quality_grade === "S" || n.quality_grade === "A") ? ["S", "A"] : ["S", "A", "B"];
-}
-
-export function asnStats(items, good = goodGrades(items)) {
+export function asnStats(items) {
   const groups = new Map();
   for (const n of items) {
     const key = n.exit_asn || 0;
@@ -33,8 +27,19 @@ export function asnStats(items, good = goodGrades(items)) {
     else groups.set(key, [n]);
   }
   return [...groups].map(([asn, nodes]) => {
-    const graded = nodes.filter((n) => GRADES.includes(n.quality_grade) && n.quality_grade !== "PENDING");
-    const better = graded.filter((n) => good.includes(n.quality_grade)).length;
+    const ips = new Map();
+    for (const node of nodes) {
+      if (!node.exit_ip) continue;
+      if (!ips.has(node.exit_ip)) ips.set(node.exit_ip, null);
+      if (!node.endpoint_verified || !["S", "A", "B", "C"].includes(node.quality_grade)) continue;
+      const other = ips.get(node.exit_ip);
+      if (!other || GRADES.indexOf(node.quality_grade) < GRADES.indexOf(other.quality_grade)
+          || (node.quality_grade === other.quality_grade && (node.quality_score ?? -1) > (other.quality_score ?? -1))) {
+        ips.set(node.exit_ip, node);
+      }
+    }
+    const covered = [...ips.values()].filter(Boolean);
+    const better = covered.filter((n) => n.quality_grade === "S" || n.quality_grade === "A").length;
     const countries = new Map();
     for (const n of nodes) if (n.exit_country) countries.set(n.exit_country, (countries.get(n.exit_country) || 0) + 1);
     const typed = nodes.filter((n) => n.exit_ip_type);
@@ -46,9 +51,12 @@ export function asnStats(items, good = goodGrades(items)) {
       name: operatorOf(nodes.find((n) => operatorOf(n)) || nodes[0]),
       countries: [...countries].sort((a, b) => b[1] - a[1]).map(([c]) => c),
       grades: Object.fromEntries(GRADES.map((g) => [g, nodes.filter((n) => n.quality_grade === g).length])),
-      good: share(better, graded.length),
+      ipCount: ips.size,
+      covered: covered.length,
+      coverage: share(covered.length, ips.size),
+      good: share(better, covered.length),
       // Entry latency (probe -> entry), not the landing network's own: shown as such.
-      rtt: median(nodes.filter((n) => n.quality_grade && !n.unreachable && n.peak_rtt_ms != null).map((n) => n.peak_rtt_ms)),
+      rtt: median(covered.filter((n) => n.peak_rtt_ms != null).map((n) => n.peak_rtt_ms)),
       avail: share(nodes.reduce((s, n) => s + (n.avail_7d || 0), 0), checked),
       home: share(typed.filter((n) => n.exit_ip_type === "RESIDENTIAL").length, typed.length),
       udp: share(udpTested.filter((n) => n.udp === "SUCCESS").length, udpTested.length),
@@ -58,8 +66,10 @@ export function asnStats(items, good = goodGrades(items)) {
 
 // key -> [header, value, better direction, numeric column]
 const COLUMNS = {
-  good: ["优质占比", (r) => r.good, "desc", true],
+  good: ["S/A 占比", (r) => r.good, "desc", true],
   nodes: ["节点", (r) => r.nodes.length, "desc", true],
+  ips: ["独立 IP", (r) => r.ipCount, "desc", true],
+  coverage: ["实测覆盖", (r) => r.coverage, "desc", true],
   rtt: ["入口延迟", (r) => r.rtt, "asc", true],
   avail: ["7 天可用", (r) => r.avail, "desc", true],
   home: ["家宽", (r) => r.home, "desc", true],
@@ -71,18 +81,16 @@ function sortRows(rows, key, direction) {
   const sign = direction === "asc" ? 1 : -1;
   // Small samples last whatever the order, then nulls; ties by size.
   return [...rows].sort((a, b) => {
-    const small = (a.nodes.length < 3) - (b.nodes.length < 3);
+    const small = (a.covered < 3) - (b.covered < 3);
     const va = value(a), vb = value(b);
     const missing = (va == null) - (vb == null);
-    return small || missing || (va == null ? 0 : sign * (va - vb)) || b.nodes.length - a.nodes.length || a.asn - b.asn;
+    return small || missing || (va == null ? 0 : sign * (va - vb)) || b.covered - a.covered || b.ipCount - a.ipCount || a.asn - b.asn;
   });
 }
 
 export function asnView(items, { sort, onSort, onOpen }) {
   const [key = "good", direction = COLUMNS[key]?.[2] || "desc"] = (sort || "").split(":");
-  const good = goodGrades(items);
-  const goodLabel = good.length === 2 ? "S/A 占比" : "B 及以上";
-  const rows = sortRows(asnStats(items, good), COLUMNS[key] ? key : "good", direction);
+  const rows = sortRows(asnStats(items), COLUMNS[key] ? key : "good", direction);
   const head = h(
     "tr",
     {},
@@ -90,7 +98,6 @@ export function asnView(items, { sort, onSort, onOpen }) {
     h("th", { scope: "col" }, "国家"),
     h("th", { scope: "col" }, `等级 · ${vantageName(rowVantage())}`),
     Object.entries(COLUMNS).map(([k, [name, , better]]) => {
-      const label = k === "good" ? goodLabel : name;
       return (
       h(
         "th",
@@ -98,7 +105,7 @@ export function asnView(items, { sort, onSort, onOpen }) {
         h(
           "button",
           { type: "button", class: "sort" + (k === key ? " on" : ""), onclick: () => onSort(`${k}:${k === key ? (direction === "asc" ? "desc" : "asc") : better}`) },
-          label,
+          name,
           h("span", { class: "sort-mark", "aria-hidden": "true" }, k === key ? (direction === "asc" ? "↑" : "↓") : "↕"),
         ),
       )
@@ -111,7 +118,7 @@ export function asnView(items, { sort, onSort, onOpen }) {
       ...rows.slice(0, limit).map((r) =>
         h(
           "tr",
-          { class: "asn-row" + (r.nodes.length < 3 ? " dim" : ""), tabindex: "0", onclick: () => onOpen(r.asn), onkeydown: (e) => e.key === "Enter" && onOpen(r.asn) },
+          { class: "asn-row" + (r.covered < 3 ? " dim" : ""), tabindex: "0", onclick: () => onOpen(r.asn), onkeydown: (e) => e.key === "Enter" && onOpen(r.asn) },
           h(
             "td",
             { "data-label": "落地网络", class: "asn-net" },
@@ -125,9 +132,11 @@ export function asnView(items, { sort, onSort, onOpen }) {
             r.countries.length > 3 ? h("span", { class: "faint" }, "+" + (r.countries.length - 3)) : null,
           ),
           h("td", { "data-label": "等级" }, distribution(r.grades)),
-          h("td", { "data-label": goodLabel, class: "num strong" }, percent(r.good)),
+          h("td", { "data-label": "S/A 占比", class: "num strong" }, percent(r.good)),
           h("td", { "data-label": "节点", class: "num" }, count(r.nodes.length)),
-          h("td", { "data-label": "入口延迟", class: "num", title: "当前视角探针到这些节点入口的延迟中位数；同一 CDN 入口的节点数值相同" }, r.rtt == null ? "—" : ms(Math.round(r.rtt))),
+          h("td", { "data-label": "独立 IP", class: "num" }, count(r.ipCount)),
+          h("td", { "data-label": "实测覆盖", class: "num", title: "已取得端点证据并定出 S/A/B/C 的落地 IP" }, r.ipCount ? `${r.covered}/${r.ipCount}` : "—"),
+          h("td", { "data-label": "入口延迟", class: "num", title: "每个落地 IP 取当前视角实测等级最好的一个节点，再算入口 RTT 中位数" }, r.rtt == null ? "—" : ms(Math.round(r.rtt))),
           h("td", { "data-label": "7 天可用", class: "num" }, percent(r.avail)),
           h("td", { "data-label": "家宽", class: "num" }, percent(r.home)),
           h("td", { "data-label": "UDP 通", class: "num" }, percent(r.udp)),
@@ -149,7 +158,7 @@ export function asnView(items, { sort, onSort, onOpen }) {
       h(
         "span",
         { class: "range" },
-        `${count(rows.length)} 个落地网络。${goodLabel}按当前视角等级计算${good.length === 3 ? "（当前没有 S/A 级节点）" : ""}；入口延迟是到节点入口，不代表落地网络本身；少于 3 个节点的网络排在后面`,
+        `${count(rows.length)} 个落地网络。S/A 占比按已确认的独立落地 IP 计算，少于 3 个实测 IP 的网络排在后面。`,
       ),
       more,
     ),

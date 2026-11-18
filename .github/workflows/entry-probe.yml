@@ -34,6 +34,7 @@ jobs:
       # over the legacy single token. Both empty = anonymous mode.
       GLOBALPING_TOKENS: ${{ secrets.GLOBALPING_TOKENS }}
       GLOBALPING_TOKEN: ${{ secrets.GLOBALPING_TOKEN }}
+      PROBE_EXCLUDED_IPS: ${{ secrets.PROBE_EXCLUDED_IPS }}
       PROBE_CONCURRENCY: ${{ vars.PROBE_CONCURRENCY || '6' }}
       PROBE_MAX_TESTS_PER_RUN: ${{ vars.PROBE_MAX_TESTS_PER_RUN || '5000' }}
     steps:
@@ -42,6 +43,7 @@ jobs:
         if: vars.NODEMA_DATABASE_VIA_SSH == 'true'
         with:
           connection: ${{ secrets.NODEMA_POSTGRES_SSH }}
+          protect_entry_probes: 'true'
       - id: network
         run: python3 scripts/job_network.py
       - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6

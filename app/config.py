@@ -64,6 +64,8 @@ class Settings(BaseSettings):
     globalping_url: str = Field(default="https://api.globalping.io/v1", pattern=r"^https://[^\s]+$")
     globalping_token: SecretStr = SecretStr("")
     globalping_tokens: SecretStr = SecretStr("")
+    probe_excluded_ips: SecretStr = SecretStr("")
+    nodema_postgres_ssh_host: SecretStr = SecretStr("")
     probe_concurrency: int = Field(default=6, ge=1, le=16)
     probe_max_tests_per_run: int = Field(default=5000, ge=0, le=5000)
     probe_time_budget_seconds: int = Field(default=1500, ge=60, le=3300)

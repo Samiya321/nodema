@@ -1,7 +1,7 @@
 // Node columns and row rendering. Grouped views also use the client-side comparators.
 import { IP_TYPE, KIND, ago, badge, flag, h, ms } from "../core.js";
 import { nodeHref } from "../lineage.js";
-import { GRADES, gradeBadge, isCarrier, vantageName } from "../grades.js";
+import { ACCESS_EVIDENCE, GRADES, gradeBadge, isCarrier, vantageName } from "../grades.js";
 
 // The vantage the list is showing; rows (and the detail dialog) render grades for it.
 let vantage = "CN";
@@ -38,8 +38,8 @@ const udpRank = (n) => UDP_RANK[n.udp] ?? 3;
 // key -> [header, comparator for ascending, default direction]
 export const COLUMNS = {
   name: ["节点", text((n) => n.name), "asc"],
-  grade: ["等级", (a, b) => rank(a) - rank(b) || (b.quality_score ?? -1) - (a.quality_score ?? -1), "asc"],
-  rtt: ["延迟", number("peak_rtt_ms"), "asc"],
+  grade: ["等级", (a, b) => rank(a) - rank(b) || Number(Boolean(b.endpoint_verified)) - Number(Boolean(a.endpoint_verified)) || (b.quality_score ?? -1) - (a.quality_score ?? -1), "asc"],
+  rtt: ["入口 RTT", number("peak_rtt_ms"), "asc"],
   udp: ["UDP", (a, b) => udpRank(a) - udpRank(b) || (a.udp_ms ?? 1e9) - (b.udp_ms ?? 1e9), "asc"],
   avail: ["7 天可用", (a, b) => nullsLast(ratio(a), ratio(b), (x, y) => x - y) || (a.checked_7d ?? 0) - (b.checked_7d ?? 0), "desc"],
   route: ["入口 / 落地", text((n) => (n.entry_country || "") + (n.exit_country || "")), "asc"],
@@ -61,7 +61,7 @@ export function sortNodes(items, key, direction) {
 export function headRow(sortKey, direction, onSort, pickAll) {
   const cell = (key, extra = "") => {
     const [label] = COLUMNS[key];
-    const title = key === "rtt" ? (isCarrier(vantage) ? `${vantageName(vantage)}晚高峰` : `${vantageName(vantage)}延迟`) : key === "grade" ? `等级 · ${vantageName(vantage)}` : label;
+    const title = key === "rtt" ? (vantage === "CN" ? "三网短板 RTT" : isCarrier(vantage) ? `${vantageName(vantage)}晚高峰` : `${vantageName(vantage)}延迟`) : key === "grade" ? `等级 · ${vantageName(vantage)}` : label;
     const active = sortKey === key;
     return h(
       "th",
@@ -95,8 +95,14 @@ export function headRow(sortKey, direction, onSort, pickAll) {
 
 function gradeCell(n) {
   if (n.quality_grade) {
-    const incomplete = n.quality_grade === "B" && n.access_band === null;
-    return h("span", { class: "grade-cell" + (incomplete ? " needs-probes" : ""), title: incomplete ? "接入探针样本不足，暂时封顶 B；不代表实测接入为 B" : null }, gradeBadge(n.quality_grade, vantage, { withVantage: false }), incomplete ? h("span", { class: "faint" }, "接入待补测") : null, n.status === "DEGRADED" ? badge(n.status) : null);
+    const limiting = vantage === "CN" && n.limiting_vantage ? `${vantageName(n.limiting_vantage)}短板` : null;
+    const evidence = n.endpoint_verified || n.unreachable ? null
+      : n.access_evidence === "ENDPOINT" ? "端点待补测" : ACCESS_EVIDENCE[n.access_evidence] || "接入待测";
+    const caption = [limiting, evidence].filter(Boolean).join(" · ");
+    return h("span", { class: "grade-cell" + (caption ? " needs-probes" : "") },
+      gradeBadge(n.quality_grade, vantage, { withVantage: false }),
+      caption ? h("span", { class: "faint" }, caption) : null,
+      n.status === "DEGRADED" ? badge(n.status) : null);
   }
   if (isAvailable(n)) return h("span", { class: "ungraded", title: n.exit_asn === 13335 ? "落地是 Cloudflare：不测、不分级" : "下次计算等级时补上" }, n.exit_asn === 13335 ? "CF 落地" : "未分级");
   return badge(n.status);
@@ -106,7 +112,7 @@ function latency(n) {
   if (!n.quality_grade) return h("span", { class: "faint" }, "—");
   if (n.unreachable) return h("span", { class: "bad-text strong" }, "入口重复失败");
   if (n.peak_rtt_ms == null) return h("span", { class: "faint", title: n.icmp_only ? "UDP 入口，按同网段测" : "还没有测量样本" }, "未测");
-  const loss = n.peak_loss ? h("span", { class: n.peak_loss > 0.03 ? "loss bad-text" : "loss" }, `丢 ${(n.peak_loss * 100).toFixed(1)}%`) : null;
+  const loss = n.peak_loss == null ? null : h("span", { class: n.peak_loss > 0.03 ? "loss bad-text" : "loss" }, `丢 ${(n.peak_loss * 100).toFixed(1)}%`);
   return h("span", { class: "rtt" }, h("strong", {}, ms(n.peak_rtt_ms)), loss);
 }
 
@@ -118,12 +124,9 @@ function udpCell(n) {
   return h("span", { class: "udp udp-" + n.udp, title }, h("span", { class: "udp-dot", "aria-hidden": "true" }), UDP_TEXT[n.udp] || n.udp);
 }
 
-// Seven cells: green for days with a success, red for checked days without one.
 function week(n) {
   if (!n.checked_7d) return h("span", { class: "faint" }, "—");
-  const cells = h("span", { class: "week", "aria-hidden": "true" });
-  for (let i = 0; i < 7; i++) cells.append(h("span", { class: i < n.avail_7d ? "ok" : i < n.checked_7d ? "bad" : "" }));
-  return h("span", { class: "week-cell", title: `7 天内检测 ${n.checked_7d} 天，${n.avail_7d} 天可用` }, cells, h("span", { class: "week-n" }, `${n.avail_7d}/${n.checked_7d}`));
+  return h("span", { class: "week-n", title: `7 天内检测 ${n.checked_7d} 天，${n.avail_7d} 天可用` }, `${n.avail_7d}/${n.checked_7d} 天`);
 }
 
 function route(n) {
@@ -155,7 +158,7 @@ export function nodeRow(n, picked, onPick) {
       h("a", { class: "link name-cell", href: nodeHref(n.id, vantage) }, h("span", { class: "node-name" }, n.name), h("span", { class: "node-meta" }, meta.map((m) => h("span", {}, m)))),
     ),
     h("td", { "data-label": "等级" }, gradeCell(n)),
-    h("td", { "data-label": isCarrier(vantage) ? "晚高峰" : "延迟", class: "num" }, latency(n)),
+    h("td", { "data-label": vantage === "CN" ? "短板入口 RTT" : isCarrier(vantage) ? "晚高峰" : "延迟", class: "num" }, latency(n)),
     h("td", { "data-label": "UDP" }, udpCell(n)),
     h("td", { "data-label": "7 天可用" }, week(n)),
     h("td", { "data-label": "入口 / 落地", title: "IP 数据库归属，不代表已验证的物理中转路线" }, route(n)),

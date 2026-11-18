@@ -2,6 +2,7 @@ import io
 import json
 import random
 import urllib.error
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -18,6 +19,7 @@ from app.grading import (
     grade_node,
     is_peak,
     minutes,
+    recent_failure,
     stability_band,
     validate_grading,
 )
@@ -112,11 +114,22 @@ def test_one_failed_round_does_not_prove_unreachability():
 
 
 def test_grades_take_the_worse_band_and_explain_it():
-    access = access_stats(samples([40, 42]), "198.51.100.1:443", True, POLICY)
+    access = replace(
+        access_stats(samples([40, 42]), "198.51.100.1:443", True, POLICY),
+        evidence="ENDPOINT",
+        successful_days=2,
+    )
     facts = NodeFacts("vless", "198.51.100.1:443", 7, 7)
     best = grade_node(facts, "CN-CT", access, POLICY)
     assert best.grade == "S" and best.access_band == "S" and best.stability_band == "S"
     assert any("电信晚高峰 RTT 41 ms" in r for r in best.reasons)
+    assert best.endpoint_verified
+    assert (
+        grade_node(replace(facts, checked_days=3, available_days=3), "CN-CT", access, POLICY).grade
+        == "A"
+    )
+    assert grade_node(facts, "CN-CT", replace(access, successful_days=1), POLICY).grade == "A"
+    assert grade_node(facts, "CN-CT", replace(access, evidence="PREFIX"), POLICY).grade == "B"
     shaky = grade_node(NodeFacts("vless", "198.51.100.1:443", 5, 7), "CN-CT", access, POLICY)
     assert shaky.grade == "B" and shaky.stability_band == "B"
     assert grade_node(NodeFacts("vless", "x", 2, 2), "CN-CT", access, POLICY).grade == "PENDING"
@@ -128,8 +141,13 @@ def test_grades_take_the_worse_band_and_explain_it():
     assert cdn.grade == "B" and cdn.access_band is None
     assert any("Cloudflare CDN" in r for r in cdn.reasons)
     assert (
-        grade_node(NodeFacts("hysteria2", "198.51.100.1", 7, 7), "CN-CT", access, POLICY).grade
-        == "A"
+        grade_node(
+            NodeFacts("hysteria2", "198.51.100.1", 7, 7),
+            "CN-CT",
+            replace(access, evidence="ICMP"),
+            POLICY,
+        ).grade
+        == "B"
     )
     blocked = grade_node(facts, "CN-CU", Access(unreachable=True), POLICY)
     assert blocked.grade == "D" and blocked.unreachable
@@ -142,8 +160,17 @@ def test_grades_take_the_worse_band_and_explain_it():
 
 def test_three_carrier_grade_is_the_worst_carrier():
     facts = NodeFacts("vless", "198.51.100.1:443", 7, 7)
-    fast = access_stats(samples([40, 42]), None, True, POLICY)
-    slow = access_stats(samples([200, 210]), None, True, POLICY)
+    fast = replace(
+        access_stats(samples([40, 42]), None, True, POLICY),
+        evidence="ENDPOINT",
+        successful_days=2,
+        loss=0.09,
+    )
+    slow = replace(
+        access_stats(samples([130, 132]), None, True, POLICY),
+        evidence="ENDPOINT",
+        successful_days=2,
+    )
     result = combine_cn(
         {
             "CN-CT": grade_node(facts, "CN-CT", fast, POLICY),
@@ -151,12 +178,23 @@ def test_three_carrier_grade_is_the_worst_carrier():
             "CN-CM": grade_node(facts, "CN-CM", fast, POLICY),
         }
     )
-    assert result.grade == "B" and result.access.rtt == 205
+    assert result.grade == "C" and result.access.rtt == 41 and result.access.loss == 0.09
+    assert result.limiting_vantage == "CN-CT" and result.endpoint_verified
     blocked = {
         c: grade_node(facts, c, Access(unreachable=True), POLICY)
         for c in ("CN-CT", "CN-CU", "CN-CM")
     }
     assert combine_cn(blocked).grade == "D" and combine_cn(blocked).unreachable
+
+
+def test_recent_endpoint_failure_ignores_old_success_and_recovers_on_new_success():
+    failed = samples([0, 0], received=0)
+    good = samples([40])[0]
+    older_success = replace(good, measured_at=NOW - timedelta(days=3))
+    new_success = replace(good, measured_at=NOW + timedelta(minutes=1))
+    assert recent_failure([older_success, *failed], NOW) == NOW
+    assert recent_failure(failed, NOW + timedelta(hours=49)) is None
+    assert recent_failure([*failed, new_success], NOW + timedelta(minutes=2)) is None
 
 
 def test_generic_mainland_failures_are_reported_without_marking_carriers_down(monkeypatch):
@@ -179,20 +217,20 @@ def test_generic_mainland_failures_are_reported_without_marking_carriers_down(mo
     quality = {("198.51.100", "CN-CT"): samples([40, 42])}
     grades = {
         row["vantage"]: row
-        for row in refresh.compute([node], {1: (7, 7)}, quality, {target: bad}, {}, POLICY)
+        for row in refresh.compute([node], {1: (7, 7)}, quality, {target: bad}, {}, POLICY, now=NOW)
     }
-    assert grades["CN-CT"]["grade"] == "S"
+    assert grades["CN-CT"]["grade"] == "A"
     assert not grades["CN"]["unreachable"]
     assert any("证据分歧" in reason for reason in grades["CN"]["reasons"])
     quality[("198.51.100", "CN-CU")] = bad
     grades = {
         row["vantage"]: row
-        for row in refresh.compute([node], {1: (7, 7)}, quality, {target: bad}, {}, POLICY)
+        for row in refresh.compute([node], {1: (7, 7)}, quality, {target: bad}, {}, POLICY, now=NOW)
     }
     assert grades["CN"]["grade"] == "D"
     assert any("触发 D 的运营商视角：联通" in reason for reason in grades["CN"]["reasons"])
     still_pending = {
-        row["vantage"]: row for row in refresh.compute([node], {}, quality, {}, {}, POLICY)
+        row["vantage"]: row for row in refresh.compute([node], {}, quality, {}, {}, POLICY, now=NOW)
     }
     assert still_pending["CN"]["grade"] == "D"
 
@@ -244,6 +282,32 @@ def test_peak_plan_buys_only_carrier_samples_within_budget():
         idle_poor=frozenset({"198.51.100", "203.0.113", "cf"}), peak_probes={p: 2 for p in groups}
     )
     assert planner.plan(groups, poor, CARRIERS, now=NOW, peak=True, budget=99, min_probes=2)
+
+
+def test_endpoint_confirmations_prioritize_recovery_then_published_members():
+    pool = nodes()
+    member = replace(pool[0], exported=True)
+    recovery = pool[2]
+    history = planner.History(
+        endpoints={
+            (recovery.target, "CN-CU", True): planner.EndpointHistory(
+                last=NOW - timedelta(hours=1), failure=NOW - timedelta(hours=1)
+            )
+        }
+    )
+    tasks = planner.confirmations(
+        [member, recovery],
+        history,
+        CARRIERS,
+        [],
+        now=NOW,
+        peak=True,
+        budget=3,
+        min_probes=2,
+        rng=random.Random(7),
+    )
+    assert [(t.target, t.cost) for t in tasks] == [(recovery.target, 1), (member.target, 2)]
+    assert all(t.protocol == "TCP" and len(t.locations) == 1 for t in tasks)
 
 
 def test_off_peak_plan_covers_reach_overseas_idle_and_routes():
@@ -540,7 +604,15 @@ def test_compute_caches_prefix_figures_without_changing_results():
             continue
         node = next(n for n in nodes if n.id == row["node_id"])
         target = f"{node.entry_ips[0]}:443"
-        expected = access_stats(quality[("cf", row["vantage"])], target, True, POLICY)
+        samples_for_vantage = quality[("cf", row["vantage"])]
+        exact = access_stats(
+            [s for s in samples_for_vantage if s.target == target], target, True, POLICY
+        )
+        expected = (
+            exact
+            if exact.sufficient or exact.unreachable
+            else access_stats(samples_for_vantage, target, True, POLICY)
+        )
         assert (row["peak_rtt_ms"], row["loss"], row["samples"]) == (
             expected.rtt,
             expected.loss,

@@ -42,7 +42,8 @@ def measure(service, port, *, rtt, received=16, vantages=("CN-CT", "CN-CU", "CN-
                     "vantage": vantage,
                     "protocol": "TCP",
                     "peak": peak,
-                    "measured_at": datetime.now(UTC) - timedelta(hours=probe),
+                    "measured_at": datetime.now(UTC)
+                    - (timedelta(days=probe - 1) if received else timedelta(hours=probe)),
                     "probe_asn": 64600 + probe,
                     "probe_city": f"City{probe}",
                     "sent": 16,
@@ -74,9 +75,9 @@ def test_grades_are_computed_filtered_sorted_and_explained(
     with service.sessions.begin() as session:
         session.execute(
             sa.text(
-                "INSERT INTO node_daily_stats SELECT node_id,stat_date-2,scheduled_count,"
+                "INSERT INTO node_daily_stats SELECT node_id,stat_date-i,scheduled_count,"
                 "successful_count,failed_count,availability_ratio,avg_http_duration_ms"
-                " FROM node_daily_stats"
+                " FROM node_daily_stats CROSS JOIN generate_series(2,4) i"
                 " WHERE stat_date=(SELECT max(stat_date) FROM node_daily_stats)"
             )
         )
@@ -99,7 +100,11 @@ def test_grades_are_computed_filtered_sorted_and_explained(
     page = catalog.page({"vantage": "CN-CT", "min_quality_grade": "A"}, sort="quality_grade:asc")
     assert page["total"] == 2 and page["vantage"] == "CN-CT"
     node = page["items"][0]
-    assert node["quality_grade"] == "S" and node["peak_rtt_ms"] == 40 and node["avail_7d"] == 3
+    assert node["quality_grade"] == "S" and node["peak_rtt_ms"] == 40 and node["avail_7d"] == 5
+    assert node["endpoint_verified"] and node["access_evidence"] == "ENDPOINT"
+    assert node["limiting_vantage"] == "CN-CT"
+    assert catalog.page({"endpoint_verified": True})["total"] == 2
+    assert catalog.page({"endpoint_verified": False})["total"] == 0
     assert node["route_asns"] == [4134, 4809, 64510] and node["grade_reasons"]
     assert catalog.page({"vantage": "CN-CT", "route_asn": "4809"})["total"] == 2
     assert catalog.page({"vantage": "CN-CU", "route_asn": "4809"})["total"] == 0
@@ -121,7 +126,7 @@ def test_grades_are_computed_filtered_sorted_and_explained(
             {"f": '{"vantage":"CN"}'},
         )
         fields = compact["fields"]
-        assert fields[-14:] == [
+        assert fields[-17:] == [
             "quality_grade",
             "quality_score",
             "peak_rtt_ms",
@@ -136,6 +141,9 @@ def test_grades_are_computed_filtered_sorted_and_explained(
             "access_band",
             "identity_flags",
             "exit_observed_at",
+            "access_evidence",
+            "limiting_vantage",
+            "endpoint_verified",
         ]
         assert compact["items"][0][fields.index("quality_grade")] == "S"
         access = session.scalar(sa.text("SELECT nodema_node_access(:id)"), {"id": node["id"]})
@@ -162,7 +170,13 @@ def test_grades_are_computed_filtered_sorted_and_explained(
     # A subscription filtering by grade is rebuilt when grades change.
     exports = ExportService(service, monitor_settings)
     profile = exports.create(
-        "uri", {"vantage": "CN", "min_quality_grade": "A", "sort": "quality_grade:asc"}
+        "uri",
+        {
+            "vantage": "CN",
+            "min_quality_grade": "A",
+            "sort": "quality_grade:asc",
+            "endpoint_verified": True,
+        },
     )
     exports.build_pending()
     assert exports.get(profile["id"])["node_count"] == 2
@@ -204,6 +218,47 @@ def test_grading_policy_versions_and_validation(service):
         policies.set({}, expected_version=1)
     with pytest.raises(AssetError, match="INVALID_GRADING_POLICY"):
         policies.set({"min_probes": 9})
+
+
+def test_observations_distinguish_daily_status_and_exit_rotation(
+    service, monitor_settings, fixture_bytes
+):
+    _, catalog, _ = seed(service, monitor_settings, fixture_bytes, days=5)
+    first, second = catalog.nodes()["items"]
+    with service.sessions.begin() as session:
+        session.execute(
+            sa.text(
+                "UPDATE test_results r SET checked_at=r.checked_at+"
+                "(s.scan_date-(now() AT TIME ZONE 'UTC')::date)*interval '1 day'"
+                " FROM scan_runs s WHERE r.scan_run_id=s.id"
+            )
+        )
+        session.execute(
+            sa.text(
+                "UPDATE test_results SET exit_ip='203.0.113.2',exit_asn=64599"
+                " WHERE id=(SELECT id FROM test_results WHERE node_id=:id"
+                " ORDER BY checked_at LIMIT 1)"
+            ),
+            {"id": first["id"]},
+        )
+        session.execute(
+            sa.text(
+                "UPDATE node_daily_stats SET successful_count=0,failed_count=1,availability_ratio=0"
+                " WHERE node_id=:id AND stat_date=(SELECT max(stat_date)-1 FROM node_daily_stats)"
+            ),
+            {"id": first["id"]},
+        )
+    unstable = catalog.node(first["id"])["observations"]
+    assert [d["status"] for d in unstable["days"]] in (
+        ["UNTESTED", "UNTESTED", "UP", "UP", "UP", "DOWN", "UP"],
+        ["UNTESTED", "UP", "UP", "UP", "DOWN", "UP", "UNTESTED"],
+    )
+    assert unstable["exit"]["ip_count"] == unstable["exit"]["asn_count"] == 2
+    assert unstable["exit"]["last_change_at"]
+    stable = catalog.node(second["id"])["observations"]["exit"]
+    assert stable["observed_days"] == 5 and stable["ip_count"] == 1
+    assert catalog.page({"stable_exit": True})["items"][0]["id"] == second["id"]
+    assert catalog.page({"stable_exit": False})["items"][0]["id"] == first["id"]
 
 
 def test_refresh_is_due_for_new_vantages_and_saved_rules(service, monitor_settings, fixture_bytes):
@@ -352,6 +407,22 @@ def test_probe_round_plans_measures_and_records_counts(service, monitor_settings
     assert (
         runner.run(service.sessions, monitor_settings, client=FakeClient())["status"] == "DISABLED"
     )
+
+
+def test_probe_round_does_not_send_database_host_to_globalping(
+    service,
+    monitor_settings,
+    fixture_bytes,
+):
+    from pydantic import SecretStr
+
+    seed(service, monitor_settings, fixture_bytes)
+    settings = monitor_settings.model_copy(
+        update={"nodema_postgres_ssh_host": SecretStr("198.51.100.1")}
+    )
+    client = FakeClient()
+    result = runner.run(service.sessions, settings, client=client)
+    assert result["planned"] == 0 and client.requests == []
 
 
 def test_cloudflare_landings_are_neither_measured_nor_graded(

@@ -1,7 +1,7 @@
 import { IP_TYPE, KIND, ago, api, badge, busy, date, dialog, empty, errorText, field, h, ms, pct, route, select, table, toast } from "../core.js";
 import { testNodes } from "../strip.js";
 import { showShare } from "../share.js";
-import { VANTAGES, gradeBadge, vantageName } from "../grades.js";
+import { ACCESS_EVIDENCE, VANTAGES, gradeBadge, vantageName } from "../grades.js";
 import { copyPageLink, exportHref, nodeHref, sourcePath } from "../lineage.js";
 
 const MEASURE = { FULL: "完整代理验证", PREFLIGHT: "入口预检", SKIPPED: "本轮跳过" };
@@ -14,7 +14,17 @@ function udpText(n) {
   if (n.udp_state === "NOT_SUPPORTED") return "节点配置声明只走 TCP";
   if (n.udp_state === "FAILED") return n.udp_success_at ? `这次不通（重试多次）；上次通过 ${ago(n.udp_success_at)}` : "不通（重试多次仍收不到回包）";
   const other = n.udp_exit_ip && n.exit_ip && n.udp_exit_ip !== n.exit_ip;
-  return h("span", {}, `公共 STUN/DNS 有回包，往返约 ${n.udp_ms} ms`, n.udp_success_at ? ` · ${date(n.udp_success_at)}` : "", other ? h("span", { class: "muted" }, `；UDP 出口 ${n.udp_exit_ip}（与 TCP 落地不同）`) : null);
+  const sample = n.published_observation?.precheck_metadata?.udp?.find((a) => a.ok);
+  const label = sample?.target?.startsWith("stun-") ? "STUN 有回包"
+    : { VALID: "DNS 解析正确", ERROR: "DNS 有回包，解析返回错误", UNEXPECTED: "DNS 有回包，答案不符" }[sample?.dns_response]
+      || "公共 STUN/DNS 有回包";
+  return h("span", {}, `${label} · 往返约 ${n.udp_ms} ms`, n.udp_success_at ? ` · ${date(n.udp_success_at)}` : "", other ? h("span", { class: "muted" }, `；UDP 出口 ${n.udp_exit_ip}（与 TCP 落地不同）`) : null);
+}
+
+function exitHistory(summary) {
+  if (!summary?.observed_days) return "近 7 天无出口观测";
+  return h("span", {}, `${summary.observed_days} 天有观测 · ${summary.ip_count} 个 IP · ${summary.country_count} 个已识别地区 · ${summary.asn_count} 个已识别 ASN`,
+    summary.last_change_at ? h("small", { class: "muted" }, ` · 最近换 IP ${date(summary.last_change_at)}`) : null);
 }
 
 function pairs(entries) {
@@ -64,8 +74,12 @@ export async function nodeDetail(root, id, requestedVantage, refresh, isCurrent)
       ))),
     ) : null,
     accessSection(n, access, vantage),
+    weekTimeline(n.observations?.days),
     obs?.echo_source === "fallback"
       ? h("p", { class: "callout" }, "备用地址已确认代理连通，本轮未观测到出口 IP。已有落地资料来自历史检测，不能用本次检测时间判断其新鲜度。")
+      : null,
+    obs?.precheck_metadata?.direct_exit_match === true
+      ? h("p", { class: "callout" }, "本轮代理出口与同地址族的 Runner 直连出口一致，建议复核代理链路。")
       : null,
     h(
       "div",
@@ -80,6 +94,7 @@ export async function nodeDetail(root, id, requestedVantage, refresh, isCurrent)
         ["落地国家（Echo，缺失回退 GeoLite）", n.exit_country],
         ["ip-api 位置（独立数据源）", [n.identity?.ipapi_country, n.exit_region, n.exit_ip_city].filter(Boolean).join(" · ") || null],
         ["出口 IP 最后观测", n.exit_ip ? (n.exit_observed_at ? date(n.exit_observed_at) : "时间未知（历史明细已清理）") : null],
+        ["近 7 天出口变动", exitHistory(n.observations?.exit)],
         ["IP 归属（org）", n.exit_org],
         ["ISP", n.exit_isp],
         ["IP 类型", n.exit_ip_type ? `${IP_TYPE[n.exit_ip_type]}${n.exit_ip_proxy ? "，被标记为 VPN/代理" : ""}（ip-api 数据库标记，非实测）` : null],
@@ -93,6 +108,8 @@ export async function nodeDetail(root, id, requestedVantage, refresh, isCurrent)
         ["美国 Runner 成功率 / P95", `${pct(n.success_rate)} / ${ms(n.http_p95_ms)}`],
         ["检测方式", MEASURE[n.measurement_kind] || "—"],
         ["最近检测原因", n.last_error_code ? errorText(n.last_error_code) : "—"],
+        ["同地址族直连对照", obs?.precheck_metadata?.direct_exit_match === true ? "出口一致"
+          : obs?.precheck_metadata?.direct_exit_match === false ? "出口不同" : "无可比观测"],
         ["下次完整复查", n.next_full_check_at ? date(n.next_full_check_at) : "按计划"],
       ]),
     ),
@@ -230,12 +247,14 @@ function accessSection(n, access, current) {
     ? h(
         "div",
         { class: "stack tight" },
-        h("p", { class: "row tight" }, gradeBadge(n.quality_grade, current), weekStrip(n)),
+        h("p", { class: "row tight" }, gradeBadge(n.quality_grade, current),
+          current === "CN" && chosen.limiting_vantage ? h("span", { class: "muted" }, `短板 · ${vantageName(chosen.limiting_vantage)}`) : null,
+          h("span", { class: "muted small" }, ACCESS_EVIDENCE[chosen.access_evidence] || "接入待测")),
         chosen.reasons?.length ? h("ul", { class: "reasons" }, chosen.reasons.map((r) => h("li", {}, r))) : null,
       )
-    : h("p", { class: "muted" }, "节点当前不可用或未检测，不定档。");
+    : h("p", { class: "muted" }, n.exit_asn === 13335 ? "CF 落地 · 不分级" : "当前暂无等级");
   const why = (v) => {
-    if (access?.icmp_only) return "Hysteria2 走 UDP：按同网段 TCP 测得";
+    if (access?.icmp_only) return "UDP 入口 · 暂无参考样本";
     if (access?.cloudflare) return "Cloudflare 入口：共用 CF 类结果";
     if (!access?.target) return "无 IPv4 入口，未测";
     return v.startsWith("CN-") ? "等待晚高峰测量" : "等待测量";
@@ -251,6 +270,7 @@ function accessSection(n, access, current) {
       [
         { label: "时间", render: (m) => date(m.measured_at) },
         { label: "视角", render: (m) => (m.purpose === "REACH" ? "大陆可达检查" : vantageName(m.vantage)) + (m.peak ? "（晚高峰）" : "") },
+        { label: "目标", render: (m) => m.target === access?.target ? "本入口" : "共享参考入口" },
         { label: "探针", render: (m) => [m.probe_city, m.probe_asn ? "AS" + m.probe_asn : null].filter(Boolean).join(" · ") || "—" },
         { label: "收到/发送", class: "num", render: (m) => `${m.received}/${m.sent}` },
         { label: "平均 RTT", class: "num", render: (m) => ms(m.rtt_avg) },
@@ -268,7 +288,9 @@ function accessSection(n, access, current) {
       [
         { label: "视角", render: (r) => r.name },
         { label: "等级", render: (r) => (r.g ? gradeBadge(r.g.grade, r.v, { withVantage: false }) : "—") },
-        { label: "RTT（晚高峰/中位）", class: "num", render: (r) => (r.g?.peak_rtt_ms != null ? ms(r.g.peak_rtt_ms) : h("span", { class: "muted small" }, why(r.v))) },
+        { label: "样本范围", render: (r) => ACCESS_EVIDENCE[r.g?.access_evidence] || "—" },
+        { label: "RTT（晚高峰/中位）", class: "num", render: (r) => r.g?.unreachable ? h("span", { class: "bad-text" }, "入口重复失败")
+          : r.g?.peak_rtt_ms != null ? ms(r.g.peak_rtt_ms) : h("span", { class: "muted small" }, why(r.v)) },
         { label: "空闲 RTT", class: "num", render: (r) => ms(r.g?.idle_rtt_ms) },
         { label: "丢包", class: "num", render: (r) => lossText(r.g?.loss) },
         { label: "抖动", class: "num", render: (r) => ms(r.g?.jitter_ms) },
@@ -281,16 +303,26 @@ function accessSection(n, access, current) {
     h(
       "p",
       { class: "hint" },
-      "接入数据来自 Globalping 社区探针对入口的 TCP 握手（三网为家宽探针、北京时间晚高峰），只说明 TCP 能否连通及延迟丢包；不代表代理协议一定可用，不测带宽，也不判断线路类型。去程只记录实测经过的 ASN，回程无法从国内测得。稳定性来自每日完整检测（美国 Runner）。",
+      "接入数据来自 Globalping 社区探针。大陆以北京时间晚高峰的 TCP 样本定档，海外使用全天样本。入口范围见表，去程显示实测 ASN。稳定性来自美国 Runner 日检。",
     ),
     raw,
   );
 }
 
-function weekStrip(n) {
-  const days = n.checked_7d || 0;
-  const ok = n.avail_7d || 0;
-  const strip = h("span", { class: "week", title: `7 天内检测 ${days} 天，可用 ${ok} 天` });
-  for (let i = 0; i < 7; i++) strip.append(h("span", { class: i < ok ? "ok" : i < days ? "bad" : "" }));
-  return h("span", { class: "muted small" }, strip, ` 7 天可用 ${ok}/${days}`);
+function weekTimeline(days) {
+  if (!days?.length) return null;
+  const labels = { UP: "通过", DOWN: "失败", UNTESTED: "未检测" };
+  const describe = (day) => day.status === "UNTESTED" ? `${day.day} · 未取得可用性结果`
+    : `${day.day} · ${day.successful} 次通过 · ${day.failed} 次失败`;
+  const output = h("p", { class: "muted small", role: "status" }, describe(days.at(-1)));
+  const buttons = days.map((day, index) => h("button", {
+    type: "button", class: "timeline-day", "data-status": day.status,
+    "aria-label": `${day.day} ${labels[day.status]}`, "aria-pressed": String(index === days.length - 1),
+    onclick: () => {
+      buttons.forEach((button, i) => button.setAttribute("aria-pressed", String(i === index)));
+      output.textContent = describe(day);
+    },
+  }, h("time", { datetime: day.day }, day.day.slice(5)), h("span", {}, labels[day.status])));
+  return h("section", { class: "stack tight" }, h("h3", {}, "最近 7 天 · 北京时间"),
+    h("div", { class: "node-timeline" }, buttons), output);
 }

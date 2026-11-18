@@ -318,7 +318,7 @@ print(json.dumps(s.sync_source(UUID('${sourceId}')),default=str))`),
         assert.equal(outdated.checks.schema, false);
       } finally {
         await db.query(
-          "UPDATE alembic_version SET version_num='0026_maintenance'",
+          "UPDATE alembic_version SET version_num='0027_node_observations'",
         );
         await db.end();
       }
@@ -1661,7 +1661,7 @@ class Checker:
  def check(self,identity,short_id):
   return Observation(status='UP',entry_country='HK',entry_asn=64511,entry_ips=['198.51.100.77'],exit_country='JP',exit_asn=64521,exit_ip='203.0.113.77',http_duration_ms=20,probe_key='synthetic-grade')
 scans=ScanService(assets,${settings},checker_factory=Checker)
-for i in range(3):
+for i in range(5):
  run=scans.create(now().date()-timedelta(days=i))
  for shard in scans.get(run['id'])['shards']:scans.run_shard(run['id'],shard['shard_no'])
  scans.finalize(run['id'])`);
@@ -1670,8 +1670,8 @@ for i in range(3):
     for (const vantage of ["CN-CT", "CN-CU", "CN-CM", "HK", "SG", "GB"])
       for (const probe of [1, 2])
         await db.query(
-          "INSERT INTO entry_probe_results(target,prefix,purpose,vantage,protocol,peak,probe_asn,probe_city,sent,received,rtt_avg,jitter) VALUES('198.51.100.77:443','198.51.100','QUALITY',$1,'TCP',$2,$3,'Synthetic',16,16,$4,1)",
-          [vantage, vantage.startsWith("CN"), 64600 + probe, vantage.startsWith("CN") ? 120 : 25],
+          "INSERT INTO entry_probe_results(target,prefix,purpose,vantage,protocol,peak,probe_asn,probe_city,sent,received,rtt_avg,jitter,measured_at) VALUES('198.51.100.77:443','198.51.100','QUALITY',$1,'TCP',$2,$3,'Synthetic',16,16,$4,1,now()-make_interval(days=>$5))",
+          [vantage, vantage.startsWith("CN"), 64600 + probe, vantage.startsWith("CN") ? 120 : 25, probe],
         );
   } finally {
     await db.end();
@@ -1721,6 +1721,11 @@ print(json.dumps(refresh.refresh(session_factory(make_engine(os.environ['DATABAS
   const hk = await (await request(`/api/nodes?source_id=${source.id}&vantage=HK&min_quality_grade=S`)).json();
   assert.equal(hk.total, 2);
   assert.equal(hk.items[0].quality_grade, "S");
+  const verified = await (await request(`/api/nodes?source_id=${source.id}&endpoint_verified=true`)).json();
+  assert.equal(verified.total, 2);
+  const detail = await (await request(`/api/nodes/${hk.items[0].id}`)).json();
+  assert.equal(detail.observations.days.length, 7);
+  assert.equal(detail.observations.exit.ip_count, 1);
   assert.ok(hk.items[0].grade_reasons.length > 0);
   // Scans in this shared test schema re-check every node, so filter by landing server.
   assert.equal(
