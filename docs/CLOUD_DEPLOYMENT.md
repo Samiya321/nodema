@@ -8,11 +8,20 @@
 | API | https://nodema-api.simb.workers.dev；管理接口需要管理员鉴权 |
 | Echo | https://nodema-echo.simb.workers.dev；仅返回调用者的观测信息 |
 | 源码 | https://github.com/Samiya321/nodema |
-| 数据库 | 自建 PostgreSQL 17.12，用户指定云主机，目录 `/root/nodema-postgres`；当前 schema `0024_node_list_reads`。旧 Neon 项目已删除 |
+| 数据库 | 自建 PostgreSQL 17.12，用户指定云主机，目录 `/root/nodema-postgres`；当前 schema `0025_dashboard_lineage`。旧 Neon 项目已删除 |
 | API 数据库权限 | 独立角色，授予业务 DML；数据库迁移使用单独的 owner 连接 |
 | Hyperdrive | 经 Workers VPC 和 Cloudflare Tunnel 连接本机数据库；禁用查询缓存，源站连接数限制 5 |
 
 管理员密钥、数据库连接、HMAC/AES 密钥和 GitHub 调度 token 保存在本地 `private/` 以及对应平台 Secrets 中，不在本页或 Git 仓库公开。
+
+## 2026-11-18 第二十二次发布：导航和来源溯源
+
+- Worker 源码 `c8fa6ca`，版本 `10cc6092-5ba5-4166-b25a-44d9e4f6be41`，Pages 源码 `006324f`，部署 `320b75fe-944b-4359-b4d7-c5cd2d0d98a7`。schema `0025_dashboard_lineage`。生产健康及认证 readiness 通过，未认证 readiness 返回 401，抽查静态模块散列一致。[分支 CI 44246600027](https://github.com/Samiya321/nodema/actions/runs/44246600027) 和 [main CI 44247192862](https://github.com/Samiya321/nodema/actions/runs/44247192862) 通过，覆盖 470 个 Python、37 个 Worker、3 个 Echo 测试与 100 节点合成流水线。
+- [发布前加密备份 44243519455](https://github.com/Samiya321/nodema/actions/runs/44243519455) 在独立 PostgreSQL 17 恢复并完成升级、降级、重新升级。新增一张 Sub-Store 引用表，业务表从 38 到 39。升级前后保持 56,597 个节点、123,501 条检测明细。加密包有效至北京时间 2026-12-08 13:21。
+- 来源统一提供全部来源、机场订阅、Sub-Store 标签。运维将节点检测、接入测量、用量与备份集中在一个入口。旧机场、Sub-Store、检测、用量链接保留跳转及原筛选。检测详情和通知可链接，旧 Neon 流量折叠到历史。
+- 生产复核同一批 161 条机场订阅，来源页与机场页的当前可用、过期通过、历史关联一致，合计 0 个当前可用关联、435 个通过但已过期关联。总览「可用机场节点」为 31，列表包含正常及较慢状态，未检测和过期分别跳转。真实样本从节点关联追到上级 Sub-Store，并从父级查看 9 个直接子来源。另外抽查一个多来源节点，2 条直接关联中有 1 条仍存在，2 条均有各自的来源路径。
+- 生产浏览器复核 1440 和 390 像素的 10 个页面及标签，两轮均无页面横向溢出。320 像素下首页四个固定入口可见，键盘通过「更多」进入运维。旧机场书签保留筛选，实际节点能点进上游、从父级返回子来源，批次详情可复制链接。
+- 合成浏览器走通最近成品 → 成员节点 → 直接来源 → 两级上级、原筛选预填及重新估算。生产预览按最多 3 个计算返回 3，生产导出方案为 0。上级索引中以前只计作重复的条目将在后续成功同步时逐条记录。关系口径见 [来源关系与订阅成员](SOURCES_AIRPORTS_NAMING.md#来源关系与订阅成员)。
 
 ## 2026-11-18 第二十一次发布：节点列表提速
 
