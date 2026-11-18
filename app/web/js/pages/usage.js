@@ -52,7 +52,7 @@ export async function render(root, { params, go }) {
     api("/probe-status").catch(() => null),
   ]);
   const t = data.totals;
-  const range = select("days", [["7", "近 7 天"], ["30", "近 30 天"], ["90", "近 90 天"], ["365", "近 365 天"]], days);
+  const range = select("days", [["7", "近 7 天"], ["30", "近 30 天"], ["90", "近 90 天"], ["365", "近 365 天"]], days, "用量时间范围");
   range.addEventListener("change", () => go("usage", new URLSearchParams({ days: range.value })));
   const stats = [
     ["Actions 分钟", num(Math.round(Number(data.runner_minutes)))],

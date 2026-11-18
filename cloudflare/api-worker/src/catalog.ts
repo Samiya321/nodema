@@ -169,7 +169,7 @@ export async function catalogOverview(
           FROM (SELECT node_group,status,count(*) n,count(*) FILTER(WHERE eligible) e FROM data GROUP BY 1,2) s
           GROUP BY node_group) g),'{}'),
       'statuses',coalesce((SELECT jsonb_object_agg(status,n) FROM (SELECT status,count(*) n FROM data GROUP BY status) s),'{}'),
-      'countries',coalesce((SELECT jsonb_object_agg(country,n) FROM (SELECT coalesce(exit_country,'UNK') country,count(*) n FROM data GROUP BY 1) s),'{}')) AS summary`,
+      'countries',coalesce((SELECT jsonb_object_agg(country,n) FROM (SELECT coalesce(exit_country,'UNK') country,count(*) n FROM data WHERE status IN ('UP','DEGRADED') GROUP BY 1) s),'{}')) AS summary`,
       [freshness, template],
     )
   )[0].summary as Row;

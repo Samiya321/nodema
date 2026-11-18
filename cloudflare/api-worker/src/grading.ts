@@ -146,14 +146,21 @@ export async function saveGradingPolicy(
   return gradingPolicy(rows);
 }
 
-export async function probeStatus(rows: Rows, vantage: string | null) {
+export async function probeStatus(rows: Rows, vantage: string | null, fresh = 36) {
   let chosen = vantage;
   if (!chosen) {
     const row = (await rows("SELECT policy FROM grading_policy WHERE id=1"))[0];
     chosen = storedPolicy(row?.policy).default_vantage;
   }
   if (!VANTAGES.includes(chosen)) throw new SafeError("INVALID_NODE_QUERY");
-  return (await rows("SELECT nodema_probe_status($1) AS status", [chosen]))[0].status;
+  return (await rows(`SELECT nodema_probe_status($1) || (
+    SELECT jsonb_build_object('coverage_total',count(*),
+      'coverage_measured',count(*) FILTER (WHERE g.access_band IS NOT NULL),
+      'coverage_excluded',count(*) FILTER (WHERE c.last_exit_asn=13335))
+    FROM node_current_status c JOIN nodema_node_scope scope ON scope.node_id=c.node_id AND scope.eligible
+    LEFT JOIN node_grades g ON g.node_id=c.node_id AND g.vantage=$1
+    WHERE c.status IN ('UP','DEGRADED') AND c.last_checked_at>=now()-make_interval(hours=>$2)
+  ) AS status`, [chosen, fresh]))[0].status;
 }
 
 export async function nodeAccess(rows: Rows, id: string) {

@@ -105,7 +105,7 @@ function gradeCell(n) {
 
 function latency(n) {
   if (!n.quality_grade) return h("span", { class: "faint" }, "—");
-  if (n.unreachable) return h("span", { class: "bad-text strong" }, "TCP 不通");
+  if (n.unreachable) return h("span", { class: "bad-text strong" }, "入口重复失败");
   if (n.peak_rtt_ms == null) return h("span", { class: "faint", title: n.icmp_only ? "UDP 入口，按同网段测" : "还没有测量样本" }, "未测");
   const loss = n.peak_loss ? h("span", { class: n.peak_loss > 0.03 ? "loss bad-text" : "loss" }, `丢 ${(n.peak_loss * 100).toFixed(1)}%`) : null;
   return h("span", { class: "rtt" }, h("strong", {}, ms(n.peak_rtt_ms)), loss);

@@ -276,7 +276,7 @@ class Catalog:
                     (SELECT status,count(*) n FROM data GROUP BY status) s),'{}'),
                   'countries',coalesce((SELECT jsonb_object_agg(country,n) FROM
                     (SELECT coalesce(exit_country,'UNK') country,count(*) n
-                      FROM data GROUP BY 1) s),'{}'))
+                      FROM data WHERE status IN ('UP','DEGRADED') GROUP BY 1) s),'{}'))
             """),
                 {"fresh": self.settings.freshness_hours, "tpl": self.template()},
             )

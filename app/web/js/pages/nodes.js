@@ -13,12 +13,11 @@ const SIZES = [50, 100, 200];
 const VIEWS = [["", "列表"], ["country", "按国家"], ["asn", "ASN 排行"]];
 // Local switches over the loaded rows (no new query): Wi-Fi Calling and residential IPs.
 const QUICK = [
-  ["udp", "UDP 可用", "经节点的 UDP 收到了回包（Wi-Fi Calling 需要）", (n) => n.udp === "SUCCESS"],
+  ["udp", "UDP 有回包", "经节点向公共 STUN/DNS 发送 UDP 并收到回包", (n) => n.udp === "SUCCESS"],
   ["home", "家宽 IP", "落地 IP 被 ip-api 标为家宽（不是机房）", (n) => n.exit_ip_type === "RESIDENTIAL"],
 ];
 const FETCH_PAGE = 10000; // compact rows per request; there is no overall cap
-// Database transfer is metered (Neon Free: 5 GB a month), so a loaded list is kept until
-// something changes it (edits, finished tests or syncs) or the user presses 刷新.
+// Reuse the filtered collection across the list, country and ASN views.
 const CACHE_MS = 10 * 60_000;
 const count = (n) => n.toLocaleString("zh-CN");
 
@@ -70,7 +69,7 @@ export async function render(root, { params, go }) {
   for (const key of API_KEYS) if (params.get(key)) filters[key] = params.get(key);
   const apiFilters = { ...filters, vantage };
   for (const key of PERCENT) if (apiFilters[key]) apiFilters[key] = String(Number(apiFilters[key]) / 100);
-  const [{ items: loaded, at: loadedAt }, { providers }] = await Promise.all([load(apiFilters), api("/airports")]);
+  const [{ items: loaded, at: loadedAt }, providers] = await Promise.all([load(apiFilters), api("/providers")]);
 
   // Every state lives in the URL.
   const update = (changes, { keepPage = false } = {}) => {

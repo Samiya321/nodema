@@ -144,8 +144,8 @@ export async function render(root, { params, go, refresh, refreshStrip }) {
       "div",
       { class: "toolbar" },
       h("input", { type: "search", placeholder: "搜索名称或域名", value: params.get("q") || "", "aria-label": "搜索 Sub-Store", onchange: (e) => set("q", e.target.value) }),
-      select("state", STATES, state),
-      select("sort", SORTS, sort),
+      select("state", STATES, state, "Sub-Store 状态"),
+      select("sort", SORTS, sort, "Sub-Store 排序"),
     ),
     table(
       [

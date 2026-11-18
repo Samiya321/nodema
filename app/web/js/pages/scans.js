@@ -9,6 +9,7 @@ function duration(run) {
 async function detail(id) {
   const run = await api("/scans/" + id);
   const items = run.items || {};
+  const completed = items.DONE || 0;
   dialog(
     `${run.scan_date} ${SCAN_KIND[run.kind] || run.kind}检测`,
     h(
@@ -21,10 +22,10 @@ async function detail(id) {
         h("dd", {}, KIND[run.scope] || "全部"),
         h("dt", {}, "状态"),
         h("dd", {}, badge(run.status)),
-        h("dt", {}, "完成 / 待重试 / 未开始"),
-        h("dd", {}, `${items.DONE || 0} / ${items.RETRYABLE || 0} / ${items.PENDING || 0}`),
+        h("dt", {}, "完成 / 待完成"),
+        h("dd", {}, `${completed} / ${Math.max(0, run.node_count - completed)}`),
         h("dt", {}, "问题"),
-        h("dd", {}, run.error_summary?.incomplete_shards ? `未完成分片 ${run.error_summary.incomplete_shards.join("、")}` : "—"),
+        h("dd", {}, run.error_summary?.incomplete_shards?.length ? `未完成分片 ${run.error_summary.incomplete_shards.join("、")}` : "—"),
       ),
       table(
         [
@@ -91,6 +92,7 @@ export async function render(root, { params, go, refresh, refreshStrip }) {
     return;
   }
   const runs = await api("/scans");
+  const complete = runs.find((r) => r.kind === "DAILY" && r.status === "COMPLETED");
   const retry = (run) => async (e) =>
     busy(e.target, async () => {
       const result = await api(`/scans/${run.id}/retry`, { method: "POST" });
@@ -100,6 +102,7 @@ export async function render(root, { params, go, refresh, refreshStrip }) {
     });
   root.append(
     h("div", { class: "title-row" }, h("h1", { class: "page-title" }, "检测记录"), tabs),
+    complete ? h("p", { class: "muted" }, `最近完整日检 ${complete.scan_date} · ${date(complete.finished_at)}`) : null,
     table(
       [
         { label: "日期", render: (r) => h("button", { type: "button", class: "link", onclick: () => detail(r.id) }, r.scan_date) },

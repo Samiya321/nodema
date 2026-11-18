@@ -167,6 +167,20 @@ def test_grades_are_computed_filtered_sorted_and_explained(
     exports.build_pending()
     assert exports.get(profile["id"])["node_count"] == 2
     assert exports.get(profile["id"])["status"] == "READY"
+    threshold = exports.create("uri", {"vantage": "CN", "max_peak_rtt_ms": 45})
+    exports.build_pending()
+    with service.sessions.begin() as session:
+        session.execute(
+            sa.text(
+                "UPDATE entry_probe_results SET rtt_avg=rtt_avg+10"
+                " WHERE received>0 AND vantage LIKE 'CN-%'"
+            )
+        )
+    same_letter = refresh.refresh(service.sessions, monitor_settings)
+    assert same_letter["grades"] == {"S": 2}
+    assert same_letter["invalidated_exports"] >= 1
+    exports.build_pending()
+    assert exports.get(threshold["id"])["node_count"] == 0
     measure(service, port, rtt=0, received=0)  # half the samples lost: poor (C)
     assert refresh.refresh(service.sessions, monitor_settings)["grades"] == {"C": 2}
     with service.sessions.begin() as session:

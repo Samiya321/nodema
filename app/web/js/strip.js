@@ -4,6 +4,7 @@ import { KIND, ago, api, busy, confirm, date, dialog, h, meter, toast } from "./
 // Poll only while work is pending or just requested, so an idle tab lets the free
 // database suspend. Navigation, focus and actions refresh it otherwise.
 let root, timer, last, listening = false, wakeUntil = 0;
+let pipelineRequest;
 const WAKE_MS = 10 * 60 * 1000;
 const RUNNING = ["PENDING", "RUNNING"];
 
@@ -29,9 +30,14 @@ function schedule(busyNow) {
   }, 15000);
 }
 
+export function loadPipeline() {
+  pipelineRequest ??= api("/pipeline").finally(() => { pipelineRequest = null; });
+  return pipelineRequest;
+}
+
 export async function refreshStrip() {
   try {
-    last = await api("/pipeline");
+    last = await loadPipeline();
   } catch {
     return;
   }
@@ -53,9 +59,10 @@ function submitted(result, what) {
 }
 
 // Sync chosen sources right away (sources page, Sub-Store page).
-export async function syncSources(ids, button) {
+export async function syncSources(ids, button, { pendingOnly = false } = {}) {
   return busy(button, async () => {
-    submitted(await api("/pipeline/sync", { method: "POST", body: ids ? { source_ids: ids } : {} }), "同步");
+    const body = ids ? { source_ids: ids } : pendingOnly ? { pending_only: true } : {};
+    submitted(await api("/pipeline/sync", { method: "POST", body }), "同步");
     return true;
   });
 }

@@ -276,18 +276,12 @@ def _fmt_access(access: Access, vantage: str) -> str:
     return f"{VANTAGE_NAMES[vantage]}{when} RTT {rtt}，丢包 {loss}"
 
 
-def grade_node(
-    facts: NodeFacts, vantage: str, access: Access, reach_failed: bool, policy: dict
-) -> Grade:
-    """Grade for a carrier, HK or SG. `reach_failed`: the national reachability check
-    (any mainland probe) failed for this exact ip:port (only used for CN vantages)."""
+def grade_node(facts: NodeFacts, vantage: str, access: Access, policy: dict) -> Grade:
+    """Grade using vantage-specific observations for the exact entry target."""
     reasons: list[str] = []
     stable = stability_band(facts.available_days, facts.checked_days, policy)
-    unreachable = access.unreachable or (reach_failed and vantage.startswith("CN"))
-    if unreachable:
-        reasons.append(
-            f"{VANTAGE_NAMES[vantage]}探针对入口的 TCP 握手全部失败（美国 Runner 检测可用）"
-        )
+    if access.unreachable:
+        reasons.append(f"{VANTAGE_NAMES[vantage]}视角多个探针在不同时段对同一入口重复测量失败")
         return Grade("D", 0.0, "C", stable, access, True, reasons)
     band = access_band(access, vantage, policy)
     if facts.target is None:
@@ -343,20 +337,13 @@ def combine_cn(carriers: dict[str, Grade]) -> Grade:
     grades = [carriers[c] for c in CARRIERS if c in carriers]
     if not grades:
         raise ValueError("no carrier grades")
-    if all(g.unreachable for g in grades):
-        return Grade(
-            "D",
-            0.0,
-            "C",
-            grades[0].stability_band,
-            grades[0].access,
-            True,
-            ["三网探针对入口的 TCP 握手全部失败（美国 Runner 检测可用）"],
-        )
     ranked = sorted(grades, key=lambda g: GRADES.index(g.grade))
     worst = ranked[-1]
     reasons = [f"{VANTAGE_NAMES[c]} {carriers[c].grade}" for c in CARRIERS if c in carriers]
     reasons.append("三网取最差的一家")
+    failed = [VANTAGE_NAMES[c] for c in CARRIERS if c in carriers and carriers[c].unreachable]
+    if failed:
+        reasons.append(f"触发 D 的运营商视角：{'、'.join(failed)}")
     worst_access = max(
         (g.access for g in grades if g.access.rtt is not None),
         key=lambda a: a.rtt,

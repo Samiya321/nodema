@@ -371,6 +371,7 @@ export async function handle(
       body,
       json,
       databaseProvider: env.DATABASE_PROVIDER ?? "neon",
+      freshnessHours: number(env.FRESHNESS_HOURS, 36),
       dispatch: (workflow, inputs) => dispatch(env, workflow, inputs),
     });
     if (managed) return managed;
@@ -463,7 +464,7 @@ export async function handle(
         ),
       );
     if (path === "/api/probe-status" && method === "GET")
-      return json(await probeStatus(rows, url.searchParams.get("vantage")));
+      return json(await probeStatus(rows, url.searchParams.get("vantage"), number(env.FRESHNESS_HOURS, 36)));
     const accessMatch = /^\/api\/nodes\/([^/]+)\/access$/.exec(path);
     if (accessMatch && method === "GET")
       return json(await nodeAccess(rows, uuid(accessMatch[1])));

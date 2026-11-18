@@ -1,5 +1,5 @@
 import { KIND, SCAN_KIND, ago, api, badge, bytes, daysUntil, empty, errorText, flag, h } from "../core.js";
-import { openTestDialog, syncSources } from "../strip.js";
+import { loadPipeline, openTestDialog, syncSources } from "../strip.js";
 import { defaultVantage, distribution, gradeBadge, vantageName, vantageSwitch } from "../grades.js";
 
 const PROBE_ERRORS = { NETWORK: "无法连接 Globalping", TIMEOUT: "测量超时", INVALID_RESPONSE: "Globalping 返回异常" };
@@ -25,6 +25,7 @@ function qualityPanel(status, vantage, go) {
             ),
           ),
           h("p", { class: "muted small" }, `只统计当前可用的节点；定档于 ${ago(status.graded_at)}。`),
+          status.coverage_total != null ? h("p", { class: "muted small" }, `已有接入依据 ${status.coverage_measured} / ${status.coverage_total} 个当前可用节点，其中 CF 落地排除 ${status.coverage_excluded} 个。`) : null,
         )
       : h("p", { class: "muted" }, "还没有定档。完成至少 3 天检测后出现等级；接入测量每小时运行一次。"),
   );
@@ -67,24 +68,24 @@ function probeNotes(status) {
 }
 
 // One suggestion that follows the workflow: add sources -> sync -> test -> export.
-function nextStep(sources, overview, pipeline, exportsCount) {
+function nextStep(overview, pipeline, hasExports) {
   // Only nodes the daily check covers: airports outside its scope stay untested on purpose.
   const scope = pipeline.settings?.daily_scan_scope || "SELF_HOSTED";
   const groups = scope === "ALL" ? GROUPS : [scope];
   const untested = pipeline.active_scans?.length
     ? 0
     : groups.reduce((n, g) => n + (overview.groups?.[g]?.statuses?.UNKNOWN || 0), 0);
-  if (!sources.length)
+  if (!pipeline.sources_total)
     return ["还没有来源", "添加订阅链接、Sub-Store API 或节点文本。", h("a", { class: "button primary", href: "#/sources" }, "添加来源")];
-  if (pipeline.pending_sources || !sources.some((s) => s.last_success_at))
-    return [`${pipeline.pending_sources || sources.length} 个来源等待同步`, "同步只拉取和解析，不会检测节点。", h("button", { type: "button", class: "primary", onclick: (e) => syncSources(null, e.target) }, "同步全部来源")];
+  if (pipeline.pending_sources)
+    return [`${pipeline.pending_sources} 个来源等待同步`, "同步只拉取和解析，不会检测节点。", h("button", { type: "button", class: "primary", onclick: (e) => syncSources(null, e.target, { pendingOnly: true }) }, "同步待处理来源")];
   if (untested)
     return [
       `${untested} 个${scope === "ALL" ? "" : KIND[scope]}节点还没有检测`,
       "每日定时检测会覆盖它们；也可以现在开始，或在节点页只勾选一部分。",
       h("button", { type: "button", class: "primary", onclick: openTestDialog }, "开始检测"),
     ];
-  if (!exportsCount)
+  if (!hasExports)
     return ["生成你的订阅链接", "按落地国家、类别等条件保存方案，节点检测后会自动更新。", h("a", { class: "button primary", href: "#/exports" }, "创建订阅")];
   return null;
 }
@@ -131,41 +132,26 @@ function groupPanel(key, data) {
   );
 }
 
-const SHOWN = 3; // per kind; the rest is one summary line linking to its page
-
-function capped(items, summary, href) {
-  if (items.length <= SHOWN + 1) return items;
-  const tone = items.some(([t]) => t === "bad") ? "bad" : "warn";
-  return [...items.slice(0, SHOWN), [tone, summary(items.length - SHOWN), href]];
-}
-
-function attention(airports, substores, sources) {
-  const ended = [], soon = [];
-  for (const s of airports.sources) {
-    const days = daysUntil(s.expires_at);
-    const used = Number(s.traffic_upload || 0) + Number(s.traffic_download || 0);
-    const total = Number(s.traffic_total || 0);
-    if (s.expires_at && new Date(s.expires_at) <= new Date()) ended.push(["bad", `${s.name} 已过期`, "#/airports"]);
-    else if (total && used >= total) ended.push(["bad", `${s.name} 流量已用完`, "#/airports"]);
-    else if (days !== null && days <= 7)
-      soon.push(["warn", days <= 0 ? `${s.name} 今天到期` : `${s.name} ${days} 天后到期`, "#/airports"]);
-    else if (total && (total - used) / total < 0.1)
-      soon.push(["warn", `${s.name} 剩余 ${bytes(total - used)}`, "#/airports"]);
-  }
-  // Ending soon is actionable; already ended only needs cleaning up, so it comes second.
-  const items = [
-    ...capped(soon, (n) => `另有 ${n} 个机场订阅即将到期或流量不足`, "#/airports"),
-    ...capped(ended, (n) => `另有 ${n} 个机场订阅已过期或流量用完，它们的节点不再检测和导出`, "#/airports"),
+function attention(summary) {
+  const items = [];
+  const kinds = [
+    ["soon", "warn", (s) => `${s.name} ${daysUntil(s.expires_at) || "今天"}${daysUntil(s.expires_at) ? " 天后" : ""}到期`],
+    ["low", "warn", (s) => `${s.name} 剩余 ${bytes(Number(s.traffic_total) - Number(s.used))}`],
+    ["expired", "bad", (s) => `${s.name} 已过期`],
+    ["exhausted", "bad", (s) => `${s.name} 流量已用完`],
   ];
-  const down = substores
-    .filter((s) => s.last_sync_status === "FAILED")
-    .map((s) => ["bad", `Sub-Store「${s.name}」无法访问：${errorText(s.last_error_code)}`, "#/substore"]);
-  items.push(...capped(down, (n) => `另有 ${n} 个 Sub-Store 无法访问`, "#/substore?state=failed"));
-  const failing = sources.filter((s) => s.last_sync_status === "FAILED" && s.effective_kind !== "SUBSTORE");
-  const broken = failing.filter((s) => s.last_success_at);
-  if (broken.length) items.push(["warn", `${broken.length} 个来源之前正常、最近拉取失败，已解析的节点仍保留`, "#/sources?status=FAILED&sort=recent"]);
-  if (failing.length > broken.length)
-    items.push(["mute", `${failing.length - broken.length} 个链接从未拉取成功（多为上游失效），可在来源页清理`, "#/sources?status=FAILED"]);
+  for (const [risk, tone, label] of kinds) {
+    const group = summary.airports.filter((s) => s.risk === risk);
+    for (const source of group) items.push([tone, label(source), "#/airports"]);
+    if (group[0]?.total > group.length)
+      items.push([tone, `另有 ${group[0].total - group.length} 条同类机场提醒`, "#/airports"]);
+  }
+  for (const source of summary.substores)
+    items.push(["bad", `Sub-Store「${source.name}」无法访问：${errorText(source.last_error_code)}`, "#/substore?state=failed"]);
+  if (summary.substores[0]?.total > summary.substores.length)
+    items.push(["bad", `另有 ${summary.substores[0].total - summary.substores.length} 个 Sub-Store 无法访问`, "#/substore?state=failed"]);
+  if (summary.broken) items.push(["warn", `${summary.broken} 个来源之前正常、最近拉取失败`, "#/sources?status=FAILED&history=worked"]);
+  if (summary.never_worked) items.push(["mute", `${summary.never_worked} 个来源仍未成功拉取`, "#/sources?status=FAILED&history=never"]);
   return items;
 }
 
@@ -178,18 +164,16 @@ function scopeLabel(run, overview) {
 
 export async function render(root, { params, go }) {
   const vantage = params.get("vantage") || (await defaultVantage());
-  const [overview, airports, substores, sources, pipeline, exportsList, probe] = await Promise.all([
+  const [overview, summary, pipeline, probe] = await Promise.all([
     api("/overview"),
-    api("/airports"),
-    api("/substores"),
-    api("/sources"),
-    api("/pipeline"),
-    api("/exports"),
+    api("/overview/attention"),
+    loadPipeline(),
     api("/probe-status?vantage=" + encodeURIComponent(vantage)).catch(() => null),
   ]);
-  const step = nextStep(sources, overview, pipeline, exportsList.length);
+  const step = nextStep(overview, pipeline, summary.has_exports);
   const latest = overview.latest_scan;
-  const notes = [...attention(airports, substores, sources), ...probeNotes(probe)];
+  const complete = overview.latest_completed_scan;
+  const notes = [...attention(summary), ...probeNotes(probe)];
   const countries = Object.entries(overview.countries || {})
     .filter(([c]) => c !== "UNK")
     .sort((a, b) => b[1] - a[1])
@@ -232,6 +216,8 @@ export async function render(root, { params, go }) {
               h("dd", {}, `${latest.items?.DONE || 0} / ${latest.node_count} 已完成`),
               h("dt", {}, "开始"),
               h("dd", {}, ago(latest.started_at)),
+              h("dt", {}, "最近完整日检"),
+              h("dd", {}, complete ? `${complete.scan_date} · ${ago(complete.finished_at)}` : "尚无"),
             )
           : empty("还没有检测记录", "点击顶部的检测按钮开始。"),
       ),
@@ -239,7 +225,7 @@ export async function render(root, { params, go }) {
     h(
       "section",
       { class: "panel" },
-      h("header", { class: "panel-head" }, h("h2", {}, "落地地区")),
+      h("header", { class: "panel-head" }, h("h2", {}, "可用节点落地地区")),
       countries.length
         ? h(
             "ul",

@@ -136,7 +136,11 @@ function row(s, providers, reload) {
     h("span", { class: "badge " + tone }, label),
     gauge(s),
     expiry(s),
-    h("a", { class: "num", href: `#/nodes?source_id=${s.id}` }, `${s.up_count} 可用 / ${s.node_count}`),
+    h("div", { class: "name-cell" },
+      h("strong", { class: "num" }, `${s.up_count} 当前可用`),
+      h("a", { class: "small", href: `#/nodes?source_id=${s.id}&status=ALL` }, `${s.node_count} 个历史关联`),
+      s.stale_up_count ? h("span", { class: "muted small" }, `${s.stale_up_count} 个结果已过期`) : null,
+    ),
     h("div", { class: "name-cell" }, badge(s.last_sync_status), s.last_error_code ? h("span", { class: "small bad-text" }, errorText(s.last_error_code)) : null),
     h(
       "div",
@@ -151,7 +155,7 @@ function row(s, providers, reload) {
 }
 
 export async function render(root, { params, go, refresh, refreshStrip }) {
-  const { providers, sources } = await api("/airports");
+  const { providers, sources, provider_counts: providerCounts = [] } = await api("/airports");
   const reload = () => {
     refresh();
     refreshStrip();
@@ -188,7 +192,8 @@ export async function render(root, { params, go, refresh, refreshStrip }) {
   const groups = new Map([...providers.map((p) => [p.id, { provider: p, items: [] }]), ["none", { provider: null, items: [] }]]);
   for (const s of items) groups.get(s.provider_id && groups.has(s.provider_id) ? s.provider_id : "none").items.push(s);
   // Airports you can still use first (most usable nodes), then the ones that ended.
-  const upOf = (g) => g.items.reduce((n, x) => n + (x.usable ? x.up_count || 0 : 0), 0);
+  const upByProvider = new Map(providerCounts.map((p) => [p.provider_id, p.up_count]));
+  const upOf = (g) => upByProvider.get(g.provider?.id || null) || 0;
   const ordered = [...groups.values()]
     .filter((g) => g.items.length)
     .sort((a, b) => (b.items.some((x) => x.usable) - a.items.some((x) => x.usable)) || upOf(b) - upOf(a));
@@ -207,9 +212,9 @@ export async function render(root, { params, go, refresh, refreshStrip }) {
       "div",
       { class: "toolbar" },
       h("input", { type: "search", placeholder: "搜索订阅或机场", value: params.get("q") || "", "aria-label": "搜索", onchange: (e) => set("q", e.target.value) }),
-      select("state", [["", "全部状态"], ["usable", "仍可使用"], ...Object.entries(STATES).map(([k, [t]]) => [k, t])], state),
-      select("provider", [["", "全部机场"], ...providers.map((p) => [p.id, p.name]), ["none", "未分组"]], providerId),
-      select("sort", SORTS, sort),
+      select("state", [["", "全部状态"], ["usable", "仍可使用"], ...Object.entries(STATES).map(([k, [t]]) => [k, t])], state, "机场订阅状态"),
+      select("provider", [["", "全部机场"], ...providers.map((p) => [p.id, p.name]), ["none", "未分组"]], providerId, "机场分组"),
+      select("sort", SORTS, sort, "机场排序"),
     ),
     h("p", { class: "hint" }, "过期、流量用完或暂停的订阅，其节点不会参与检测和导出。同一机场的多条订阅会按官网或名称自动归到一起，也可以手动移动。"),
     items.length
@@ -227,7 +232,7 @@ export async function render(root, { params, go, refresh, refreshStrip }) {
                 h(
                   "span",
                   { class: "muted" },
-                  `${list.filter((x) => x.usable).length}/${list.length} 条可用 · ${leftText(list)} · ${list.reduce((n, x) => n + (x.up_count || 0), 0)} 个可用节点`,
+                  `${list.filter((x) => x.usable).length}/${list.length} 条可用 · ${leftText(list)} · 组内 ${upOf({ provider })} 个当前可用节点`,
                 ),
                 problems ? h("span", { class: "warn-text small" }, `${problems} 条需要注意`) : null,
               ),

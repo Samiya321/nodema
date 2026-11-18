@@ -8,6 +8,7 @@ type Rows = (sql: string, values?: unknown[], code?: string) => Promise<Row[]>;
 export type ManagementContext = {
   rows: Rows;
   databaseProvider?: string;
+  freshnessHours?: number;
   body: (request: Request, optional?: boolean) => Promise<Row>;
   json: (value: unknown, status?: number) => Response;
   dispatch: (workflow: string, inputs: Record<string, string>) => Promise<Row>;
@@ -121,7 +122,7 @@ async function pipeline(rows: Rows) {
   return { ...state, active_scans: active, requested_scans: requested } as Row;
 }
 
-async function airports(rows: Rows) {
+async function airports(rows: Rows, freshness: number) {
   const providers = await rows(
     "SELECT id,name,website,created_at,updated_at FROM providers ORDER BY name,id",
   );
@@ -134,13 +135,32 @@ async function airports(rows: Rows) {
       nodema_source_usable(s.enabled,s.deleted_at,s.expires_at,s.traffic_upload,
         s.traffic_download,s.traffic_total) AS usable,
       (SELECT count(*)::int FROM node_sources ns WHERE ns.source_id=s.id) AS node_count,
-      (SELECT count(*)::int FROM node_sources ns JOIN node_current_status c ON c.node_id=ns.node_id
-        WHERE ns.source_id=s.id AND c.status IN ('UP','DEGRADED')) AS up_count
+      availability.up_count, availability.stale_up_count
      FROM sources s
+     CROSS JOIN LATERAL (
+       SELECT count(*) FILTER (WHERE c.last_checked_at>=now()-make_interval(hours=>$1))::int AS up_count,
+         count(*) FILTER (WHERE c.last_checked_at<now()-make_interval(hours=>$1))::int AS stale_up_count
+       FROM node_sources ns JOIN nodes n ON n.id=ns.node_id
+       JOIN node_current_status c ON c.node_id=ns.node_id
+       WHERE ns.source_id=s.id AND ns.is_present AND n.enabled AND c.status IN ('UP','DEGRADED')
+         AND nodema_source_usable(s.enabled,s.deleted_at,s.expires_at,s.traffic_upload,s.traffic_download,s.traffic_total)
+     ) availability
      WHERE s.deleted_at IS NULL AND nodema_source_kind(s.kind,s.detected_kind)='AIRPORT'
      ORDER BY s.name,s.id`,
+    [freshness],
   );
-  return { providers, sources };
+  const providerCounts = await rows(
+    `SELECT s.provider_id,count(DISTINCT ns.node_id)::int AS up_count FROM sources s
+     JOIN node_sources ns ON ns.source_id=s.id AND ns.is_present
+     JOIN nodes n ON n.id=ns.node_id AND n.enabled
+     JOIN node_current_status c ON c.node_id=n.id AND c.status IN ('UP','DEGRADED')
+       AND c.last_checked_at>=now()-make_interval(hours=>$1)
+     WHERE nodema_source_kind(s.kind,s.detected_kind)='AIRPORT'
+       AND nodema_source_usable(s.enabled,s.deleted_at,s.expires_at,s.traffic_upload,s.traffic_download,s.traffic_total)
+     GROUP BY s.provider_id`,
+    [freshness],
+  );
+  return { providers, sources, provider_counts: providerCounts };
 }
 
 async function substores(rows: Rows, id?: string) {
@@ -175,6 +195,33 @@ async function substores(rows: Rows, id?: string) {
   };
 }
 
+async function overviewAttention(rows: Rows) {
+  const [summary] = await rows(`WITH airport_risks AS (
+    SELECT id,name,expires_at,traffic_total,
+      coalesce(traffic_upload,0)+coalesce(traffic_download,0) AS used,
+      CASE WHEN expires_at<=now() THEN 'expired'
+           WHEN traffic_total>0 AND coalesce(traffic_upload,0)+coalesce(traffic_download,0)>=traffic_total THEN 'exhausted'
+           WHEN expires_at<=now()+interval '7 days' THEN 'soon'
+           WHEN traffic_total>0 AND coalesce(traffic_upload,0)+coalesce(traffic_download,0)>traffic_total*0.9 THEN 'low' END AS risk
+    FROM sources WHERE deleted_at IS NULL AND enabled AND nodema_source_kind(kind,detected_kind)='AIRPORT'
+  ), ranked AS (
+    SELECT *,row_number() OVER (PARTITION BY risk ORDER BY expires_at NULLS LAST,id) AS pos,
+      count(*) OVER (PARTITION BY risk)::int AS total FROM airport_risks WHERE risk IS NOT NULL
+  ), substores AS (
+    SELECT name,last_error_code,count(*) OVER ()::int AS total FROM sources
+    WHERE deleted_at IS NULL AND detected_kind='SUBSTORE' AND last_sync_status='FAILED'
+    ORDER BY last_checked_at DESC NULLS LAST,id LIMIT 3
+  ) SELECT
+    coalesce((SELECT jsonb_agg(to_jsonb(r) - 'id' - 'pos' ORDER BY r.risk,r.pos) FROM ranked r WHERE pos<=3),'[]') AS airports,
+    coalesce((SELECT jsonb_agg(to_jsonb(s)) FROM substores s),'[]') AS substores,
+    (SELECT count(*) FILTER (WHERE last_success_at IS NOT NULL)::int FROM sources
+      WHERE deleted_at IS NULL AND last_sync_status='FAILED' AND detected_kind<>'SUBSTORE') AS broken,
+    (SELECT count(*) FILTER (WHERE last_success_at IS NULL)::int FROM sources
+      WHERE deleted_at IS NULL AND last_sync_status='FAILED' AND detected_kind<>'SUBSTORE') AS never_worked,
+    EXISTS(SELECT 1 FROM export_artifacts WHERE revoked_at IS NULL) AS has_exports`);
+  return summary;
+}
+
 async function asnLabels(rows: Rows) {
   return {
     labels: await rows(
@@ -198,6 +245,10 @@ export async function handleManagement(
   ctx: ManagementContext,
 ): Promise<Response | undefined> {
   const { rows, json } = ctx;
+  if (path === "/api/overview/attention" && method === "GET")
+    return json(await overviewAttention(rows));
+  if (path === "/api/providers" && method === "GET")
+    return json(await rows("SELECT id,name FROM providers ORDER BY name,id"));
   if (path === "/api/pipeline" && method === "GET") {
     const state = await pipeline(rows);
     if (ctx.databaseProvider === "self_hosted") state.neon_transfer = null;
@@ -207,19 +258,20 @@ export async function handleManagement(
     // "Sync now" refreshes every enabled source (or the chosen ones), not only due ones.
     const data = await ctx.body(request, true);
     const chosen = data.source_ids === undefined ? null : idList(data.source_ids);
+    const pendingOnly = data.pending_only === true;
     const marked = await rows(
       // A chosen Sub-Store also refreshes the child sources it produced.
-      "UPDATE sources SET sync_requested_at=NOW() WHERE deleted_at IS NULL AND enabled AND ($1::uuid[] IS NULL OR id=ANY($1::uuid[]) OR parent_source_id=ANY($1::uuid[])) RETURNING id",
-      [chosen],
+      "UPDATE sources SET sync_requested_at=NOW() WHERE deleted_at IS NULL AND enabled AND ($1::uuid[] IS NULL OR id=ANY($1::uuid[]) OR parent_source_id=ANY($1::uuid[])) AND (NOT $2::boolean OR sync_requested_at IS NOT NULL OR last_sync_status='NEVER') RETURNING id",
+      [chosen, pendingOnly],
     );
     if (!marked.length) throw new SafeError("NO_ENABLED_SOURCES", 422);
     return json(
-      { ...(await ctx.dispatch("source-sync.yml", {})), sources: marked.length },
+      { ...(await ctx.dispatch("source-sync.yml", pendingOnly ? { pending_only: "true" } : {})), sources: marked.length },
       202,
     );
   }
   if (path === "/api/settings" && method === "GET")
-    return json((await pipeline(rows)).settings ?? null);
+    return json((await rows("SELECT daily_scan_enabled,daily_scan_scope FROM app_settings WHERE id=1"))[0] ?? null);
   if (path === "/api/settings" && method === "PUT") {
     const data = await ctx.body(request);
     if (typeof data.daily_scan_enabled !== "boolean")
@@ -268,7 +320,7 @@ export async function handleManagement(
     }
   }
   if (path === "/api/airports" && method === "GET")
-    return json(await airports(rows));
+    return json(await airports(rows, ctx.freshnessHours ?? 36));
   const linkMatch = /^\/api\/sources\/([^/]+)\/link$/.exec(path);
   if (linkMatch && method === "GET") {
     // The subscription URL carries its token: only on an explicit click, never cached.

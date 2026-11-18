@@ -14,6 +14,10 @@ const PAGES = [
 ];
 
 const page = document.getElementById("page");
+document.querySelector(".skip").addEventListener("click", (event) => {
+  event.preventDefault();
+  (document.getElementById("app").hidden ? document.getElementById("login-token") : page).focus();
+});
 let rendering = 0;
 let shown = ""; // page name on screen: a new page starts at the top, a re-render keeps its place
 
@@ -31,8 +35,13 @@ export function go(name, params) {
 async function render() {
   const { name, params } = currentRoute();
   const ticket = ++rendering;
-  for (const link of document.querySelectorAll("#nav a"))
-    link.toggleAttribute("aria-current", link.dataset.page === name);
+  for (const link of document.querySelectorAll("#nav a")) {
+    if (link.dataset.page === name) link.setAttribute("aria-current", "page");
+    else link.removeAttribute("aria-current");
+  }
+  if (matchMedia("(max-width: 860px)").matches) {
+    document.querySelector('#nav a[aria-current="page"]')?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }
   const [, title, load] = PAGES.find(([key]) => key === name);
   document.title = title + " · Nodema";
   page.setAttribute("aria-busy", "true");

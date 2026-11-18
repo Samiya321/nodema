@@ -216,6 +216,7 @@ export async function render(root, { params, go, refresh, refreshStrip }) {
   const all = await api("/sources");
   const view = params.get("view") || "";
   const status = params.get("status") || "";
+  const history = params.get("history") || "";
   const sort = ORDER[params.get("sort")] ? params.get("sort") : "name";
   const q = (params.get("q") || "").toLowerCase();
   const names = Object.fromEntries(all.map((s) => [s.id, s.name]));
@@ -223,11 +224,13 @@ export async function render(root, { params, go, refresh, refreshStrip }) {
     .filter((s) => {
       if (view === "CHILD" ? !s.parent_source_id : view && s.effective_kind !== view) return false;
       if (status && s.last_sync_status !== status) return false;
+      if (history === "worked" && !s.last_success_at) return false;
+      if (history === "never" && s.last_success_at) return false;
       return !q || s.name.toLowerCase().includes(q) || (s.url_host || "").includes(q);
     })
     .sort(ORDER[sort]);
   // Without a search or status filter, Sub-Store children fold under their parent.
-  const nested = !q && !status && (view === "" || view === "SUBSTORE");
+  const nested = !q && !status && !history && (view === "" || view === "SUBSTORE");
   const inList = new Set(list.map((s) => s.id));
   const children = new Map();
   if (nested)
@@ -405,13 +408,15 @@ export async function render(root, { params, go, refresh, refreshStrip }) {
       { class: "toolbar" },
       h("input", { type: "search", placeholder: "搜索名称或域名", value: params.get("q") || "", "aria-label": "搜索来源", onchange: (e) => set("q", e.target.value) }),
       h("div", { class: "segmented", role: "group", "aria-label": "来源类别" }, VIEWS.map(([key, text]) => h("button", { type: "button", class: "seg", "aria-pressed": String(view === key), onclick: () => set("view", key) }, text))),
-      select("status", [["", "全部状态"], ["SUCCESS", "成功"], ["PARTIAL", "部分成功"], ["FAILED", "失败"], ["NEVER", "未同步"]], status),
-      select("sort", SORT_OPTIONS, sort),
+      select("status", [["", "全部状态"], ["SUCCESS", "成功"], ["PARTIAL", "部分成功"], ["FAILED", "失败"], ["NEVER", "未同步"]], status, "同步状态"),
+      select("history", [["", "全部成功历史"], ["worked", "曾同步成功"], ["never", "从未同步成功"]], history, "成功历史"),
+      select("sort", SORT_OPTIONS, sort, "来源排序"),
     ),
     bar,
     holder,
   );
   root.querySelector("select[name=status]").addEventListener("change", (e) => set("status", e.target.value));
+  root.querySelector("select[name=history]").addEventListener("change", (e) => set("history", e.target.value));
   root.querySelector("select[name=sort]").addEventListener("change", (e) => set("sort", e.target.value === "name" ? "" : e.target.value));
   draw();
 }

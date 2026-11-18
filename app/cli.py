@@ -295,7 +295,7 @@ def _retry_timeouts(assets, results):
 
 @source_app.command("sync-all")
 @safe_command
-def source_sync_all(due_only: bool = False, fetch_workers: int = 16):
+def source_sync_all(due_only: bool = False, fetch_workers: int = 16, pending_only: bool = False):
     from app.ingestion.prefetch import PrefetchingFetcher
 
     assets = service()
@@ -307,6 +307,12 @@ def source_sync_all(due_only: bool = False, fetch_workers: int = 16):
         batch = []
         for source in assets.list_sources():
             if not source["enabled"] or source["id"] in seen:
+                continue
+            if (
+                pending_only
+                and source["sync_requested_at"] is None
+                and source["last_sync_status"] != "NEVER"
+            ):
                 continue
             if due_only and source_dormant(source, now()):
                 continue
@@ -526,10 +532,27 @@ def scan_worker_batch(tasks_json: str = typer.Option(...)):
             result = scans.run_shard(run_id, shard)
         except AssetError as error:
             result, failed = {"error_code": error.code}, True
+        if result.get("status") != "COMPLETED":
+            failed = True
         results.append({"run_id": run_id, "shard": shard, **result})
     output(results)
     if failed:
         raise typer.Exit(2)
+
+
+@scan_app.command("plan-recovery")
+@safe_command
+def scan_plan_recovery(run_ids_json: str = typer.Option(...)):
+    scans = ScanService(service(), Settings())
+    ids = [identifier(str(value)) for value in json_list(run_ids_json)]
+    batches = scans.recovery_workers(ids, wait_seconds=315)
+    write_outputs(
+        {
+            "workers": json.dumps([{"tasks_json": json.dumps(batch)} for batch in batches]),
+            "has_tasks": "true" if batches else "false",
+        }
+    )
+    output({"recoverable_shards": sum(map(len, batches))})
 
 
 @scan_app.command("finalize-batch")

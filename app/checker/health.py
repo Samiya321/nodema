@@ -271,7 +271,12 @@ class HealthChecker:
     def preflight(self):
         self.runtime.preflight()
         try:
-            self._probe_identity(self.echo.request())
+            try:
+                observation = self.echo.request()
+            except AssetError:
+                time.sleep(2)
+                observation = self.echo.request()
+            self._probe_identity(observation)
         except AssetError:
             raise AssetError("ECHO_ENVIRONMENT_ERROR") from None
 
@@ -293,7 +298,12 @@ class HealthChecker:
                 self.echo.request()
                 return True
             except AssetError:
-                return False
+                time.sleep(1)
+                try:
+                    self.echo.request()
+                    return True
+                except AssetError:
+                    return False
 
         verdict = getattr(self.cache, "verdict", None)
         if verdict is None:

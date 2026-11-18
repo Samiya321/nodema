@@ -183,7 +183,19 @@ def create_app(settings=None, *, assets=None):
             chosen = vantage or load_grading(session)["default_vantage"]
             if chosen not in VANTAGES:
                 raise AssetError("INVALID_NODE_QUERY")
-            return session.scalar(sa.text("SELECT nodema_probe_status(:v)"), {"v": chosen})
+            return session.scalar(
+                sa.text("""SELECT nodema_probe_status(:v) || (
+                  SELECT jsonb_build_object('coverage_total',count(*),
+                    'coverage_measured',count(*) FILTER (WHERE g.access_band IS NOT NULL),
+                    'coverage_excluded',count(*) FILTER (WHERE c.last_exit_asn=13335))
+                  FROM node_current_status c JOIN nodema_node_scope scope
+                    ON scope.node_id=c.node_id AND scope.eligible
+                  LEFT JOIN node_grades g ON g.node_id=c.node_id AND g.vantage=:v
+                  WHERE c.status IN ('UP','DEGRADED')
+                    AND c.last_checked_at>=now()-make_interval(hours=>:fresh)
+                )"""),
+                {"v": chosen, "fresh": settings.freshness_hours},
+            )
 
     @app.get("/api/nodes/{node_id}/access", dependencies=auth)
     def node_access(node_id: UUID):

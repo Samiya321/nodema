@@ -153,7 +153,7 @@ export const ERRORS = {
   EVIDENCE_REFERENCE_REQUIRED: "选择“有资料”时需要填写依据。",
   SCAN_ARCHIVED: "该批次已归档，不能重试。",
   SCAN_NOT_FOUND: "检测批次不存在。",
-  DATABASE_UNAVAILABLE: "数据库暂时无法连接（免费实例可能在休眠），稍后重试。",
+  DATABASE_UNAVAILABLE: "数据库暂时无法连接，请稍后重试。",
   DATABASE_QUERY_FAILED: "数据库请求失败，请稍后重试。",
   ADMIN_TOKEN_REQUIRED: "服务端尚未配置管理员密钥。",
   OPERATION_FAILED: "操作失败，请稍后重试。",
@@ -182,6 +182,7 @@ export const ERRORS = {
   NODE_COOLDOWN: "连续失败，冷却中",
   ENTRY_NETWORK_UNAVAILABLE: "检测环境无此网络（如 IPv6）",
   RUNTIME_UNSUPPORTED: "核心不支持该配置",
+  RUNTIME_CONFIG_REJECTED: "代理核心拒绝加载转换后的配置",
   SHARE_UNSUPPORTED: "分享链接格式无法表示该配置",
   SHARE_TOO_LONG: "分享链接过长",
 };
@@ -262,14 +263,17 @@ export function fail(error) {
   toast(errorText(error?.code || error?.message), "bad");
 }
 
+let dialogCount = 0;
+
 export function dialog(title, content, { wide = false } = {}) {
+  const titleId = `dialog-title-${++dialogCount}`;
   const box = h(
     "dialog",
-    { class: wide ? "sheet wide" : "sheet", "aria-labelledby": "dialog-title" },
+    { class: wide ? "sheet wide" : "sheet", "aria-labelledby": titleId },
     h(
       "header",
       {},
-      h("h2", { id: "dialog-title" }, title),
+      h("h2", { id: titleId }, title),
       h("button", { class: "icon", type: "button", "aria-label": "关闭", onclick: () => box.close() }, "✕"),
     ),
     h("div", { class: "sheet-body" }, content),
@@ -330,10 +334,10 @@ export function field(label, control, hint) {
     hint && h("span", { class: "hint" }, hint),
   );
 }
-export function select(name, options, value = "") {
+export function select(name, options, value = "", label) {
   return h(
     "select",
-    { name },
+    { name, "aria-label": label },
     options.map(([v, text]) => h("option", { value: v, selected: String(v) === String(value) }, text)),
   );
 }

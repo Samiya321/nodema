@@ -26,7 +26,7 @@ export const ADVANCED = [
   ["max_peak_loss", "晚高峰丢包至多（%）", "number"],
   ["min_avail_7d", "7 天可用率至少（%）", "number"],
   ["route_asn", "去程经过 ASN（如 4809）", "number"],
-  ["unreachable", "该地区 TCP 不通", "select", [["", "全部"], ["true", "是"], ["false", "否"]]],
+  ["unreachable", "该视角入口重复失败", "select", [["", "全部"], ["true", "是"], ["false", "否"]]],
   ["cross_border", "入口与落地不同国家", "select", [["", "全部"], ["true", "是"], ["false", "否"]]],
   ["entry_country", "入口地区（如 HK）", "text"],
   ["asn_label", "落地 ASN 简称", "text"],

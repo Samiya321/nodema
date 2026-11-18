@@ -430,6 +430,37 @@ class ScanService:
         workers = [tasks[i : i + size] for i in range(0, len(tasks), size)]
         return {**run, "runs": runs, "workers": workers}
 
+    def recovery_workers(self, run_ids, *, wait_seconds=0):
+        """Resume only unfinished shards of this dispatch once their leases allow it."""
+        deadline = time.monotonic() + wait_seconds
+        query = (
+            sa.select(ScanShard.scan_run_id, ScanShard.shard_no, ScanShard.lease_until)
+            .join(ScanRun, ScanRun.id == ScanShard.scan_run_id)
+            .where(
+                ScanRun.id.in_(run_ids),
+                ScanRun.archived_at.is_(None),
+                ScanRun.status != "COMPLETED",
+                ScanShard.status != "COMPLETED",
+            )
+            .order_by(ScanRun.scan_date, ScanRun.id, ScanShard.shard_no)
+        )
+        while True:
+            with self.sessions() as session:
+                rows = session.execute(query).all()
+            at = now()
+            active = [until for _, _, until in rows if until and until > at]
+            remaining = deadline - time.monotonic()
+            if not active or remaining <= 0:
+                break
+            time.sleep(min(15, remaining, (min(active) - at).total_seconds()))
+        tasks = [
+            {"run_id": str(run_id), "shard": shard}
+            for run_id, shard, until in rows
+            if until is None or until <= at
+        ]
+        size = max(1, math.ceil(len(tasks) / 256))
+        return [tasks[i : i + size] for i in range(0, len(tasks), size)]
+
     def _owned(self, session, run_id, shard_no, owner):
         run = session.scalar(
             sa.select(ScanRun).where(ScanRun.id == run_id).with_for_update(read=True)
@@ -920,9 +951,10 @@ class ScanService:
                     if any(s.status == "ENVIRONMENT_ERROR" for s in shards)
                     else "PARTIAL"
                 )
-                run.error_summary = (
-                    {"incomplete_shards": incomplete} if incomplete else {"pending_items": pending}
-                )
+                run.error_summary = {
+                    "incomplete_shards": sorted(incomplete),
+                    "pending_items": pending,
+                }
                 # Positive evidence is never caused by a broken Runner, so confirmed
                 # successes become visible now. Failures wait for a complete batch so an
                 # environment fault can never publish a batch of DOWN nodes.

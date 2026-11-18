@@ -138,11 +138,13 @@ def test_preflight_failure_and_expired_lease_recovery(service, monitor_settings,
         scans.run_shard(run["id"], 0)
     owner, other = uuid4(), uuid4()
     assert scans.claim(run["id"], 0, owner)
+    assert scans.recovery_workers([run["id"]]) == []
     with pytest.raises(AssetError, match="SHARD_BUSY"):
         scans.claim(run["id"], 0, other)
     with service.sessions.begin() as session:
         shard = session.get(ScanShard, (run["id"], 0))
         shard.lease_until = now() - timedelta(seconds=1)
+    assert scans.recovery_workers([run["id"]]) == [[{"run_id": str(run["id"]), "shard": 0}]]
     assert scans.claim(run["id"], 0, other)
     with pytest.raises(AssetError, match="SHARD_LEASE_LOST"), service.sessions.begin() as session:
         scans._owned(session, run["id"], 0, owner)

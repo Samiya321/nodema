@@ -5,6 +5,11 @@ on:
   # 19:30-23:30 is the carriers' peak window (see grading rules); other hours buy HK/SG,
   # reachability and route samples.
   workflow_dispatch:
+    inputs:
+      refresh_only:
+        description: Recompute grades from existing observations
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -33,18 +38,34 @@ jobs:
         if: vars.NODEMA_DATABASE_VIA_SSH == 'true'
         with:
           connection: ${{ secrets.NODEMA_POSTGRES_SSH }}
+      - id: network
+        run: python3 scripts/job_network.py
       - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
         with:
           python-version: '3.12'
       - id: dependencies
         run: uv sync --frozen
       - name: Measure entries (counts only in the log)
+        if: '!inputs.refresh_only'
         continue-on-error: true
         timeout-minutes: 30
         run: uv run nodema probe run
       - name: Recompute grades
         if: always() && steps.dependencies.outcome == 'success'
-        run: uv run nodema grade refresh --if-due
+        env:
+          REFRESH_ONLY: ${{ inputs.refresh_only }}
+        run: |
+          if [ "$REFRESH_ONLY" = true ]; then
+            uv run nodema grade refresh
+          else
+            uv run nodema grade refresh --if-due
+          fi
       - name: Rebuild subscriptions that filter by grade
         if: always() && steps.dependencies.outcome == 'success'
         run: uv run nodema export build-pending
+      - name: Record job network usage
+        if: '!cancelled() && steps.network.outcome == ''success'' && steps.dependencies.outcome == ''success'''
+        env:
+          JOB_RESULT: ${{ job.status }}
+          USAGE_JOB_KEY: entry-probe
+        run: uv run nodema usage record-job --sample-file private/job-network.json --outcome "$JOB_RESULT"

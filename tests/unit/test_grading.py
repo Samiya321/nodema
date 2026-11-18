@@ -114,33 +114,29 @@ def test_one_failed_round_does_not_prove_unreachability():
 def test_grades_take_the_worse_band_and_explain_it():
     access = access_stats(samples([40, 42]), "198.51.100.1:443", True, POLICY)
     facts = NodeFacts("vless", "198.51.100.1:443", 7, 7)
-    best = grade_node(facts, "CN-CT", access, False, POLICY)
+    best = grade_node(facts, "CN-CT", access, POLICY)
     assert best.grade == "S" and best.access_band == "S" and best.stability_band == "S"
     assert any("电信晚高峰 RTT 41 ms" in r for r in best.reasons)
-    shaky = grade_node(NodeFacts("vless", "198.51.100.1:443", 5, 7), "CN-CT", access, False, POLICY)
+    shaky = grade_node(NodeFacts("vless", "198.51.100.1:443", 5, 7), "CN-CT", access, POLICY)
     assert shaky.grade == "B" and shaky.stability_band == "B"
-    assert (
-        grade_node(NodeFacts("vless", "x", 2, 2), "CN-CT", access, False, POLICY).grade == "PENDING"
-    )
-    assert grade_node(facts, "CN-CT", Access(), False, POLICY).grade == "B"  # unmeasured: capped
-    assert grade_node(NodeFacts("vless", None, 7, 7), "HK", Access(), False, POLICY).grade == "B"
+    assert grade_node(NodeFacts("vless", "x", 2, 2), "CN-CT", access, POLICY).grade == "PENDING"
+    assert grade_node(facts, "CN-CT", Access(), POLICY).grade == "B"  # unmeasured: capped
+    assert grade_node(NodeFacts("vless", None, 7, 7), "HK", Access(), POLICY).grade == "B"
     cdn = grade_node(
-        NodeFacts("vless", "104.16.0.1:443", 7, 7, cdn_entry=True), "SG", Access(), False, POLICY
+        NodeFacts("vless", "104.16.0.1:443", 7, 7, cdn_entry=True), "SG", Access(), POLICY
     )
     assert cdn.grade == "B" and cdn.access_band is None
     assert any("Cloudflare CDN" in r for r in cdn.reasons)
     assert (
-        grade_node(
-            NodeFacts("hysteria2", "198.51.100.1", 7, 7), "CN-CT", access, False, POLICY
-        ).grade
+        grade_node(NodeFacts("hysteria2", "198.51.100.1", 7, 7), "CN-CT", access, POLICY).grade
         == "A"
     )
-    blocked = grade_node(facts, "CN-CU", access, True, POLICY)
+    blocked = grade_node(facts, "CN-CU", Access(unreachable=True), POLICY)
     assert blocked.grade == "D" and blocked.unreachable
-    assert grade_node(facts, "HK", access, True, POLICY).grade == "A"  # mainland check only
+    assert grade_node(facts, "HK", access, POLICY).grade == "A"
     clean = {**POLICY, "s_requires_clean_exit": True}
     flagged = NodeFacts("vless", "198.51.100.1:443", 7, 7, exit_ip_proxy=True)
-    assert grade_node(flagged, "CN-CT", access, False, clean).grade == "A"
+    assert grade_node(flagged, "CN-CT", access, clean).grade == "A"
     assert stability_band(6, 7, POLICY) == "A" and stability_band(4, 7, POLICY) == "C"
 
 
@@ -150,14 +146,51 @@ def test_three_carrier_grade_is_the_worst_carrier():
     slow = access_stats(samples([200, 210]), None, True, POLICY)
     result = combine_cn(
         {
-            "CN-CT": grade_node(facts, "CN-CT", fast, False, POLICY),
-            "CN-CU": grade_node(facts, "CN-CU", slow, False, POLICY),
-            "CN-CM": grade_node(facts, "CN-CM", fast, False, POLICY),
+            "CN-CT": grade_node(facts, "CN-CT", fast, POLICY),
+            "CN-CU": grade_node(facts, "CN-CU", slow, POLICY),
+            "CN-CM": grade_node(facts, "CN-CM", fast, POLICY),
         }
     )
     assert result.grade == "B" and result.access.rtt == 205
-    blocked = {c: grade_node(facts, c, fast, True, POLICY) for c in ("CN-CT", "CN-CU", "CN-CM")}
+    blocked = {
+        c: grade_node(facts, c, Access(unreachable=True), POLICY)
+        for c in ("CN-CT", "CN-CU", "CN-CM")
+    }
     assert combine_cn(blocked).grade == "D" and combine_cn(blocked).unreachable
+
+
+def test_generic_mainland_failures_are_reported_without_marking_carriers_down(monkeypatch):
+    from types import SimpleNamespace
+
+    from app.probes import refresh
+
+    monkeypatch.setattr(planner, "ALLOW_NON_GLOBAL", True)
+    node = SimpleNamespace(
+        id=1,
+        protocol="vless",
+        server_port=443,
+        entry_asn=64500,
+        entry_ips=["198.51.100.1"],
+        is_proxy=False,
+        server_key="server",
+    )
+    target = "198.51.100.1:443"
+    bad = samples([0, 0], received=0)
+    quality = {("198.51.100", "CN-CT"): samples([40, 42])}
+    grades = {
+        row["vantage"]: row
+        for row in refresh.compute([node], {1: (7, 7)}, quality, {target: bad}, {}, POLICY)
+    }
+    assert grades["CN-CT"]["grade"] == "S"
+    assert not grades["CN"]["unreachable"]
+    assert any("证据分歧" in reason for reason in grades["CN"]["reasons"])
+    quality[("198.51.100", "CN-CU")] = bad
+    grades = {
+        row["vantage"]: row
+        for row in refresh.compute([node], {1: (7, 7)}, quality, {target: bad}, {}, POLICY)
+    }
+    assert grades["CN"]["grade"] == "D"
+    assert any("触发 D 的运营商视角：联通" in reason for reason in grades["CN"]["reasons"])
 
 
 def nodes():

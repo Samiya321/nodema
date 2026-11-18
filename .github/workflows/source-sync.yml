@@ -3,6 +3,10 @@ name: Sync sources
 # materialize Sub-Store children and refresh airport usage. Never runs node tests.
 on:
   workflow_dispatch:
+    inputs:
+      pending_only:
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -39,10 +43,16 @@ jobs:
         run: uv sync --frozen
       - run: uv run alembic upgrade head
       - name: Synchronize requested and due sources
+        env:
+          PENDING_ONLY: ${{ inputs.pending_only }}
         shell: bash
         run: |
           set +e
-          uv run nodema source sync-all --due-only
+          if [ "$PENDING_ONLY" = true ]; then
+            uv run nodema source sync-all --pending-only
+          else
+            uv run nodema source sync-all --due-only
+          fi
           result=$?
           set -e
           if [ "$result" -ne 0 ] && [ "$result" -ne 2 ]; then exit "$result"; fi

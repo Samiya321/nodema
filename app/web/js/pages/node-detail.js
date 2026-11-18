@@ -14,7 +14,7 @@ function udpText(n) {
   if (n.udp_state === "NOT_SUPPORTED") return "节点配置声明只走 TCP";
   if (n.udp_state === "FAILED") return n.udp_success_at ? `这次不通（重试多次）；上次通过 ${ago(n.udp_success_at)}` : "不通（重试多次仍收不到回包）";
   const other = n.udp_exit_ip && n.exit_ip && n.udp_exit_ip !== n.exit_ip;
-  return h("span", {}, `通，往返约 ${n.udp_ms} ms`, other ? h("span", { class: "muted" }, `；UDP 出口 ${n.udp_exit_ip}（与 TCP 落地不同）`) : null);
+  return h("span", {}, `公共 STUN/DNS 有回包，往返约 ${n.udp_ms} ms`, n.udp_success_at ? ` · ${date(n.udp_success_at)}` : "", other ? h("span", { class: "muted" }, `；UDP 出口 ${n.udp_exit_ip}（与 TCP 落地不同）`) : null);
 }
 
 function pairs(entries) {
@@ -71,6 +71,7 @@ export async function nodeDetail(id) {
         ["累计可用", `${n.available_days} / ${n.checked_days} 天，${pct(n.lifetime_availability)}`],
         ["美国 Runner 成功率 / P95", `${pct(n.success_rate)} / ${ms(n.http_p95_ms)}`],
         ["检测方式", MEASURE[n.measurement_kind] || "—"],
+        ["最近检测原因", n.last_error_code ? errorText(n.last_error_code) : "—"],
         ["下次完整复查", n.next_full_check_at ? date(n.next_full_check_at) : "按计划"],
       ]),
     ),

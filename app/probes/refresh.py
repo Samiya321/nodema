@@ -2,13 +2,14 @@
 
 Only currently available, enabled nodes are graded; others have no row and show
 their status instead. Nodes landing on an excluded network (Cloudflare) get no row
-either: they are "not graded", never "pending". Subscriptions that filter or sort
-by grade are marked for rebuild when any grade changes.
+either: they are "not graded", never "pending". Subscriptions are marked for rebuild
+when their grade or measurement inputs change.
 """
 
 from collections import defaultdict
 from dataclasses import replace
 from datetime import UTC, datetime, time, timedelta
+from struct import pack, unpack
 from time import perf_counter
 from zoneinfo import ZoneInfo
 
@@ -19,6 +20,7 @@ from app.database.models import GradingPolicy, NodeGrade
 from app.grading import (
     CARRIERS,
     OVERSEAS,
+    VANTAGE_NAMES,
     VANTAGES,
     Access,
     NodeFacts,
@@ -42,6 +44,16 @@ GRADE_FILTERS = (
     "unreachable",
     "route_asn",
     "best_per_server",
+)
+EXPORT_FIELDS = (
+    "grade",
+    "score",
+    "peak_rtt_ms",
+    "loss",
+    "avail_7d",
+    "checked_7d",
+    "unreachable",
+    "route_asns",
 )
 
 
@@ -109,15 +121,21 @@ def load(session, fresh_hours: int):
     return nodes, stability, quality, reach, traces
 
 
-def _reach_failed(samples: list[Sample]) -> bool:
-    return repeated_failure(samples)
-
-
 def compute(nodes, stability, quality, reach, traces, policy) -> list[dict]:
     rows: list[dict] = []
     # Thousands of nodes share one prefix (all Cloudflare entries are "cf"): its
     # figures are computed once, not once per node (was nodes x samples).
     prefix_cache: dict[tuple, tuple] = {}
+    last_success = {}
+    for (_, vantage), samples in quality.items():
+        if vantage not in CARRIERS:
+            continue
+        for sample in samples:
+            if sample.received and sample.measured_at:
+                key = (sample.target, vantage)
+                last_success[key] = max(
+                    last_success.get(key, sample.measured_at), sample.measured_at
+                )
 
     def access_for(prefix, vantage, target):
         key = (prefix, vantage)
@@ -139,16 +157,32 @@ def compute(nodes, stability, quality, reach, traces, policy) -> list[dict]:
         available, checked = stability.get(node.id, (0, 0))
         cdn = entry.prefix == planner.CF_PREFIX
         facts = NodeFacts(node.protocol, entry.target, available, checked, node.is_proxy, cdn)
-        reach_failed = node.protocol != "hysteria2" and _reach_failed(
-            reach.get(entry.target or "", [])
-        )
+        reach_samples = reach.get(entry.target or "", [])
+        reach_failed = node.protocol != "hysteria2" and repeated_failure(reach_samples)
+        reach_at = max((s.measured_at for s in reach_samples if s.measured_at), default=None)
+        reach_evidence = []
+        if reach_failed and reach_at:
+            reach_evidence.append(f"通用大陆探针重复失败，最近 {reach_at:%Y-%m-%d %H:%M} UTC")
         carriers = {}
         for vantage in (*CARRIERS, *OVERSEAS):
             # HK/SG probes only reach their local CF data centre: never use those samples.
             skip = not entry.prefix or (cdn and vantage not in CARRIERS)
             access = Access() if skip else access_for(entry.prefix, vantage, target)
-            result = grade_node(facts, vantage, access, reach_failed, policy)
+            if node.protocol == "hysteria2" and access.unreachable:
+                access = replace(access, unreachable=False)
+            result = grade_node(facts, vantage, access, policy)
             if vantage in CARRIERS:
+                successful_at = last_success.get((target, vantage))
+                evidence = list(reach_evidence[:1])
+                if evidence and successful_at:
+                    conflict = (
+                        f"证据分歧：{VANTAGE_NAMES[vantage]}探针到同一入口有成功样本，"
+                        f"最近 {successful_at:%Y-%m-%d %H:%M} UTC"
+                    )
+                    evidence.append(conflict)
+                    reach_evidence.append(conflict)
+                if evidence:
+                    result = replace(result, reasons=result.reasons + evidence)
                 carriers[vantage] = result
             route, route_at = (
                 traces.get((entry.prefix, vantage), (None, None))
@@ -156,7 +190,9 @@ def compute(nodes, stability, quality, reach, traces, policy) -> list[dict]:
                 else (None, None)
             )
             rows.append(_row(node, vantage, result, available, checked, route, route_at))
-        rows.append(_row(node, "CN", combine_cn(carriers), available, checked, None, None))
+        combined = combine_cn(carriers)
+        combined = replace(combined, reasons=combined.reasons + reach_evidence)
+        rows.append(_row(node, "CN", combined, available, checked, None, None))
     groups = defaultdict(list)
     for row in rows:
         groups[(row["_server"], row["vantage"])].append(row["grade"])
@@ -207,9 +243,16 @@ def due(last: datetime | None, now: datetime, policy: dict) -> bool:
     return last < end <= now
 
 
+def _real32(value):
+    return None if value is None else unpack("f", pack("f", value))[0]
+
+
 def refresh(sessions, settings, *, if_due: bool = False, clock=None) -> dict:
     started = perf_counter()
-    with sessions() as session:
+    with sessions.begin() as session:
+        # Serialize the snapshot and the publish to keep concurrent rounds from
+        # overwriting a newer computation with older evidence.
+        session.execute(sa.text("SELECT pg_advisory_xact_lock(hashtext('nodema_grade_refresh'))"))
         policy = load_policy(session)
         if if_due:
             last = session.scalar(sa.select(sa.func.max(NodeGrade.computed_at)))
@@ -223,18 +266,29 @@ def refresh(sessions, settings, *, if_due: bool = False, clock=None) -> dict:
             ):
                 return {"skipped": True}
         nodes, stability, quality, reach, traces = load(session, settings.freshness_hours)
-    loaded = perf_counter()
-    rows = compute(nodes, stability, quality, reach, traces, policy)
-    computed = perf_counter()
-    now = datetime.now(UTC)
-    with sessions.begin() as session:
-        # Daily finalize and an hourly round may overlap: serialize delete-all/insert.
-        session.execute(sa.text("SELECT pg_advisory_xact_lock(hashtext('nodema_grade_refresh'))"))
+        loaded = perf_counter()
+        rows = compute(nodes, stability, quality, reach, traces, policy)
+        computed = perf_counter()
+        now = datetime.now(UTC)
         before = {
-            (r.node_id, r.vantage): r.grade
-            for r in session.execute(
-                sa.select(NodeGrade.node_id, NodeGrade.vantage, NodeGrade.grade)
+            (r.node_id, r.vantage): tuple(
+                _real32(value) if field in {"score", "peak_rtt_ms", "loss"} else value
+                for field, value in zip(EXPORT_FIELDS, r[2:], strict=True)
             )
+            for r in session.execute(
+                sa.select(
+                    NodeGrade.node_id,
+                    NodeGrade.vantage,
+                    *(getattr(NodeGrade, key) for key in EXPORT_FIELDS),
+                )
+            )
+        }
+        after = {
+            (row["node_id"], row["vantage"]): tuple(
+                _real32(row[key]) if key in {"score", "peak_rtt_ms", "loss"} else row[key]
+                for key in EXPORT_FIELDS
+            )
+            for row in rows
         }
         session.execute(sa.delete(NodeGrade))
         for start in range(0, len(rows), 2000):
@@ -244,7 +298,6 @@ def refresh(sessions, settings, *, if_due: bool = False, clock=None) -> dict:
                 insert(NodeGrade).execution_options(render_nulls=True),
                 [{**row, "computed_at": now} for row in rows[start : start + 2000]],
             )
-        after = {(r["node_id"], r["vantage"]): r["grade"] for r in rows}
         changed = before != after
         invalidated = 0
         if changed:
