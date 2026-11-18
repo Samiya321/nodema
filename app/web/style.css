@@ -594,6 +594,9 @@ dd .tag { margin-left: 6px; }
 @media (max-width: 860px) {
   .app { grid-template-columns: 1fr; }
   .grid-2 { grid-template-columns: minmax(0, 1fr); }
+  .panel { grid-template-columns: minmax(0, 1fr); }
+  .panel-head .vantage, .page-actions { flex-wrap: wrap; }
+  .panel-head .vantage { overflow: visible; }
   .rail { position: static; height: auto; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 6px; padding: 8px 12px; border-right: 0; border-bottom: 1px solid var(--line); }
   .rail ul { grid-column: 1 / -1; grid-row: 2; grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .rail li a { justify-content: center; text-align: center; min-height: 36px; height: auto; padding: 4px; }
