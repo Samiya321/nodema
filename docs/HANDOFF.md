@@ -16,7 +16,7 @@
 - **2026-11-17 已发布命名修复 `d891e26` / `b76ad80`**：schema `0023_identity_naming`，同 IP 冲突不生成跨国箭头、未知入口用 `?`、核实 ASN 别名并排除占位文本，历史落地附观测时间，新 IP/ASN 不继承旧组织。API `5c9c3664-61c8-4656-a171-627aa3553c70`，Pages https://43b793dd.nodema-dashboard.pages.dev；main CI 43928480592 通过。生产复核与验证边界见 [归属命名规则](IDENTITY_NAMING.md) / STATUS。
 - **2026-11-17 命名只读审核发现待修项**：同 IP 的国家库冲突生成跨国箭头、ASN 名称被 Private Customer 等组织文本误导、未知/历史归属展示不清；详见 [审核记录](NAMING_AUDIT_2026_11_17.md)。用户后续已要求直接修复，当前修复和发布状态见 [归属命名规则](IDENTITY_NAMING.md) 与 STATUS；不要把审核阶段的“未改名”当成禁止修复。用户真实节点、大陆体验、长期配额、生产恢复不属于已完成的合成验收证明。不得把“基础链路通过”写成所有公网参数都已保证可用。
 
-**2026-11-18 生产数据库已迁到用户指定主机的自建 PostgreSQL 17。** Pages、Worker 和 GitHub Actions 继续按既有分工运行；旧 Neon 库只读保留供回退。详见 [云端记录](CLOUD_DEPLOYMENT.md) 和 [生产手册](PRODUCTION_OPERATIONS.md)。
+**2026-11-18 生产数据库已迁到用户指定主机的自建 PostgreSQL 17。** Pages、Worker 和 GitHub Actions 继续按既有分工运行；旧 Neon 项目已删除，灾备使用 Actions 加密备份。详见 [云端记录](CLOUD_DEPLOYMENT.md) 和 [生产手册](PRODUCTION_OPERATIONS.md)。
 
 先看 git 与实际云端状态。历史记录中的“尚未导入真实节点”和表行数不代表此刻数据库为空；用户可以随时从 Dashboard 导入，禁止据此清库。
 

@@ -13,7 +13,7 @@
 - `private/production-inventory.json`：交接时只读盘点，只有表行数/schema/批次状态和时间，不含节点配置。不是备份。
 - `private/nodema-login.txt`：用户登录资料，勿在聊天转贴。
 
-先检查 `gh auth status`、Wrangler 当前登录账号和配置目标。GitHub/Cloudflare/Neon 的本机登录态不随 Git clone 搬家；不要重新开户建同名资源来解决授权缺失。Neon CLI 凭据在本机系统 keyring，不能假定存在可复制的 NEON_API_KEY。
+先检查 `gh auth status`、Wrangler 当前登录账号和配置目标。GitHub 和 Cloudflare 的本机登录态不随 Git clone 搬家；服务器通过私密交接中的 SSH 配置接管。
 
 ## 接管时只读检查
 
@@ -81,7 +81,6 @@ PY
 | 订阅 404/鉴权失败 | 检查 token、撤销、到期；不要将完整私有 URL 贴到公开 issue。旧 token hash 不能还原原 token，确需更换由用户触发 |
 | 入口国家/ASN 未知 | 看 geoip-pack 输出；缺记录/校验失败/未安装 MMDB 都可能，不代表节点 DOWN。GitHub 源无需新建 MaxMind 账号，确认 GeoIP provider 即可 |
 | DB/TLS 连接失败 | Neon 可能休眠、网络可能暂时不通；核对连接角色、TLS、CA、Hyperdrive。保留 verify-full，不关闭 TLS、不重建库 |
-| Neon 公网传输快用完 | Free 每月 5 GB，用完后实例暂停到下个计费周期（数据保留）。所有从 Neon 读出的数据都计入：Hyperdrive 给 Worker 的查询、Actions 的读、本机脚本和每次 `pg_dump`。先停每周备份（`gh workflow disable backup.yml`，有新鲜本地备份时）、避免本机整库备份和对生产的大查询（节点页“全部状态”约 13 MB/次），周期重置后再 `gh workflow enable backup.yml`。用量以 Neon 控制台项目概览为准 |
 | 容量或分钟数增长 | 查运行与用量、活跃任务和保留设置；cleanup 会归档并删除过期明细，应了解其影响后执行，不为验收随意运行 |
 
 每日主流程北京时间 04:17 由 API Worker Cron 派发（不受 GitHub 定时延迟影响），备份每月 1、15 日 UTC 21:41（仓库变量 `BACKUP_SKIP_UNTIL=YYYY-MM-DD` 可跳过此日期之前的定时备份）。转换“不支持”的原因可手动运行只读的 `diagnose.yml` 查看（约 3 MB 传输）。手工执行固定工作流前确认本次任务允许生产写入/检测：
@@ -95,9 +94,11 @@ gh workflow run export-build.yml --repo Samiya321/nodema --ref main
 # 恢复指定 run 使用 daily-check.yml 的 run_id 输入，不把示例 ID 当真实 ID
 ```
 
+日检的初次分片执行后，会从同一批次快照选出未完成且租约已释放或过期的分片，最多追加一轮。恢复计划最多等待 315 秒，活跃租约继续保护。收尾仍以数据库完成状态为准，部分批次已确认可用的结果先发，失败结果待完整批次发布。
+
 接入测量 `entry-probe.yml` 没有 GitHub 定时：API Worker 的 Cron Trigger（`wrangler.jsonc` 的 `triggers.crons`，UTC 每小时 :30）用 `GITHUB_DISPATCH_TOKEN` 调用 workflow dispatch 启动它。调度令牌过期或失去 Actions 写权限时测量会停止：总览“接入测量”的最近一次时间不再更新；Worker 只记录失败代码。想暂停测量用设置 → 质量分级规则 → 接入测量，不要删除 cron。
 
-等级重算（`nodema grade refresh`）每次重写约 4 万行，只在 Actions 内运行（`daily-check.yml` 收尾、`entry-probe.yml` 到期时）。从国内本机对 Neon 执行会因上传慢而持续数十分钟并长期持有事务，2026-11-14 实测超过 40 分钟后中止。
+等级重算（`nodema grade refresh`）每次重写约 4 万行，只在 Actions 内运行（`daily-check.yml` 收尾、`entry-probe.yml` 到期时）。需要主动按已有样本重新定档时，可用 `entry-probe.yml` 的 `refresh_only=true`，跳过新的外部测量并执行重算与订阅构建。
 
 ## 自建 PostgreSQL 运维
 
@@ -106,7 +107,7 @@ gh workflow run export-build.yml --repo Samiya321/nodema --ref main
 - GitHub 托管 Runner 通过专用 SSH 账号转发至数据库，只允许本地转发到固定数据库端口。仓库 Secret `NODEMA_POSTGRES_SSH` 包含专用密钥、SSH 主机公钥和数据库公开 CA，`NODEMA_DATABASE_VIA_SSH=true` 启用私有连接。备份 Job 的 PostgreSQL 客户端容器使用 GitHub Linux Runner 的 host 网络访问回环并挂载 CA。数据库 URL 仍分别通过三个原有 Secrets 下发。
 - 三个运行入口保留 TLS 校验及 owner/API 角色隔离。宿主机上通过 `docker compose exec -T postgres psql -p 25432 -U postgres` 执行限定的维护操作。轮换服务器 TLS 证书前用 `openssl verify -purpose sslserver -verify_ip 127.0.0.1` 和已上传 CA 校验，更新后重载 PostgreSQL。更换 CA 时同步 Cloudflare VPC 与 Actions 信任链；更换 SSH 主机密钥时经可信管理会话核对后更新 GitHub Secret。
 - 当前主机还承载其他业务。优先观察容器是否重启、内存和磁盘水位、Actions 是否完成，以及最近一次异机加密备份是否实际产出。升级镜像前完成新鲜备份及隔离恢复演练。
-- 退回旧库前暂停写入，核对切换后是否已有新记录。需要保留的新系统写入应先备份、迁回并验证，再解除旧库只读和恢复入口。旧 Neon 库保留用于回退，需考虑剩余出站额度。运行用量页面保留 Neon 历史样本，自建流量使用主机/云厂商的实际计量。
+- 旧 Neon 已退役。应用回退沿用自建库。需要恢复数据时，先在隔离目标验证最近的自建库加密备份，核对备份后新增的写入，再安排恢复。运行用量保留 Neon 历史样本，自建流量使用主机或云厂商计量。
 
 ## 备份、恢复与数据库搬家
 
@@ -126,6 +127,6 @@ gh workflow run export-build.yml --repo Samiya321/nodema --ref main
 
 ## 换机器或换维护者
 
-只 clone 仓库不足以操作生产。新维护者需要：仓库/Actions、Cloudflare 账号资源、Neon 项目的授权；对应生产配置与密钥；如需恢复则要加密备份及匹配密钥。通过用户认可的安全渠道转移，不在聊天、issue 或 Git 中传递。
+只 clone 仓库不足以操作生产。新维护者需要：仓库/Actions、Cloudflare 账号资源、自建数据库服务器的授权；对应生产配置与密钥；如需恢复则要加密备份及匹配密钥。通过用户认可的安全渠道转移，不在聊天、issue 或 Git 中传递。
 
-本机 private 也不是数据库本体，复制目录不能复制当前 Neon 数据。OS keyring 登录态需新机器重新授权。转移后先只读核对目标/版本/新鲜度与 HMAC，再做具体任务。不要因为缺少 private 而初始化新密钥覆盖现网；如果权限或必要密钥确实缺失，列出缺什么及用途，交由用户补充。
+本机 private 也不是数据库本体，复制目录不能复制当前数据库数据。OS keyring 登录态需新机器重新授权。转移后先只读核对目标/版本/新鲜度与 HMAC，再做具体任务。不要因为缺少 private 而初始化新密钥覆盖现网；如果权限或必要密钥确实缺失，列出缺什么及用途，交由用户补充。

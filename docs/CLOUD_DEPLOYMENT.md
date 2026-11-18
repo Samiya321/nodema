@@ -8,11 +8,15 @@
 | API | https://nodema-api.simb.workers.dev；管理接口需要管理员鉴权 |
 | Echo | https://nodema-echo.simb.workers.dev；仅返回调用者的观测信息 |
 | 源码 | https://github.com/Samiya321/nodema |
-| 数据库 | 自建 PostgreSQL 17.12，用户指定云主机，目录 `/root/nodema-postgres`；当前 schema `0023_identity_naming`。迁移前 Neon 保留为只读回退来源 |
+| 数据库 | 自建 PostgreSQL 17.12，用户指定云主机，目录 `/root/nodema-postgres`；当前 schema `0023_identity_naming`。旧 Neon 项目已删除 |
 | API 数据库权限 | 独立角色，授予业务 DML；数据库迁移使用单独的 owner 连接 |
 | Hyperdrive | 经 Workers VPC 和 Cloudflare Tunnel 连接本机数据库；禁用查询缓存，源站连接数限制 5 |
 
 管理员密钥、数据库连接、HMAC/AES 密钥和 GitHub 调度 token 保存在本地 `private/` 以及对应平台 Secrets 中，不在本页或 Git 仓库公开。
+
+## 2026-11-18 退役 Neon
+
+按用户明确指令删除旧 Nodema Neon 项目，控制面再次读取确认项目不存在。删除前验证生产 readiness 与生产数据库入口指向自建库；[自建库加密备份 44231649933](https://github.com/Samiya321/nodema/actions/runs/44231649933) 在独立 PostgreSQL 17 完整恢复，核对 `0023_identity_naming`、38 张表、56,597 个节点和 123,153 条检测明细。删除旧用量 Secret 和项目变量，历史用量采样保留。本机下载备份已移至废纸篓。
 
 ## 2026-11-18 第十九次发布：迁移到自建 PostgreSQL
 
