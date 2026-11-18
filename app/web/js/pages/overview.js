@@ -1,6 +1,7 @@
 import { KIND, SCAN_KIND, ago, api, badge, bytes, daysUntil, empty, errorText, flag, h } from "../core.js";
 import { loadPipeline, openTestDialog, syncSources } from "../strip.js";
 import { defaultVantage, distribution, gradeBadge, vantageName, vantageSwitch } from "../grades.js";
+import { pageHref, scanHref, sourceHref } from "../lineage.js";
 
 const PROBE_ERRORS = { NETWORK: "无法连接 Globalping", TIMEOUT: "测量超时", INVALID_RESPONSE: "Globalping 返回异常" };
 
@@ -97,9 +98,11 @@ function groupPanel(key, data) {
   const up = (statuses.UP || 0) + (statuses.DEGRADED || 0);
   const total = data?.total || 0;
   const rows = [
-    ["可用", up, "ok", "UP"],
+    ["可用", up, "ok", "AVAILABLE"],
     ["不可用", statuses.DOWN || 0, "bad", "DOWN"],
-    ["未检测 / 过期", (statuses.UNKNOWN || 0) + (statuses.STALE || 0), "mute", "UNKNOWN"],
+    ["未检测", statuses.UNKNOWN || 0, "mute", "UNKNOWN"],
+    ["结果过期", statuses.STALE || 0, "mute", "STALE"],
+    ["不支持", statuses.UNSUPPORTED || 0, "mute", "UNSUPPORTED"],
   ];
   return h(
     "section",
@@ -108,7 +111,7 @@ function groupPanel(key, data) {
       "header",
       { class: "panel-head" },
       h("h2", {}, KIND[key] + "节点"),
-      h("a", { href: `#/nodes?node_group=${key}` }, "查看全部"),
+      h("a", { href: `#/nodes?node_group=${key}&status=ALL` }, "查看全部"),
     ),
     h(
       "p",
@@ -142,12 +145,12 @@ function attention(summary) {
   ];
   for (const [risk, tone, label] of kinds) {
     const group = summary.airports.filter((s) => s.risk === risk);
-    for (const source of group) items.push([tone, label(source), "#/airports"]);
+    for (const source of group) items.push([tone, label(source), sourceHref(source.id)]);
     if (group[0]?.total > group.length)
-      items.push([tone, `另有 ${group[0].total - group.length} 条同类机场提醒`, "#/airports"]);
+      items.push([tone, `另有 ${group[0].total - group.length} 条同类机场提醒`, pageHref("sources", { tab: "airport", state: risk })]);
   }
   for (const source of summary.substores)
-    items.push(["bad", `Sub-Store「${source.name}」无法访问：${errorText(source.last_error_code)}`, "#/substore?state=failed"]);
+    items.push(["bad", `Sub-Store「${source.name}」无法访问：${errorText(source.last_error_code)}`, sourceHref(source.id, "children")]);
   if (summary.substores[0]?.total > summary.substores.length)
     items.push(["bad", `另有 ${summary.substores[0].total - summary.substores.length} 个 Sub-Store 无法访问`, "#/substore?state=failed"]);
   if (summary.broken) items.push(["warn", `${summary.broken} 个来源之前正常、最近拉取失败`, "#/sources?status=FAILED&history=worked"]);
@@ -183,8 +186,6 @@ export async function render(root, { params, go }) {
     step
       ? h("section", { class: "next-step" }, h("div", {}, h("h2", {}, step[0]), h("p", { class: "muted" }, step[1])), step[2])
       : null,
-    h("div", { class: "grid-2" }, GROUPS.map((key) => groupPanel(key, overview.groups?.[key]))),
-    h("div", { class: "grid-2" }, qualityPanel(probe, vantage, go), probePanel(probe)),
     h(
       "div",
       { class: "grid-2" },
@@ -203,13 +204,13 @@ export async function render(root, { params, go }) {
       h(
         "section",
         { class: "panel" },
-        h("header", { class: "panel-head" }, h("h2", {}, "最近一次检测"), h("a", { href: "#/scans" }, "全部记录")),
+        h("header", { class: "panel-head" }, h("h2", {}, "最近一次检测"), h("a", { href: "#/ops" }, "全部记录")),
         latest
           ? h(
               "dl",
               { class: "pairs" },
               h("dt", {}, "批次"),
-              h("dd", {}, `${latest.scan_date} ${SCAN_KIND[latest.kind] || latest.kind} · ${scopeLabel(latest, overview)}`),
+              h("dd", {}, h("a", { href: scanHref(latest.id) }, `${latest.scan_date} ${SCAN_KIND[latest.kind] || latest.kind} · ${scopeLabel(latest, overview)}`)),
               h("dt", {}, "状态"),
               h("dd", {}, badge(latest.status)),
               h("dt", {}, "节点"),
@@ -217,11 +218,13 @@ export async function render(root, { params, go }) {
               h("dt", {}, "开始"),
               h("dd", {}, ago(latest.started_at)),
               h("dt", {}, "最近完整日检"),
-              h("dd", {}, complete ? `${complete.scan_date} · ${ago(complete.finished_at)}` : "尚无"),
+              h("dd", {}, complete ? h("a", { href: scanHref(complete.id) }, `${complete.scan_date} · ${ago(complete.finished_at)}`) : "尚无"),
             )
           : empty("还没有检测记录", "点击顶部的检测按钮开始。"),
       ),
     ),
+    h("div", { class: "grid-2" }, GROUPS.map((key) => groupPanel(key, overview.groups?.[key]))),
+    h("div", { class: "grid-2" }, qualityPanel(probe, vantage, go), probePanel(probe)),
     h(
       "section",
       { class: "panel" },

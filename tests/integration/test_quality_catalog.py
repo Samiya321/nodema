@@ -168,6 +168,40 @@ def test_available_nodes_keep_fresh_status_totals_and_page_bounds(
     assert catalog.page({**filters, "status": "STALE"})["total"] == 1
 
 
+def test_trace_from_generated_members_through_every_recorded_parent(
+    service, monitor_settings, fixture_bytes
+):
+    direct, catalog, _ = seed(service, monitor_settings, fixture_bytes, days=1)
+    root = service.create_source(
+        name="Synthetic root", source_type=SourceType.RAW_TEXT, payload=b"synthetic"
+    )["id"]
+    middle = service.create_source(
+        name="Synthetic middle", source_type=SourceType.RAW_TEXT, payload=b"synthetic"
+    )["id"]
+    from app.database.models import Source
+
+    with service.sessions.begin() as session:
+        session.get(Source, middle).parent_source_id = root
+        session.get(Source, direct).parent_source_id = middle
+    detail = catalog.source_lineage(direct, "current", limit=1)
+    assert [item["id"] for item in detail["chain"]] == list(map(str, [root, middle, direct]))
+    assert detail["page"]["total"] == 2 and len(detail["page"]["items"]) == 1
+    exports = ExportService(service, monitor_settings)
+    filters = {"source_id": str(direct), "limit": 1, "quality_buckets": ["NONE", "S"]}
+    assert exports.preview("json", filters) == {"count": 1}
+    assert exports.preview("json", {**filters, "quality_buckets": ["OFF", "S"]}) == {"count": 0}
+    profile = exports.create("json", filters, build=True)
+    members = exports.member_page(profile["id"])
+    assert members["version"] == 1 and members["total"] == 1
+    assert exports.member_page(profile["id"], version=0)["changed"]
+    assert profile["token"] not in str(members)
+    from uuid import UUID
+
+    node = catalog.node(UUID(members["items"][0]["id"]))
+    assert node["sources"][0]["chain"] == detail["chain"]
+    assert [(item["id"], item["version"]) for item in node["exports"]] == [(profile["id"], 1)]
+
+
 def test_insufficient_stale_missing_and_poor_history_are_distinct(
     service, monitor_settings, fixture_bytes
 ):

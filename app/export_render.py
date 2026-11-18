@@ -174,10 +174,10 @@ def render_snapshot(assets, settings, format, filters, at, heartbeat=None):
             session.scalar(sa.select(NamingRule.template).where(NamingRule.id == 1))
             or settings.name_template
         )
-        cutoff = at - timedelta(hours=settings.freshness_hours)
-        if filters.get("last_success_after"):
-            cutoff = max(cutoff, datetime.fromisoformat(filters["last_success_after"]))
-        filters.update(status="UP", eligible=True, last_success_after=cutoff.isoformat())
+        filters = session.scalar(
+            sa.text("SELECT nodema_export_candidate_filters(CAST(:filters AS jsonb),:at,:fresh)"),
+            dict(filters=json.dumps(filters), at=at, fresh=settings.freshness_hours),
+        )
         skipped_ids = set()
         writer, members, deadline = (
             Renderer(format),

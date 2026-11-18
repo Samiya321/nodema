@@ -134,29 +134,18 @@ async function airports(rows: Rows, freshness: number) {
       s.last_success_at,s.created_at,${urlHost} AS url_host,
       nodema_source_usable(s.enabled,s.deleted_at,s.expires_at,s.traffic_upload,
         s.traffic_download,s.traffic_total) AS usable,
-      (SELECT count(*)::int FROM node_sources ns WHERE ns.source_id=s.id) AS node_count,
-      availability.up_count, availability.stale_up_count
+      availability.*
      FROM sources s
-     CROSS JOIN LATERAL (
-       SELECT count(*) FILTER (WHERE c.last_checked_at>=now()-make_interval(hours=>$1))::int AS up_count,
-         count(*) FILTER (WHERE c.last_checked_at<now()-make_interval(hours=>$1))::int AS stale_up_count
-       FROM node_sources ns JOIN nodes n ON n.id=ns.node_id
-       JOIN node_current_status c ON c.node_id=ns.node_id
-       WHERE ns.source_id=s.id AND ns.is_present AND n.enabled AND c.status IN ('UP','DEGRADED')
-         AND nodema_source_usable(s.enabled,s.deleted_at,s.expires_at,s.traffic_upload,s.traffic_download,s.traffic_total)
-     ) availability
+     CROSS JOIN LATERAL nodema_source_counts(s,$1) availability
      WHERE s.deleted_at IS NULL AND nodema_source_kind(s.kind,s.detected_kind)='AIRPORT'
      ORDER BY s.name,s.id`,
     [freshness],
   );
   const providerCounts = await rows(
-    `SELECT s.provider_id,count(DISTINCT ns.node_id)::int AS up_count FROM sources s
-     JOIN node_sources ns ON ns.source_id=s.id AND ns.is_present
-     JOIN nodes n ON n.id=ns.node_id AND n.enabled
-     JOIN node_current_status c ON c.node_id=n.id AND c.status IN ('UP','DEGRADED')
-       AND c.last_checked_at>=now()-make_interval(hours=>$1)
-     WHERE nodema_source_kind(s.kind,s.detected_kind)='AIRPORT'
-       AND nodema_source_usable(s.enabled,s.deleted_at,s.expires_at,s.traffic_upload,s.traffic_download,s.traffic_total)
+    `SELECT s.provider_id,count(DISTINCT r.node_id)::int AS up_count FROM sources s
+     CROSS JOIN LATERAL nodema_source_node_rows(s,$1) r
+     WHERE s.deleted_at IS NULL AND nodema_source_kind(s.kind,s.detected_kind)='AIRPORT'
+       AND r.availability='current'
      GROUP BY s.provider_id`,
     [freshness],
   );
@@ -208,11 +197,11 @@ async function overviewAttention(rows: Rows) {
     SELECT *,row_number() OVER (PARTITION BY risk ORDER BY expires_at NULLS LAST,id) AS pos,
       count(*) OVER (PARTITION BY risk)::int AS total FROM airport_risks WHERE risk IS NOT NULL
   ), substores AS (
-    SELECT name,last_error_code,count(*) OVER ()::int AS total FROM sources
+    SELECT id,name,last_error_code,count(*) OVER ()::int AS total FROM sources
     WHERE deleted_at IS NULL AND detected_kind='SUBSTORE' AND last_sync_status='FAILED'
     ORDER BY last_checked_at DESC NULLS LAST,id LIMIT 3
   ) SELECT
-    coalesce((SELECT jsonb_agg(to_jsonb(r) - 'id' - 'pos' ORDER BY r.risk,r.pos) FROM ranked r WHERE pos<=3),'[]') AS airports,
+    coalesce((SELECT jsonb_agg(to_jsonb(r) - 'pos' ORDER BY r.risk,r.pos) FROM ranked r WHERE pos<=3),'[]') AS airports,
     coalesce((SELECT jsonb_agg(to_jsonb(s)) FROM substores s),'[]') AS substores,
     (SELECT count(*) FILTER (WHERE last_success_at IS NOT NULL)::int FROM sources
       WHERE deleted_at IS NULL AND last_sync_status='FAILED' AND detected_kind<>'SUBSTORE') AS broken,

@@ -2,6 +2,7 @@ import { Client } from "pg";
 import { SafeError, digest, equal, token } from "./crypto.js";
 import { handleExports } from "./export-api.js";
 import { usageSummary } from "./usage.js";
+import { sourceLineage } from "./lineage.js";
 import { importLinks, subscriptionURL } from "./source-bulk.js";
 import { handleManagement, providerName } from "./management.js";
 import {
@@ -42,7 +43,7 @@ const sourceColumns =
   "id,name,type,format_hint,enabled,sync_interval_seconds,content_hash,applied_hash,parser_version,last_checked_at,sync_requested_at,last_synced_at,last_sync_status,last_error_code,last_parse_summary,revision,deleted_at," +
   "kind,detected_kind,parent_source_id,origin_label,user_agent,provider_id,traffic_upload,traffic_download,traffic_total,expires_at,userinfo_at,profile_title,profile_url,last_success_at,created_at," +
   "substring(convert_from(url_data,'UTF8') from '^[A-Za-z]+://([^/:?#]+)') AS url_host";
-const SCHEMA_REVISION = "0024_node_list_reads";
+const SCHEMA_REVISION = "0025_dashboard_lineage";
 // Imports and edits never start Actions; the dashboard asks the user to sync/test.
 const MANUAL_PIPELINE = { dispatched: false, reason: "MANUAL_SYNC" };
 function sourceKind(value: unknown): string {
@@ -396,6 +397,8 @@ export async function handle(
       body,
       queue: () => queueExportBuild(env),
       headers: securityHeaders,
+      freshness: number(env.FRESHNESS_HOURS, 36),
+      defaultTemplate: env.NAME_TEMPLATE,
     });
     if (exported) return exported;
     const managed = await handleManagement(request, path, method, {
@@ -604,12 +607,11 @@ export async function handle(
           await page(vantage ? { id, vantage } : { id }, "short_id:asc", 0, 1)
         ).items[0];
         if (!node) throw new SafeError("NODE_NOT_FOUND", 404);
+        const lineage = (await rows("SELECT nodema_node_lineage($1) AS lineage", [id]))[0].lineage as Row;
         return json({
           ...node,
-          sources: await rows(
-            "SELECT ns.source_id,ns.is_present,ns.first_seen_at,ns.last_seen_at,s.name,s.enabled,(s.deleted_at IS NOT NULL) AS deleted FROM node_sources ns JOIN sources s ON s.id=ns.source_id WHERE ns.node_id=$1 ORDER BY s.name",
-            [id],
-          ),
+          sources: lineage.sources,
+          exports: lineage.exports,
           published_observation:
             (
               await rows(
@@ -627,14 +629,10 @@ export async function handle(
     if (path === "/api/sources" && method === "GET")
       return json(
         await rows(
-          `SELECT ${sourceColumns},CASE WHEN detected_kind='UNKNOWN' AND type='SUBSCRIPTION_URL'
-              AND convert_from(url_data,'UTF8') ~ '/api/subs/?([?#].*)?$' THEN 'SUBSTORE'
-              ELSE nodema_source_kind(kind,detected_kind) END AS effective_kind,
-            (SELECT count(*)::int FROM node_sources ns WHERE ns.source_id=sources.id) AS node_count,
-            (SELECT count(*)::int FROM node_sources ns WHERE ns.source_id=sources.id AND ns.is_present) AS present_count,
-            (SELECT count(*)::int FROM node_sources ns JOIN node_current_status c ON c.node_id=ns.node_id
-              WHERE ns.source_id=sources.id AND c.status IN ('UP','DEGRADED')) AS up_count
-           FROM sources WHERE deleted_at IS NULL ORDER BY created_at,id`,
+          `SELECT ${sourceColumns},nodema_source_effective_kind(sources) AS effective_kind,counts.*
+           FROM sources CROSS JOIN LATERAL nodema_source_counts(sources,$1) counts
+           WHERE deleted_at IS NULL ORDER BY created_at,id`,
+          [number(env.FRESHNESS_HOURS, 36)],
         ),
       );
     const sourceInput = async (id: string, type: string, data: string) => {
@@ -686,6 +684,10 @@ export async function handle(
           : { dispatched: false, reason: "NO_NEW_SOURCES" },
       });
     }
+    const sourceLineageMatch = /^\/api\/sources\/([^/]+)\/lineage$/.exec(path);
+    if (sourceLineageMatch && method === "GET")
+      return json(await sourceLineage(rows, uuid(sourceLineageMatch[1]),
+        number(env.FRESHNESS_HOURS, 36), env.NAME_TEMPLATE, url.searchParams));
     const sourceMatch = /^\/api\/sources\/([^/]+)(\/sync)?$/.exec(path);
     if (sourceMatch) {
       if (sourceMatch[2] && method !== "POST")

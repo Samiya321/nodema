@@ -8,6 +8,7 @@ import { countryView, revealCountry } from "./node-countries.js";
 import { asnView } from "./node-asn.js";
 import { ALL, API_KEYS, AVAILABLE, PERCENT, display, label, openPanel } from "./node-filters.js";
 import { BUCKET_HINT, BUCKET_TEXT, VANTAGES } from "../grades.js";
+import { pageHref } from "../lineage.js";
 
 const SIZES = [50, 100, 200];
 const VIEWS = [["", "列表"], ["country", "按国家"], ["asn", "ASN 排行"]];
@@ -58,6 +59,11 @@ function legacyBuckets(params) {
 }
 
 export async function render(root, { params, go, isCurrent }) {
+  if (params.has("node")) {
+    const { nodeDetail } = await import("./node-detail.js");
+    await nodeDetail(root, params.get("node"), params.get("vantage"), () => render(root, { params, go, isCurrent }), isCurrent);
+    return;
+  }
   const view = VIEWS.some(([v]) => v === params.get("by")) ? params.get("by") || "" : "";
   const chosen = new Set((params.get("g") ? params.get("g").split(",") : legacyBuckets(params)).filter((b) => BUCKETS.includes(b)));
   const quick = new Set(QUICK.filter(([key]) => params.get(key) === "1").map(([key]) => key));
@@ -295,6 +301,13 @@ export async function render(root, { params, go, isCurrent }) {
   // ---- header ----
   const available = loaded.filter((n) => n.status === "UP" || n.status === "DEGRADED").length;
   const subtitle = filters.status ? `${count(loaded.length)} 个节点，其中可用 ${count(available)} 个` : `${count(loaded.length)} 个可用节点`;
+  const exportable = sorted.some((n) => n.status === "UP" && n.enabled) && filters.eligible !== "false";
+  const exportParams = new URLSearchParams({ ...filters, new: "1", vantage });
+  exportParams.delete("status");
+  exportParams.delete("eligible");
+  if (chosen.size) exportParams.set("g", [...chosen].join(","));
+  if (quick.has("udp")) exportParams.set("udp", "true");
+  if (quick.has("home")) exportParams.set("exit_ip_type", "RESIDENTIAL");
   root.append(
     h(
       "header",
@@ -313,6 +326,7 @@ export async function render(root, { params, go, isCurrent }) {
       h(
         "div",
         { class: "page-actions" },
+        exportable ? h("a", { class: "button", href: pageHref("exports", exportParams) }, "用当前筛选创建订阅") : null,
         h("span", { class: "loaded", title: "列表会缓存 10 分钟以节省数据库流量" }, `${ago(new Date(loadedAt).toISOString())}载入`),
         h("button", { type: "button", onclick: () => { invalidateNodes(); go("nodes", params); } }, "刷新"),
       ),

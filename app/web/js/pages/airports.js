@@ -1,5 +1,6 @@
 import { api, badge, busy, bytes, confirm, date, daysUntil, dialog, empty, errorText, field, h, meter, select, toast } from "../core.js";
 import { editSource, showSourceLink } from "./sources.js";
+import { sourceHref } from "../lineage.js";
 
 const STATES = {
   ok: ["可用", "ok"],
@@ -126,20 +127,20 @@ function row(s, providers, reload) {
       "div",
       { class: "name-cell" },
       // The airport's own name first; where the link came from underneath.
-      h("span", { class: "node-name", title: s.name }, s.profile_title || s.origin_label || s.name),
+      h("a", { class: "node-name", title: s.name, href: sourceHref(s.id) }, s.profile_title || s.origin_label || s.name),
       h(
         "span",
         { class: "muted small" },
-        [s.parent_source_id ? `来自「${s.parent_name || "已删除的 Sub-Store"}」` : "直接导入", s.url_host].filter(Boolean).join(" · "),
+        [s.parent_source_id ? h("a", { href: sourceHref(s.parent_source_id, "children") }, `上级来源 ${s.parent_name || "查看记录"}`) : "直接导入", s.url_host ? ` · ${s.url_host}` : ""],
       ),
     ),
     h("span", { class: "badge " + tone }, label),
     gauge(s),
     expiry(s),
     h("div", { class: "name-cell" },
-      h("strong", { class: "num" }, `${s.up_count} 当前可用`),
-      h("a", { class: "small", href: `#/nodes?source_id=${s.id}&status=ALL` }, `${s.node_count} 个历史关联`),
-      s.stale_up_count ? h("span", { class: "muted small" }, `${s.stale_up_count} 个结果已过期`) : null,
+      h("a", { class: "num", href: sourceHref(s.id, "current") }, `${s.up_count} 当前可用`),
+      h("a", { class: "small", href: sourceHref(s.id, "history") }, `${s.node_count} 全部关联`),
+      s.stale_up_count ? h("a", { class: "small", href: sourceHref(s.id, "stale") }, `${s.stale_up_count} 通过但已过期`) : null,
     ),
     h("div", { class: "name-cell" }, badge(s.last_sync_status), s.last_error_code ? h("span", { class: "small bad-text" }, errorText(s.last_error_code)) : null),
     h(
@@ -199,7 +200,7 @@ export async function render(root, { params, go, refresh, refreshStrip }) {
     .sort((a, b) => (b.items.some((x) => x.usable) - a.items.some((x) => x.usable)) || upOf(b) - upOf(a));
 
   root.append(
-    h("h1", { class: "page-title" }, "机场"),
+    h("h1", { class: "page-title" }, "机场订阅"),
     h(
       "dl",
       { class: "stats" },

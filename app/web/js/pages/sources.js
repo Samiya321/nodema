@@ -17,6 +17,7 @@ import {
   toast,
 } from "../core.js";
 import { syncSources } from "../strip.js";
+import { sourceHref } from "../lineage.js";
 
 const TYPES = { SUBSCRIPTION_URL: "订阅链接", RAW_TEXT: "节点文本", UPLOADED_FILE: "上传文件", SINGLE_URI: "单个节点" };
 const IMPORT_PART = 100; // links per bulk request; the list itself is unlimited
@@ -310,15 +311,12 @@ export async function render(root, { params, go, refresh, refreshStrip }) {
   const childSummary = (s) => {
     const kids = children.get(s.id) || [];
     const failed = kids.filter((k) => k.last_sync_status === "FAILED").length;
-    const nodes = kids.reduce((n, k) => n + (k.node_count || 0), 0);
-    const up = kids.reduce((n, k) => n + (k.up_count || 0), 0);
     if (!kids.length) return h("span", { class: "muted small" }, "同步后生成子来源");
     return h(
       "button",
       { type: "button", class: "link", "aria-expanded": String(expanded.has(s.id)), onclick: () => { expanded.has(s.id) ? expanded.delete(s.id) : expanded.add(s.id); draw(); } },
       `${expanded.has(s.id) ? "▾" : "▸"} ${kids.length} 个子来源`,
       failed ? h("span", { class: "bad-text" }, ` · ${failed} 失败`) : "",
-      h("span", { class: "muted small" }, ` · ${up} 可用 / ${nodes} 节点`),
     );
   };
   const columns = [
@@ -329,8 +327,9 @@ export async function render(root, { params, go, refresh, refreshStrip }) {
         h(
           "div",
           { class: "name-cell" + (nested && s.parent_source_id ? " child" : "") },
-          h("span", { class: "node-name" }, s.name, s.enabled ? "" : h("span", { class: "muted" }, "（已暂停）")),
-          h("span", { class: "muted small" }, [TYPES[s.type], s.url_host, !nested && s.parent_source_id ? `来自 ${names[s.parent_source_id] || "已删除的 Sub-Store"}` : ""].filter(Boolean).join(" · ")),
+          h("div", {}, h("a", { class: "node-name", href: sourceHref(s.id, s.effective_kind === "SUBSTORE" ? "children" : null) }, s.name), s.enabled ? "" : h("span", { class: "muted" }, "（已暂停）")),
+          h("span", { class: "muted small" }, [TYPES[s.type], s.url_host].filter(Boolean).join(" · ")),
+          s.parent_source_id ? h("a", { class: "small", href: sourceHref(s.parent_source_id, "children") }, `上级来源 ${names[s.parent_source_id] || "查看记录"}`) : null,
         ),
     },
     {
@@ -344,7 +343,12 @@ export async function render(root, { params, go, refresh, refreshStrip }) {
     {
       label: "节点",
       class: "num",
-      render: (s) => (s.effective_kind === "SUBSTORE" ? (nested ? childSummary(s) : h("a", { href: "#/substore" }, "见子来源")) : h("a", { href: `#/nodes?source_id=${s.id}` }, `${s.up_count} 可用 / ${s.node_count}`)),
+      render: (s) => s.effective_kind === "SUBSTORE"
+        ? (nested ? childSummary(s) : h("a", { href: sourceHref(s.id, "children") }, "查看子来源"))
+        : h("div", { class: "name-cell" },
+          h("a", { href: sourceHref(s.id, "current") }, `${s.up_count} 当前可用`),
+          s.stale_up_count ? h("a", { class: "small", href: sourceHref(s.id, "stale") }, `${s.stale_up_count} 通过但已过期`) : null,
+          h("a", { class: "small", href: sourceHref(s.id, "history") }, `${s.node_count} 全部关联`)),
     },
     { label: "最近成功", render: (s) => ago(s.last_success_at) },
     {

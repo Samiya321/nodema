@@ -54,6 +54,7 @@ export const filterKeys = new Set([
   "vantage",
   "quality_grade",
   "min_quality_grade",
+  "quality_buckets",
   "max_peak_rtt_ms",
   "max_peak_loss",
   "min_avail_7d",
@@ -83,7 +84,7 @@ export function filtersFromParams(params: URLSearchParams): Row {
       if (!["true", "false"].includes(value))
         throw new SafeError("INVALID_NODE_QUERY");
       result[key] = value === "true";
-    } else if (key === "tags")
+    } else if (key === "tags" || key === "quality_buckets")
       result[key] = value
         .split(",")
         .map((v) => v.trim())

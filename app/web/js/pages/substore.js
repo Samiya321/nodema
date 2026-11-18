@@ -1,5 +1,6 @@
 import { KIND, ago, api, badge, busy, confirm, debounce, dialog, empty, errorText, field, h, pager, select, table, toast } from "../core.js";
 import { syncSources } from "../strip.js";
+import { sourceHref } from "../lineage.js";
 
 function validity(s) {
   if (s.last_sync_status === "NEVER" || !s.last_checked_at) return ["未同步", "mute"];
@@ -13,10 +14,10 @@ async function children(store) {
   const detail = await api("/substores/" + store.id);
   const missing = new Set(store.last_parse_summary?.children?.missing_from_index || []);
   const columns = [
-    { label: "子来源", render: (c) => h("div", { class: "name-cell" }, h("span", { class: "node-name" }, c.origin_label || c.name), h("span", { class: "muted small" }, c.type === "RAW_TEXT" ? "本地节点" : c.url_host || "远程订阅")) },
+    { label: "子来源", render: (c) => h("div", { class: "name-cell" }, h("a", { class: "node-name", href: sourceHref(c.id), onclick: (e) => e.currentTarget.closest("dialog")?.close() }, c.origin_label || c.name), h("span", { class: "muted small" }, c.type === "RAW_TEXT" ? "本地节点" : c.url_host || "远程订阅")) },
     { label: "类别", render: (c) => KIND[c.kind !== "AUTO" ? c.kind : c.detected_kind === "AIRPORT" ? "AIRPORT" : "SELF_HOSTED"] },
     { label: "同步", render: (c) => h("div", { class: "name-cell" }, badge(c.last_sync_status), c.last_error_code ? h("span", { class: "small bad-text" }, errorText(c.last_error_code)) : null) },
-    { label: "节点", class: "num", render: (c) => h("a", { href: `#/nodes?source_id=${c.id}` }, c.node_count) },
+    { label: "全部关联", class: "num", render: (c) => h("a", { href: sourceHref(c.id, "history"), onclick: (e) => e.currentTarget.closest("dialog")?.close() }, c.node_count) },
     { label: "Sub-Store 中", render: (c) => (missing.has(c.id) ? h("span", { class: "warn-text" }, "已移除，子来源保留") : "存在") },
     { label: "最近成功", render: (c) => ago(c.last_success_at) },
   ];
@@ -149,7 +150,7 @@ export async function render(root, { params, go, refresh, refreshStrip }) {
     ),
     table(
       [
-        { label: "Sub-Store", render: (s) => h("div", { class: "name-cell" }, h("span", { class: "node-name" }, s.name), h("span", { class: "muted small" }, s.url_host)) },
+        { label: "Sub-Store", render: (s) => h("div", { class: "name-cell" }, h("a", { class: "node-name", href: sourceHref(s.id, "children") }, s.name), h("span", { class: "muted small" }, s.url_host)) },
         {
           label: "API 状态",
           render: (s) => {

@@ -1,5 +1,6 @@
 import { SafeError, digest, equal, token } from "./crypto.js";
 import type { Rows, Row } from "./catalog.js";
+import { lineagePage } from "./lineage.js";
 
 export const exportFormats: Record<string, [string, string]> = {
   mihomo: ["text/yaml", "yaml"],
@@ -44,6 +45,8 @@ export type ExportContext = {
   body: (request: Request) => Promise<Row>;
   queue: () => Promise<Row>;
   headers: Record<string, string>;
+  freshness: number;
+  defaultTemplate: string;
 };
 
 export async function handleExports(
@@ -213,11 +216,30 @@ export async function handleExports(
       );
     }
   }
+  if (path === "/api/exports/preview" && method === "POST") {
+    const input = await ctx.body(request);
+    const filters = await validate(input.format, input.filters ?? {});
+    const [result] = await rows(
+      "SELECT nodema_export_preview_count($1::jsonb,now(),$2,$3) AS count",
+      [JSON.stringify(filters), ctx.freshness, ctx.defaultTemplate],
+    );
+    return json(result);
+  }
   const match =
-    /^\/api\/exports\/([^/]+)(?:\/(retry|link|token|versions))?$/.exec(path);
+    /^\/api\/exports\/([^/]+)(?:\/(retry|link|token|versions|members))?$/.exec(path);
   if (!match) throw new SafeError("NOT_FOUND", 404);
   const id = idValue(match[1]),
     action = match[2];
+  if (action === "members" && method === "GET") {
+    const { offset, limit } = lineagePage(url.searchParams);
+    const version = url.searchParams.has("version") ? Number(url.searchParams.get("version")) : null;
+    if (version !== null && (!Number.isInteger(version) || version < 0 || version > 2147483647))
+      throw new SafeError("INVALID_REQUEST", 422);
+    const [result] = await rows("SELECT nodema_export_member_page($1,$2,$3,$4,$5,$6) AS page",
+      [id, offset, limit, ctx.freshness, ctx.defaultTemplate, version]);
+    if (!result.page) throw new SafeError("EXPORT_NOT_AVAILABLE", 404);
+    return json(result.page);
+  }
   if (!action && method === "GET") return json(await get(id));
   if (!action && method === "DELETE") {
     if (

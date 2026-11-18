@@ -1,8 +1,8 @@
-import { IP_TYPE, KIND, ago, api, badge, busy, date, dialog, errorText, field, h, ms, pct, route, select, table, toast } from "../core.js";
+import { IP_TYPE, KIND, ago, api, badge, busy, date, dialog, empty, errorText, field, h, ms, pct, route, select, table, toast } from "../core.js";
 import { testNodes } from "../strip.js";
 import { showShare } from "../share.js";
 import { VANTAGES, gradeBadge, vantageName } from "../grades.js";
-import { rowVantage } from "./node-rows.js";
+import { copyPageLink, exportHref, nodeHref, sourcePath } from "../lineage.js";
 
 const MEASURE = { FULL: "完整代理验证", PREFLIGHT: "入口预检", SKIPPED: "本轮跳过" };
 const BAND = { S: "优", A: "良", B: "中", C: "差" };
@@ -21,15 +21,21 @@ function pairs(entries) {
   return h("dl", { class: "pairs" }, entries.flatMap(([k, v]) => [h("dt", {}, k), h("dd", {}, v ?? "—")]));
 }
 
-export async function nodeDetail(id) {
-  const vantage = rowVantage();
+export async function nodeDetail(root, id, requestedVantage, refresh, isCurrent) {
+  const path = `/nodes/${encodeURIComponent(id)}`;
   const [n, access] = await Promise.all([
-    api(`/nodes/${id}?vantage=${encodeURIComponent(vantage)}`),
-    api(`/nodes/${id}/access`).catch(() => null),
+    api(path + (requestedVantage ? `?vantage=${encodeURIComponent(requestedVantage)}` : "")),
+    api(path + "/access").catch(() => null),
   ]);
+  if (!isCurrent()) return;
+  const vantage = n.vantage || "CN";
   const obs = n.published_observation;
-  const body = h("div", { class: "stack" });
-  const sheet = dialog(n.name, body, { wide: true });
+  const body = h("div", { class: "sheet-body lineage-body stack" });
+  root.replaceChildren(
+    h("a", { class: "return-link", href: "#/nodes" }, "返回节点列表"),
+    h("header", { class: "title-row" }, h("h1", { class: "page-title" }, n.name), copyPageLink(nodeHref(n.id, vantage))),
+    body,
+  );
   const aliases = h("div");
   // Native append() would print "null" for skipped sections; drop them first.
   const add = (...items) => body.append(...items.filter((x) => x !== null && x !== undefined && x !== false));
@@ -42,6 +48,21 @@ export async function nodeDetail(id) {
       h("span", { class: "tag " + (n.node_group === "AIRPORT" ? "air" : "own") }, KIND[n.node_group]),
       h("span", { class: "muted" }, `最近检测 ${ago(n.last_checked_at)}`),
     ),
+    h("section", { class: "panel stack" }, h("h2", {}, "直接来源"),
+      table([
+        { label: "来源路径", render: (s) => sourcePath(s.chain) },
+        { label: "关联", render: (s) => s.is_present ? "上游仍包含" : "上游已移除" },
+        { label: "来源状态", render: (s) => s.deleted ? "已删除" : s.enabled ? "启用" : "暂停" },
+        { label: "首次收录", render: (s) => date(s.first_seen_at) },
+        { label: "最近出现", render: (s) => date(s.last_seen_at) },
+      ], n.sources, { empty: empty("没有保留来源记录") }),
+    ),
+    n.exports?.length ? h("section", { class: "panel stack" }, h("h2", {}, "包含此节点的导出订阅"),
+      h("ul", { class: "notes" }, n.exports.map((item) => h("li", {},
+        h("a", { href: exportHref(item.id) }, item.name),
+        h("span", { class: "muted small" }, `v${item.version}${item.serving ? "" : " · 当前未提供下载"}`),
+      ))),
+    ) : null,
     accessSection(n, access, vantage),
     obs?.echo_source === "fallback"
       ? h("p", { class: "callout" }, "备用地址已确认代理连通，本轮未观测到出口 IP。已有落地资料来自历史检测，不能用本次检测时间判断其新鲜度。")
@@ -79,10 +100,10 @@ export async function nodeDetail(id) {
     h(
       "div",
       { class: "row" },
-      h("button", { type: "button", class: "primary", onclick: async () => { if (await testNodes([n.id])) sheet.close(); } }, "检测此节点"),
+      h("button", { type: "button", class: "primary", onclick: () => testNodes([n.id]) }, "检测此节点"),
       h("button", { type: "button", onclick: (e) => showShare(n, e.target) }, "二维码 / 分享"),
-      h("button", { type: "button", onclick: (e) => toggleEnabled(e.target, n) }, n.enabled ? "停用此节点" : "启用此节点"),
-      h("button", { type: "button", onclick: () => annotate(n.id, sheet) }, "编辑标签"),
+      h("button", { type: "button", onclick: (e) => toggleEnabled(e.target, n, refresh) }, n.enabled ? "停用此节点" : "启用此节点"),
+      h("button", { type: "button", onclick: () => annotate(n.id, refresh) }, "编辑标签"),
       h(
         "button",
         {
@@ -107,17 +128,7 @@ export async function nodeDetail(id) {
       ),
     ),
     aliases,
-    n.server_node_count > 1 ? siblings(n) : null,
-    h("h3", {}, "来源"),
-    table(
-      [
-        { label: "来源", render: (s) => s.name },
-        { label: "上游仍包含", render: (s) => (s.is_present ? "是" : h("span", { class: "muted" }, "已移除（节点保留）")) },
-        { label: "来源状态", render: (s) => (s.deleted ? "已删除" : s.enabled ? "启用" : "暂停") },
-        { label: "最近出现", render: (s) => ago(s.last_seen_at) },
-      ],
-      n.sources,
-    ),
+    n.server_node_count > 1 ? siblings(n, vantage) : null,
     h("h3", {}, "检测历史"),
     table(
       [
@@ -157,18 +168,18 @@ function identitySection(n) {
 }
 
 // Other nodes landing on the same server (same exit IP), usually other protocols.
-function siblings(n) {
+function siblings(n, vantage) {
   const box = h("div", {}, h("p", { class: "muted small" }, "加载中…"));
-  api(`/nodes?exit_ip=${encodeURIComponent(n.exit_ip)}&vantage=${encodeURIComponent(rowVantage())}&sort=quality_grade:asc&limit=50`)
+  api(`/nodes?exit_ip=${encodeURIComponent(n.exit_ip)}&vantage=${encodeURIComponent(vantage)}&sort=quality_grade:asc&limit=50`)
     .then((page) =>
       box.replaceChildren(
         table(
           [
-            { label: "节点", render: (s) => (s.id === n.id ? h("strong", {}, s.name) : h("button", { type: "button", class: "link", onclick: () => nodeDetail(s.id) }, s.name)) },
+            { label: "节点", render: (s) => (s.id === n.id ? h("strong", {}, s.name) : h("a", { href: nodeHref(s.id, vantage) }, s.name)) },
             { label: "协议", render: (s) => `${s.protocol} / ${s.transport || "—"} / ${s.security || "—"}` },
             { label: "入口", render: (s) => h("code", {}, `${s.server_host}:${s.server_port}`) },
             { label: "状态", render: (s) => badge(s.status) },
-            { label: "等级 · " + vantageName(rowVantage()), render: (s) => gradeBadge(s.quality_grade, rowVantage(), { withVantage: false }) || "—" },
+            { label: "等级 · " + vantageName(vantage), render: (s) => gradeBadge(s.quality_grade, vantage, { withVantage: false }) || "—" },
           ],
           page.items,
         ),
@@ -178,17 +189,16 @@ function siblings(n) {
   return h("section", {}, h("h3", {}, `相同落地 IP（${n.server_node_count} 个节点）`), h("p", { class: "hint" }, "这些节点观测到的落地 IP 相同，共用一个序号；同 IP 也可能来自共享出口或任播，不证明同一台服务器。"), box);
 }
 
-async function toggleEnabled(button, node) {
+async function toggleEnabled(button, node, refresh) {
   await busy(button, async () => {
     await api("/nodes/" + node.id, { method: "PATCH", body: { enabled: !node.enabled } });
     toast(node.enabled ? "已停用，不再检测和导出。" : "已启用。", "ok");
     window.dispatchEvent(new CustomEvent("nodema:nodes-changed"));
-    button.closest("dialog").close();
-    window.dispatchEvent(new HashChangeEvent("hashchange"));
+    await refresh();
   });
 }
 
-async function annotate(id, sheet) {
+async function annotate(id, refresh) {
   const a = await api(`/nodes/${id}/annotations`);
   const form = h(
     "form",
@@ -207,8 +217,7 @@ async function annotate(id, sheet) {
       toast("标签已保存。", "ok");
       window.dispatchEvent(new CustomEvent("nodema:nodes-changed"));
       box.close();
-      sheet.close();
-      nodeDetail(id);
+      await refresh();
     });
   });
 }

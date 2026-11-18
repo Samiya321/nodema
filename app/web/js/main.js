@@ -1,17 +1,21 @@
 import { api, errorText, h, session } from "./core.js";
 import { renderStrip, refreshStrip } from "./strip.js";
+import { pageHref } from "./lineage.js";
 
 const PAGES = [
   ["overview", "总览", () => import("./pages/overview.js")],
   ["nodes", "节点", () => import("./pages/nodes.js")],
-  ["sources", "来源", () => import("./pages/sources.js")],
-  ["airports", "机场", () => import("./pages/airports.js")],
-  ["substore", "Sub-Store", () => import("./pages/substore.js")],
-  ["scans", "检测记录", () => import("./pages/scans.js")],
+  ["sources", "来源", () => import("./pages/source-hub.js")],
   ["exports", "订阅导出", () => import("./pages/exports.js")],
-  ["usage", "运行用量", () => import("./pages/usage.js")],
+  ["ops", "运维", () => import("./pages/operations.js")],
   ["settings", "设置", () => import("./pages/settings.js")],
 ];
+const ALIASES = {
+  airports: ["sources", "airport"],
+  substore: ["sources", "substore"],
+  scans: ["ops", "scans"],
+  usage: ["ops", "usage"],
+};
 
 const page = document.getElementById("page");
 document.querySelector(".skip").addEventListener("click", (event) => {
@@ -23,25 +27,34 @@ let shown = ""; // page name on screen: a new page starts at the top, a re-rende
 
 function currentRoute() {
   const [name, query = ""] = location.hash.replace(/^#\/?/, "").split("?");
-  const known = PAGES.find(([key]) => key === name);
-  return { name: known ? name : "overview", params: new URLSearchParams(query) };
+  const route = normalize(name, new URLSearchParams(query));
+  if (Object.hasOwn(ALIASES, name)) history.replaceState(history.state, "", pageHref(route.name, route.params));
+  return route;
+}
+
+function normalize(name, params) {
+  if (Object.hasOwn(ALIASES, name)) {
+    const [target, tab] = ALIASES[name];
+    if (!(name === "scans" && params.get("tab") === "probes")) params.set("tab", tab);
+    return { name: target, params };
+  }
+  return { name: PAGES.some(([key]) => key === name) ? name : "overview", params };
 }
 
 export function go(name, params) {
-  const query = params && [...params].length ? "?" + new URLSearchParams(params) : "";
-  location.hash = "#/" + name + query;
+  const route = normalize(name, new URLSearchParams(params));
+  location.hash = pageHref(route.name, route.params);
 }
 
 async function render() {
   const { name, params } = currentRoute();
   const ticket = ++rendering;
-  for (const link of document.querySelectorAll("#nav a")) {
+  for (const link of document.querySelectorAll(".rail a[data-page]")) {
     if (link.dataset.page === name) link.setAttribute("aria-current", "page");
     else link.removeAttribute("aria-current");
   }
-  if (matchMedia("(max-width: 860px)").matches) {
-    document.querySelector('#nav a[aria-current="page"]')?.scrollIntoView({ block: "nearest", inline: "nearest" });
-  }
+  document.querySelector(".nav-more").dataset.current = String(name === "ops" || name === "settings");
+  document.querySelector(".nav-more").open = false;
   const [, title, load] = PAGES.find(([key]) => key === name);
   document.title = title + " · Nodema";
   page.setAttribute("aria-busy", "true");
@@ -91,8 +104,8 @@ function showLogin(message = "") {
 }
 
 document.getElementById("nav").append(
-  ...PAGES.map(([key, title]) =>
-    h("li", {}, h("a", { href: "#/" + key, dataset: { page: key } }, title)),
+  ...PAGES.filter(([key]) => key !== "settings").map(([key, title]) =>
+    h("li", { class: key === "ops" ? "nav-ops" : null }, h("a", { href: "#/" + key, dataset: { page: key } }, title)),
   ),
 );
 document.getElementById("login-form").addEventListener("submit", async (event) => {
@@ -110,7 +123,14 @@ document.getElementById("login-form").addEventListener("submit", async (event) =
     button.disabled = false;
   }
 });
-document.getElementById("logout").addEventListener("click", () => showLogin());
+for (const button of document.querySelectorAll("[data-logout]")) button.addEventListener("click", () => showLogin());
+const more = document.querySelector(".nav-more");
+more.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && more.open) {
+    more.open = false;
+    more.querySelector("summary").focus();
+  }
+});
 window.addEventListener("nodema:logout", () => showLogin("登录已失效，请重新输入密钥。"));
 window.addEventListener("hashchange", () => {
   if (!document.getElementById("app").hidden) render();

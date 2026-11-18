@@ -13,8 +13,9 @@ from urllib.parse import urlsplit
 from uuid import uuid4
 
 import sqlalchemy as sa
+from sqlalchemy.dialects.postgresql import insert
 
-from app.database.models import NodeSource, Provider, Source
+from app.database.models import NodeSource, Provider, Source, SubstoreSourceReference
 from app.domain import AssetError, InputFormat, SourceType
 from app.ingestion.fetcher import validate_url
 
@@ -52,7 +53,7 @@ def materialize(session, parent, index, now: datetime, sync_interval: int):
             )
         )
     }
-    wanted = set()
+    wanted, references = set(), {}
     summary = {"created": 0, "updated": 0, "unchanged": 0, "shared": 0, "duplicates": 0}
     for entry in index.entries:
         label = _label(entry.name, f"#{entry.ordinal}")
@@ -90,7 +91,9 @@ def materialize(session, parent, index, now: datetime, sync_interval: int):
                     )
                 )
                 if shared is not None:
-                    summary["shared"] += 1  # already imported directly; keep that source
+                    summary["shared"] += 1
+                    if shared != parent.id:
+                        references.setdefault(shared, child_label)
                     continue
             if child is None:
                 session.add(
@@ -125,6 +128,40 @@ def materialize(session, parent, index, now: datetime, sync_interval: int):
     summary["missing_from_index"] = sorted(
         str(child.id) for origin, child in children.items() if origin not in wanted
     )
+    ref = SubstoreSourceReference
+    if references:
+        statement = insert(ref).values(
+            [
+                dict(
+                    parent_id=parent.id,
+                    source_id=id_,
+                    origin_label=label,
+                    first_seen_at=now,
+                    last_seen_at=now,
+                )
+                for id_, label in references.items()
+            ]
+        )
+        session.execute(
+            statement.on_conflict_do_update(
+                index_elements=[ref.parent_id, ref.source_id],
+                set_=dict(
+                    origin_label=statement.excluded.origin_label,
+                    is_present=True,
+                    last_seen_at=statement.excluded.last_seen_at,
+                ),
+            )
+        )
+    if not index.issues:
+        session.execute(
+            sa.update(ref)
+            .where(
+                ref.parent_id == parent.id,
+                ref.is_present.is_(True),
+                ref.source_id.not_in(list(references)),
+            )
+            .values(is_present=False)
+        )
     summary["entries"] = len(index.entries)
     # Nodes imported before materialization stay linked for history, attributed to children.
     session.execute(

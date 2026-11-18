@@ -1,4 +1,5 @@
-import { KIND, SCAN_KIND, api, badge, busy, date, dialog, empty, errorText, h, table, toast } from "../core.js";
+import { KIND, SCAN_KIND, api, badge, busy, date, empty, errorText, h, table, toast } from "../core.js";
+import { copyPageLink, scanHref } from "../lineage.js";
 
 function duration(run) {
   if (!run.finished_at) return "—";
@@ -6,12 +7,15 @@ function duration(run) {
   return seconds < 90 ? Math.round(seconds) + " 秒" : Math.round(seconds / 60) + " 分钟";
 }
 
-async function detail(id) {
-  const run = await api("/scans/" + id);
+async function detail(root, id) {
+  const run = await api("/scans/" + encodeURIComponent(id));
   const items = run.items || {};
   const completed = items.DONE || 0;
-  dialog(
-    `${run.scan_date} ${SCAN_KIND[run.kind] || run.kind}检测`,
+  root.append(
+    h("a", { class: "return-link", href: "#/ops" }, "返回检测记录"),
+    h("header", { class: "title-row" },
+      h("h1", { class: "page-title" }, `${run.scan_date} ${SCAN_KIND[run.kind] || run.kind}检测`),
+      copyPageLink(scanHref(id))),
     h(
       "div",
       { class: "stack" },
@@ -39,7 +43,6 @@ async function detail(id) {
       ),
       h("p", { class: "hint" }, "未完成的批次里，已确认可用的节点会先发布；失败结果要等批次完整后才发布，避免环境故障把节点误判为不可用。"),
     ),
-    { wide: true },
   );
 }
 
@@ -78,17 +81,11 @@ async function probeRuns() {
   );
 }
 
-export async function render(root, { params, go, refresh, refreshStrip }) {
+export async function render(root, { params, refresh, refreshStrip }) {
+  if (params.has("scan")) return detail(root, params.get("scan"));
   const tab = params.get("tab") === "probes" ? "probes" : "scans";
-  const tabs = h(
-    "div",
-    { class: "segmented", role: "group", "aria-label": "记录类型" },
-    [["scans", "节点检测"], ["probes", "接入测量"]].map(([key, text]) =>
-      h("button", { type: "button", class: "seg", "aria-pressed": String(tab === key), onclick: () => go("scans", new URLSearchParams(key === "probes" ? { tab: key } : {})) }, text),
-    ),
-  );
   if (tab === "probes") {
-    root.append(h("div", { class: "title-row" }, h("h1", { class: "page-title" }, "检测记录"), tabs), await probeRuns());
+    root.append(h("h1", { class: "page-title" }, "接入测量"), await probeRuns());
     return;
   }
   const runs = await api("/scans");
@@ -101,11 +98,11 @@ export async function render(root, { params, go, refresh, refreshStrip }) {
       refresh();
     });
   root.append(
-    h("div", { class: "title-row" }, h("h1", { class: "page-title" }, "检测记录"), tabs),
+    h("h1", { class: "page-title" }, "节点检测"),
     complete ? h("p", { class: "muted" }, `最近完整日检 ${complete.scan_date} · ${date(complete.finished_at)}`) : null,
     table(
       [
-        { label: "日期", render: (r) => h("button", { type: "button", class: "link", onclick: () => detail(r.id) }, r.scan_date) },
+        { label: "日期", render: (r) => h("a", { href: scanHref(r.id) }, r.scan_date) },
         { label: "类型", render: (r) => SCAN_KIND[r.kind] || r.kind },
         { label: "范围", render: (r) => KIND[r.scope] || "全部" },
         { label: "状态", render: (r) => badge(r.status) },

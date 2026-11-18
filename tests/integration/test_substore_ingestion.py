@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 import sqlalchemy as sa
 
+from app.catalog import Catalog
 from app.checker.health import Observation
 from app.database.models import Provider, Source
 from app.domain import AssetError, SourceType
@@ -130,15 +131,31 @@ def test_entries_removed_from_index_keep_their_child(service):
     assert len(children(service, parent)) == 2
 
 
-def test_direct_import_is_not_duplicated_by_index(service):
+def test_direct_import_is_not_duplicated_by_index(service, monitor_settings):
     fetcher = Fetcher([{"name": "remote", "url": REMOTE}])
     service.fetcher = fetcher
-    service.create_source(
+    direct = service.create_source(
         name="direct", source_type=SourceType.SUBSCRIPTION_URL, payload=REMOTE.encode()
-    )
+    )["id"]
     parent = api_source(service, fetcher)
     assert service.sync_source(parent)["children"]["shared"] == 1
     assert children(service, parent) == []
+    catalog = Catalog(service, monitor_settings)
+    detail = catalog.source_lineage(direct)
+    ref = detail["references"][0]
+    assert [item["id"] for item in detail["chain"]] == [str(direct)]
+    assert [item["id"] for item in ref["chain"]] == [str(parent)]
+    assert ref["is_present"] and "synthetic-private" not in str(detail)
+    parent_page = catalog.source_lineage(parent, "references")
+    assert parent_page["page"]["items"][0]["id"] == str(direct)
+    first = ref["first_seen_at"]
+    fetcher.index = AssetError("FETCH_TIMEOUT")
+    service.sync_source(parent)
+    assert catalog.source_lineage(direct)["references"][0]["is_present"]
+    fetcher.index = body([{"name": "local", "source": "local", "content": LOCAL}])
+    service.sync_source(parent)
+    removed = catalog.source_lineage(direct)["references"][0]
+    assert not removed["is_present"] and removed["first_seen_at"] == first
 
 
 def airport_headers(expire=FUTURE, used=100, total=1000):

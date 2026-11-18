@@ -38,6 +38,7 @@ WINDOW = timedelta(days=7)
 GRADE_FILTERS = (
     "quality_grade",
     "min_quality_grade",
+    "quality_buckets",
     "max_peak_rtt_ms",
     "max_peak_loss",
     "min_avail_7d",

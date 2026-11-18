@@ -1,7 +1,7 @@
 // Node table: columns, row rendering and client-side ordering. The page loads the
 // whole filtered set once (compact rows), so sorting and paging never hit the database.
 import { IP_TYPE, KIND, ago, badge, flag, h, ms } from "../core.js";
-import { nodeDetail } from "./node-detail.js";
+import { nodeHref } from "../lineage.js";
 import { GRADES, gradeBadge, isCarrier, vantageName } from "../grades.js";
 
 // The vantage the list is showing; rows (and the detail dialog) render grades for it.
@@ -153,7 +153,7 @@ export function nodeRow(n, picked, onPick) {
     h(
       "td",
       { "data-label": "节点", class: "name-td" },
-      h("button", { type: "button", class: "link name-cell", onclick: () => nodeDetail(n.id) }, h("span", { class: "node-name" }, n.name), h("span", { class: "node-meta" }, meta.map((m) => h("span", {}, m)))),
+      h("a", { class: "link name-cell", href: nodeHref(n.id, vantage) }, h("span", { class: "node-name" }, n.name), h("span", { class: "node-meta" }, meta.map((m) => h("span", {}, m)))),
     ),
     h("td", { "data-label": "等级" }, gradeCell(n)),
     h("td", { "data-label": isCarrier(vantage) ? "晚高峰" : "延迟", class: "num" }, latency(n)),

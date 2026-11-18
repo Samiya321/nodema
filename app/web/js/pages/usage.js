@@ -75,12 +75,7 @@ export async function render(root, { params, go }) {
   const transferPanel = h(
     "section",
     { class: "panel transfer" },
-    h("header", { class: "panel-head" }, h("h2", {}, selfHosted ? "数据库流量" : "数据库流量（Neon 公网传输）")),
-    selfHosted
-      ? h("p", { class: "muted" }, transfer
-        ? `当前使用自建 PostgreSQL。最后一条 Neon 历史读数为 ${gb(transfer.transfer_bytes)}，采于 ${date(transfer.taken_at)}。`
-        : "当前使用自建 PostgreSQL。")
-      :
+    h("header", { class: "panel-head" }, h("h2", {}, "数据库流量（Neon 公网传输）")),
     transfer
       ? [
           h(
@@ -101,7 +96,7 @@ export async function render(root, { params, go }) {
   );
   root.append(
     h("div", { class: "title-row" }, h("h1", { class: "page-title" }, "运行用量"), range),
-    transferPanel,
+    selfHosted ? null : transferPanel,
     h("dl", { class: "stats" }, stats.map(([k, v, hint]) => h("div", { title: hint || null }, h("dt", {}, k), h("dd", {}, v)))),
     h("p", { class: "hint" }, "按 UTC 日期统计。字节数为应用层载荷，不是运营商流量账单；Actions 分钟来自已完成的 Job 时长，不等同于计费分钟。"),
     h(
@@ -148,5 +143,8 @@ export async function render(root, { params, go }) {
       ],
       data.daily,
     ),
+    selfHosted && transfer ? h("details", { class: "panel" },
+      h("summary", {}, "Neon 历史流量"),
+      h("p", { class: "muted" }, `最后一条读数 ${gb(transfer.transfer_bytes)}，采于 ${date(transfer.taken_at)}。`)) : null,
   );
 }

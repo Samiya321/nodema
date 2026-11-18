@@ -2,6 +2,7 @@
 
 import hashlib
 import hmac
+import json
 import secrets
 from datetime import timedelta
 from uuid import UUID, uuid4
@@ -68,6 +69,43 @@ class ExportService:
             if not rows:
                 raise AssetError("EXPORT_NOT_AVAILABLE")
             return rows[0]
+
+    def preview(self, format, filters):
+        with self.sessions() as session:
+            normalized = validate(session, format, filters)
+            count = session.scalar(
+                sa.text("SELECT nodema_export_preview_count(CAST(:f AS jsonb),now(),:fresh,:tpl)"),
+                dict(
+                    f=json.dumps(normalized),
+                    fresh=self.settings.freshness_hours,
+                    tpl=self.settings.name_template,
+                ),
+            )
+            return {"count": count}
+
+    def member_page(self, export_id, offset=0, limit=50, version=None):
+        if not 0 <= offset <= 2147483647 or not 1 <= limit <= 100:
+            raise AssetError("INVALID_PAGINATION")
+        if version is not None and not 0 <= version <= 2147483647:
+            raise AssetError("INVALID_REQUEST")
+        with self.sessions() as session:
+            result = session.scalar(
+                sa.text(
+                    "SELECT nodema_export_member_page(:id,:off,:lim,:fresh,"
+                    "coalesce((SELECT template FROM naming_rules WHERE id=1),:tpl),:version)"
+                ),
+                dict(
+                    id=export_id,
+                    off=offset,
+                    lim=limit,
+                    version=version,
+                    fresh=self.settings.freshness_hours,
+                    tpl=self.settings.name_template,
+                ),
+            )
+            if not result:
+                raise AssetError("EXPORT_NOT_AVAILABLE")
+            return result
 
     @staticmethod
     def _expiry(hours):

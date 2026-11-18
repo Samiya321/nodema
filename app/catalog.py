@@ -60,6 +60,7 @@ FILTER_KEYS = {
     "vantage",
     "quality_grade",
     "min_quality_grade",
+    "quality_buckets",
     "max_peak_rtt_ms",
     "max_peak_loss",
     "min_avail_7d",
@@ -89,8 +90,9 @@ def filters_from_params(params):
             if result[key] not in ("true", "false"):
                 raise AssetError("INVALID_NODE_QUERY")
             result[key] = result[key] == "true"
-    if "tags" in result:
-        result["tags"] = [tag.strip() for tag in result["tags"].split(",") if tag.strip()]
+    for key in ("tags", "quality_buckets"):
+        if key in result:
+            result[key] = [item.strip() for item in result[key].split(",") if item.strip()]
     return result
 
 
@@ -102,6 +104,45 @@ class Catalog:
         with self.sessions() as session:
             rule = session.get(NamingRule, 1)
             return rule.template if rule else self.settings.name_template
+
+    def source_directory(self):
+        initial = self.assets.list_sources()
+        with self.sessions() as session:
+            stats = {
+                row["id"]: dict(row)
+                for row in session.execute(
+                    sa.text(
+                        "SELECT s.id,nodema_source_label(s)->>'url_host' AS url_host,"
+                        " nodema_source_effective_kind(s) AS effective_kind, c.*"
+                        " FROM sources s CROSS JOIN LATERAL nodema_source_counts(s,:fresh) c"
+                        " WHERE s.deleted_at IS NULL"
+                    ),
+                    {"fresh": self.settings.freshness_hours},
+                ).mappings()
+            }
+        return [{**row, **stats[row["id"]]} for row in initial if row["id"] in stats]
+
+    def source_lineage(self, source_id, relation="present", offset=0, limit=50):
+        if relation not in {"history", "present", "current", "stale", "children", "references"}:
+            raise AssetError("INVALID_NODE_QUERY")
+        if not 0 <= offset <= 2147483647 or not 1 <= limit <= 100:
+            raise AssetError("INVALID_PAGINATION")
+        with self.sessions() as session:
+            args = dict(
+                id=source_id,
+                relation=relation,
+                off=offset,
+                lim=limit,
+                fresh=self.settings.freshness_hours,
+                tpl=self.settings.name_template,
+            )
+            detail = session.scalar(
+                sa.text("SELECT nodema_source_lineage(:id,:fresh,:tpl,:relation,:off,:lim)"),
+                args,
+            )
+            if detail is None:
+                raise AssetError("SOURCE_NOT_FOUND")
+            return detail
 
     def naming(self):
         with self.sessions() as session:
@@ -237,8 +278,13 @@ class Catalog:
         node = items[0] if items else None
         if node is None:
             raise AssetError("NODE_NOT_FOUND")
-        node["sources"] = self.assets.get_node(node_id)["sources"]
         with self.sessions() as session:
+            lineage = session.scalar(sa.text("SELECT nodema_node_lineage(:id)"), {"id": node_id})
+            for source in lineage["sources"]:
+                source["source_id"] = UUID(source["source_id"])
+                for key in ("first_seen_at", "last_seen_at"):
+                    source[key] = datetime.fromisoformat(source[key])
+            node.update(lineage)
             current = session.get(NodeCurrentStatus, node_id)
             published = (
                 session.get(TestResult, current.last_result_id)

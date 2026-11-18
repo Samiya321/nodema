@@ -168,6 +168,20 @@ class Node(Base):
     last_seen_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True))
 
 
+class SubstoreSourceReference(Base):
+    __tablename__ = "substore_source_references"
+    __table_args__ = (
+        sa.CheckConstraint("parent_id <> source_id", name="distinct_sources"),
+        sa.Index("idx_substore_references_source", "source_id"),
+    )
+    parent_id: Mapped[UUID] = mapped_column(sa.ForeignKey("sources.id"), primary_key=True)
+    source_id: Mapped[UUID] = mapped_column(sa.ForeignKey("sources.id"), primary_key=True)
+    origin_label: Mapped[str] = mapped_column(sa.Text)
+    is_present: Mapped[bool] = mapped_column(server_default=sa.true())
+    first_seen_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True))
+    last_seen_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True))
+
+
 class NodeSource(Base):
     __tablename__ = "node_sources"
     __table_args__ = (

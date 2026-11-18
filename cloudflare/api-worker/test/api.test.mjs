@@ -389,6 +389,17 @@ fill_missing(session_factory(make_engine(os.environ['DATABASE_URL'])))`);
     assert.equal(listed.name, node.name);
     assert.equal(listed.server_node_count, 1);
     assert.equal(listed.status, "UP");
+    assert.deepEqual(node.sources[0].chain.map((item) => item.id), [sourceId]);
+    const lineagePath = `/api/sources/${sourceId}/lineage?relation=current`;
+    assert.equal((await request(lineagePath, { authenticated: false })).status, 401);
+    const lineage = await (await request(lineagePath)).json();
+    assert.equal(lineage.up_count, 1);
+    assert.equal(lineage.page.items[0].id, nodeId);
+    const preview = await request("/api/exports/preview", {
+      method: "POST", data: { format: "mihomo", filters: { source_id: sourceId } },
+    });
+    assert.equal(preview.status, 200);
+    assert.deepEqual(await preview.json(), { count: 1 });
     for (const bad of [
       "/api/nodes?view=compact&limit=20001",
       "/api/nodes?limit=501",
@@ -480,6 +491,12 @@ fill_missing(session_factory(make_engine(os.environ['DATABASE_URL'])))`);
           data: { format: "mihomo" },
         }),
       );
+      const membersPath = `/api/exports/${artifact.id}/members`;
+      const members = await (await request(membersPath)).json();
+      assert.equal(members.version, artifact.current_version);
+      assert.deepEqual(members.items.map((item) => item.id), [nodeId]);
+      assert.equal(Object.hasOwn(members, "token"), false);
+      assert.equal((await (await request(membersPath + "?version=0")).json()).changed, true);
       const output = py(`import os
 from uuid import UUID
 from app.database.models import ExportArtifact

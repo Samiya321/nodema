@@ -268,7 +268,13 @@ def create_app(settings=None, *, assets=None):
 
     @app.get("/api/sources", dependencies=auth)
     def sources():
-        return assets.list_sources()
+        return catalog.source_directory()
+
+    @app.get("/api/sources/{source_id}/lineage", dependencies=auth)
+    def source_lineage(
+        source_id: UUID, relation: str = "present", offset: int = 0, limit: int = 50
+    ):
+        return catalog.source_lineage(source_id, relation, offset, limit)
 
     @app.post("/api/sources", dependencies=auth, status_code=201)
     def add_source(body: SourceCreate):
@@ -377,6 +383,16 @@ def create_app(settings=None, *, assets=None):
     @app.get("/api/exports", dependencies=auth)
     def list_exports():
         return exports.list()
+
+    @app.post("/api/exports/preview", dependencies=auth)
+    def export_preview(body: ExportCreate):
+        return exports.preview(body.format, body.filters)
+
+    @app.get("/api/exports/{export_id}/members", dependencies=auth)
+    def export_members(
+        export_id: UUID, offset: int = 0, limit: int = 50, version: int | None = None
+    ):
+        return exports.member_page(export_id, offset, limit, version)
 
     @app.post("/api/exports", dependencies=auth, status_code=202)
     def create_export(body: ExportCreate):

@@ -30,7 +30,18 @@
       <nav class="rail" aria-label="主要导航">
         <a class="brand" href="#/overview"><span class="brand-mark" aria-hidden="true">N</span><span>Nodema</span></a>
         <ul id="nav"></ul>
-        <button id="logout" class="quiet" type="button">退出</button>
+        <div class="rail-bottom">
+          <a href="#/settings" data-page="settings">设置</a>
+          <button class="quiet" type="button" data-logout>退出</button>
+        </div>
+        <details class="nav-more">
+          <summary>更多</summary>
+          <div class="nav-more-panel">
+            <a href="#/ops" data-page="ops">运维</a>
+            <a href="#/settings" data-page="settings">设置</a>
+            <button class="quiet" type="button" data-logout>退出</button>
+          </div>
+        </details>
       </nav>
       <div class="main">
         <header id="strip" class="strip" aria-label="同步与检测"></header>
