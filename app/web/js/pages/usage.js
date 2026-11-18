@@ -65,8 +65,9 @@ export async function render(root, { params, go }) {
   ];
   const latest = data.database_samples[0];
   const transfer = data.neon_transfer;
+  const selfHosted = data.database_provider === "self_hosted";
   const ratio = transfer ? transfer.transfer_bytes / transfer.transfer_limit_bytes : null;
-  const pace = projection(data.database_samples, transfer);
+  const pace = selfHosted ? null : projection(data.database_samples, transfer);
   const paceText = (p) =>
     p.enough
       ? `按最近 ${p.spanDays.toFixed(1)} 天的速度（每天约 ${gb(p.perDay)}），本周期够用。`
@@ -74,7 +75,12 @@ export async function render(root, { params, go }) {
   const transferPanel = h(
     "section",
     { class: "panel transfer" },
-    h("header", { class: "panel-head" }, h("h2", {}, "数据库流量（Neon 公网传输）")),
+    h("header", { class: "panel-head" }, h("h2", {}, selfHosted ? "数据库流量" : "数据库流量（Neon 公网传输）")),
+    selfHosted
+      ? h("p", { class: "muted" }, transfer
+        ? `当前使用自建 PostgreSQL。最后一条 Neon 历史读数为 ${gb(transfer.transfer_bytes)}，采于 ${date(transfer.taken_at)}。`
+        : "当前使用自建 PostgreSQL。")
+      :
     transfer
       ? [
           h(

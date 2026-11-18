@@ -135,7 +135,7 @@ class Usage:
             session.flush()
             return {c.name: getattr(sample, c.name) for c in DatabaseSample.__table__.columns}
 
-    def summary(self, days=30):
+    def summary(self, days=30, *, database_provider="neon"):
         if type(days) is not int or not 1 <= days <= 365:
             raise AssetError("INVALID_USAGE_WINDOW")
         since = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(
@@ -241,6 +241,7 @@ class Usage:
             "executions": executions,
             "action_runs": actions,
             "database_samples": samples,
+            "database_provider": database_provider,
             "neon_transfer": transfer,
             "runner_minutes": float(runner_ms) / 60000,
             "database_growth_bytes": samples[0]["table_bytes"] - first_sample_bytes

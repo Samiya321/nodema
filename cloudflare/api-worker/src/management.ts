@@ -7,6 +7,7 @@ type Row = Record<string, unknown>;
 type Rows = (sql: string, values?: unknown[], code?: string) => Promise<Row[]>;
 export type ManagementContext = {
   rows: Rows;
+  databaseProvider?: string;
   body: (request: Request, optional?: boolean) => Promise<Row>;
   json: (value: unknown, status?: number) => Response;
   dispatch: (workflow: string, inputs: Record<string, string>) => Promise<Row>;
@@ -197,8 +198,11 @@ export async function handleManagement(
   ctx: ManagementContext,
 ): Promise<Response | undefined> {
   const { rows, json } = ctx;
-  if (path === "/api/pipeline" && method === "GET")
-    return json(await pipeline(rows));
+  if (path === "/api/pipeline" && method === "GET") {
+    const state = await pipeline(rows);
+    if (ctx.databaseProvider === "self_hosted") state.neon_transfer = null;
+    return json(state);
+  }
   if (path === "/api/pipeline/sync" && method === "POST") {
     // "Sync now" refreshes every enabled source (or the chosen ones), not only due ones.
     const data = await ctx.body(request, true);

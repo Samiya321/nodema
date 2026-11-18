@@ -646,7 +646,7 @@ def cleanup():
 def usage_show(days: int = 30):
     from app.usage import Usage
 
-    output(Usage(service().sessions).summary(days))
+    output(Usage(service().sessions).summary(days, database_provider=Settings().database_provider))
 
 
 @usage_app.command("sample")

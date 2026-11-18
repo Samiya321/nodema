@@ -246,7 +246,7 @@ def create_app(settings=None, *, assets=None):
     def usage_summary(days: int = 30):
         from app.usage import Usage
 
-        return Usage(assets.sessions).summary(days)
+        return Usage(assets.sessions).summary(days, database_provider=settings.database_provider)
 
     @app.get("/api/readiness", dependencies=auth)
     def deployment_readiness():

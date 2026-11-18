@@ -11,6 +11,7 @@ from app.naming import DEFAULT_TEMPLATE
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore", hide_input_in_errors=True)
     database_url: SecretStr
+    database_provider: str = "neon"
     encryption_key_id: str = Field(default="local-v1", pattern=r"^[A-Za-z0-9_-]{1,32}$")
     encryption_key_b64: SecretStr = SecretStr("")
     fingerprint_key_b64: SecretStr

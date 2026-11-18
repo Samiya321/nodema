@@ -370,13 +370,15 @@ export async function handle(
       rows,
       body,
       json,
+      databaseProvider: env.DATABASE_PROVIDER ?? "neon",
       dispatch: (workflow, inputs) => dispatch(env, workflow, inputs),
     });
     if (managed) return managed;
     if (path === "/api/usage" && method === "GET")
-      return json(
-        await usageSummary(rows, Number(url.searchParams.get("days") ?? 30)),
-      );
+      return json({
+        ...await usageSummary(rows, Number(url.searchParams.get("days") ?? 30)),
+        database_provider: env.DATABASE_PROVIDER ?? "neon",
+      });
     if (path === "/api/overview" && method === "GET") {
       const aggregate = await catalogOverview(
         rows,
