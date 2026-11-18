@@ -21,6 +21,7 @@
 - 暂停写工作流，旧 Neon 库默认只读。恢复 [切换备份 44229140683](https://github.com/Samiya321/nodema/actions/runs/44229140683)；数据库 schema `0023_identity_naming`，逐表核对 38 张表行数，以及 4 个视图、34 个函数、11 个触发器、71 个索引、142 个约束和关键 ID 摘要。56,597 个节点、1,076 条来源、123,153 条检测明细、42,798 条当前状态和 15,559 条接入样本，订阅方案 0。未执行裁剪迁移。
 - Actions/Compose `a92e037`、用量 `e790273`、连接器指标绑定 `b2e5925`；[main CI 44229386266](https://github.com/Samiya321/nodema/actions/runs/44229386266) 通过。生产保留原 Hyperdrive binding，源站改为 VPC。API version `573c2fa7-fa3c-4260-80b6-4c10f9da7cda`，Pages https://f00a9941.nodema-dashboard.pages.dev 。Pages 与 Worker 认证 readiness 返回 200，未认证返回 401，首页 health 200，用量页模块 SHA 与源码一致，旧 Neon 实时告警已移除，历史读数保留。
 - 恢复原有工作流和 Worker 调度。移除用于节省 Neon 出站的暂缓备份变量。新库通过 [加密备份 44230237908](https://github.com/Samiya321/nodema/actions/runs/44230237908) 成功产出约 54 MB artifact，保留至北京时间 12 月 8 日 11:26；[用量 44230508395](https://github.com/Samiya321/nodema/actions/runs/44230508395) 在新库写入工作流账本和数据库容量采样。旧 Neon 实例保留只读，发生故障应先处理切换后产生的写入再决定回退。详见 [生产手册](PRODUCTION_OPERATIONS.md#自建-postgresql-运维)。
+- 切换后首轮 [11:30 定时接入 44230924976](https://github.com/Samiya321/nodema/actions/runs/44230924976) 全步骤通过，确认 23 次测量结果写入新库。新库与 Tunnel 在抽样中约占 59 MiB 与 17 MiB，数据库容器无重启或 OOM。完整日检高峰与生产非空订阅下载仍待实际工作负载验证。
 
 ## 2026-11-17 第十八次发布：归属证据、保守命名与历史落地
 

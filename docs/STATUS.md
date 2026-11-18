@@ -2,7 +2,7 @@
 
 新会话/其他 agent 先读 [接管指南](HANDOFF.md)；生产操作和凭据读取边界见 [生产操作手册](PRODUCTION_OPERATIONS.md)。
 
-2026-11-18 **生产 PostgreSQL 已迁到用户指定云主机**。schema `0023_identity_naming`，38 张表行数及关键对象一致，56,597 个节点和 123,153 条检测明细完整保留。Worker 经 Hyperdrive/VPC/Tunnel、Actions 经受限 SSH 均实际连通；启用原调度和每月两次异机加密备份。新库备份 [44230237908](https://github.com/Samiya321/nodema/actions/runs/44230237908)、用量记账 [44230508395](https://github.com/Samiya321/nodema/actions/runs/44230508395) 成功。Neon 只读保留，旧流量样本仍可查。代码 `b2e5925`，[main CI 44229386266](https://github.com/Samiya321/nodema/actions/runs/44229386266) 通过，访问及恢复证据见 [云端记录](CLOUD_DEPLOYMENT.md)。
+2026-11-18 **生产 PostgreSQL 已迁到用户指定云主机**。schema `0023_identity_naming`，38 张表行数及关键对象一致，56,597 个节点和 123,153 条检测明细完整保留。Worker 经 Hyperdrive/VPC/Tunnel、Actions 经受限 SSH 均实际连通；启用原调度和每月两次异机加密备份。新库备份 [44230237908](https://github.com/Samiya321/nodema/actions/runs/44230237908)、用量记账 [44230508395](https://github.com/Samiya321/nodema/actions/runs/44230508395) 成功。[首轮定时接入 44230924976](https://github.com/Samiya321/nodema/actions/runs/44230924976) 成功并写入 23 条结果；完整日检高峰待下一轮正常执行。Neon 只读保留，旧流量样本仍可查。代码 `b2e5925`，[main CI 44229386266](https://github.com/Samiya321/nodema/actions/runs/44229386266) 通过，访问及恢复证据见 [云端记录](CLOUD_DEPLOYMENT.md)。
 
 2026-11-18 [Neon 替代方案评估](POSTGRES_ALTERNATIVES_2026_11_18.md)（只读）：10:17 左右 Neon 公网出站 3.573/5 GB，12 月 1 日 08:00 重置。优先验证 Aiven Free 的免费传输口径、磁盘、角色和连接峰值；Layerbase Free 为备选，须实测滚动休眠要求。Prisma Postgres 无自建角色，无法保留 Worker 和迁移权限隔离。本轮未创建候选实例或切换生产，仍需新鲜加密备份及隔离恢复。
 
