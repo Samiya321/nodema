@@ -5,6 +5,8 @@ import os
 import subprocess
 import sys
 from datetime import UTC, datetime, time, timedelta
+from time import sleep
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
@@ -56,13 +58,24 @@ def heartbeat():
         headers={
             "Authorization": f"Bearer {os.environ['MONITOR_TOKEN']}",
             "Accept": "application/json",
+            "User-Agent": "nodema-maintenance-watch/1.0",
         },
     )
-    try:
-        with urlopen(request, timeout=20) as response:
-            return json.load(response)
-    except (OSError, ValueError):
-        return None
+    for attempt in range(3):
+        try:
+            with urlopen(request, timeout=15) as response:
+                state = json.load(response)
+                print("Heartbeat confirmed.")
+                return state
+        except HTTPError as error:
+            print(f"Heartbeat HTTP {error.code}.")
+            if error.code < 500 and error.code not in (408, 429):
+                return None
+        except (OSError, ValueError) as error:
+            print(f"Heartbeat unavailable ({type(error).__name__}).")
+        if attempt < 2:
+            sleep(3 * (attempt + 1))
+    return None
 
 
 def workflow_runs(workflow, size=12):
