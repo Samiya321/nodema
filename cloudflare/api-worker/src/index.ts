@@ -42,6 +42,7 @@ const sourceColumns =
   "id,name,type,format_hint,enabled,sync_interval_seconds,content_hash,applied_hash,parser_version,last_checked_at,sync_requested_at,last_synced_at,last_sync_status,last_error_code,last_parse_summary,revision,deleted_at," +
   "kind,detected_kind,parent_source_id,origin_label,user_agent,provider_id,traffic_upload,traffic_download,traffic_total,expires_at,userinfo_at,profile_title,profile_url,last_success_at,created_at," +
   "substring(convert_from(url_data,'UTF8') from '^[A-Za-z]+://([^/:?#]+)') AS url_host";
+const SCHEMA_REVISION = "0024_node_list_reads";
 // Imports and edits never start Actions; the dashboard asks the user to sync/test.
 const MANUAL_PIPELINE = { dispatched: false, reason: "MANUAL_SYNC" };
 function sourceKind(value: unknown): string {
@@ -281,15 +282,20 @@ export async function handle(
       try {
         result = (await db!.query<Row>(sql, values)).rows;
       } catch (error) {
-        const code =
-          errorCode === "INVALID_NODE_QUERY" &&
-          error &&
-          typeof error === "object" &&
-          "message" in error &&
-          error.message === "INVALID_NODE_SORT"
-            ? "INVALID_NODE_SORT"
-            : errorCode;
-        throw new SafeError(code, code === "DATABASE_QUERY_FAILED" ? 503 : 400);
+        if (errorCode === "INVALID_NODE_QUERY") {
+          const sqlError = error as { message?: string; code?: string } | null;
+          if (sqlError?.message === "INVALID_NODE_SORT")
+            throw new SafeError("INVALID_NODE_SORT");
+          if (
+            sqlError?.message !== "INVALID_NODE_QUERY" &&
+            !sqlError?.code?.startsWith("22")
+          )
+            throw new SafeError("DATABASE_QUERY_FAILED", 503);
+        }
+        throw new SafeError(
+          errorCode,
+          errorCode === "DATABASE_QUERY_FAILED" ? 503 : 400,
+        );
       }
       if (
         /^(UPDATE|DELETE FROM|INSERT INTO) (nodes|sources|quality_policies|grading_policy|naming_rules|node_annotations)\b/i.test(
@@ -338,14 +344,14 @@ export async function handle(
         /^[\w.-]+\/[\w.-]+$/.test(env.GITHUB_REPOSITORY) &&
         Boolean(env.GITHUB_DISPATCH_TOKEN) &&
         Boolean(env.GITHUB_WORKFLOW_REF);
-      if (version !== "0023_identity_naming")
+      if (version !== SCHEMA_REVISION)
         return json({
           ready: false,
           checks: { schema: false, dispatch: dispatchReady },
         });
       const checks = {
         database: true,
-        schema: version === "0023_identity_naming",
+        schema: true,
         storage: "PLAINTEXT",
         dispatch: dispatchReady,
       };
@@ -465,7 +471,7 @@ export async function handle(
         return new Response(
           await catalogPageText(
             rows,
-            await template(),
+            env.NAME_TEMPLATE,
             number(env.FRESHNESS_HOURS, 36),
             filters,
             sort,

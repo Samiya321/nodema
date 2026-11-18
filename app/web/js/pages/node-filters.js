@@ -4,8 +4,7 @@ import { field, h, select } from "../core.js";
 import { ADVANCED, PROTOCOLS, control, readFilters } from "../filters.js";
 import { countryName } from "./node-rows.js";
 
-// Without a status the page lists available nodes (UP + DEGRADED, fetched as two
-// queries): the whole library is ~4x the rows, and each row is metered transfer.
+// The default filter selects fresh UP and DEGRADED nodes in one query.
 export const AVAILABLE = "AVAILABLE";
 export const ALL = "ALL";
 export const STATUS = [

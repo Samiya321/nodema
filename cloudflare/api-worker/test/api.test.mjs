@@ -369,7 +369,7 @@ fill_missing(session_factory(make_engine(os.environ['DATABASE_URL'])))`);
       401,
     );
     const compactResponse = await request(
-      "/api/nodes?view=compact&limit=20000&sort=name:asc",
+      "/api/nodes?view=compact&status=AVAILABLE&limit=20000&sort=name:asc",
     );
     assert.match(compactResponse.headers.get("content-type"), /application\/json/);
     assert.equal(compactResponse.headers.get("cache-control"), "no-store");
@@ -388,6 +388,7 @@ fill_missing(session_factory(make_engine(os.environ['DATABASE_URL'])))`);
       .find((n) => n.id === nodeId);
     assert.equal(listed.name, node.name);
     assert.equal(listed.server_node_count, 1);
+    assert.equal(listed.status, "UP");
     for (const bad of [
       "/api/nodes?view=compact&limit=20001",
       "/api/nodes?limit=501",
@@ -399,6 +400,26 @@ fill_missing(session_factory(make_engine(os.environ['DATABASE_URL'])))`);
       (await (await request(`/api/scans/${runs[0].id}`)).json()).shards.length,
       1,
     );
+  });
+  await t.test("catalog timeouts return a retryable response", async () => {
+    const response = await handle(
+      new Request("https://assets.example/api/nodes?view=compact", {
+        headers: { Authorization: "Bearer " + env.ADMIN_PASSWORD },
+      }),
+      env,
+      async () => {
+        const db = await connect();
+        const query = db.query.bind(db);
+        db.query = (sql, ...args) =>
+          sql.includes("nodema_node_page")
+            ? Promise.reject(new Error("Query read timeout"))
+            : query(sql, ...args);
+        return db;
+      },
+    );
+    assert.equal(response.status, 503);
+    assert.deepEqual(await response.json(), { error_code: "DATABASE_QUERY_FAILED" });
+    assert.equal((await request("/api/nodes?sort=invalid:asc")).status, 400);
   });
   await t.test(
     "five export formats, live eligibility and revocation",

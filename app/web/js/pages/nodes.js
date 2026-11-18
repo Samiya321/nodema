@@ -7,7 +7,7 @@ import { BUCKETS, COLUMNS, bucketOf, headRow, nodeRow, setRowVantage, sortNodes 
 import { countryView, revealCountry } from "./node-countries.js";
 import { asnView } from "./node-asn.js";
 import { ALL, API_KEYS, AVAILABLE, PERCENT, display, label, openPanel } from "./node-filters.js";
-import { BUCKET_HINT, BUCKET_TEXT, VANTAGES, defaultVantage } from "../grades.js";
+import { BUCKET_HINT, BUCKET_TEXT, VANTAGES } from "../grades.js";
 
 const SIZES = [50, 100, 200];
 const VIEWS = [["", "列表"], ["country", "按国家"], ["asn", "ASN 排行"]];
@@ -26,22 +26,22 @@ const objects = (page) => page.items.map((row) => Object.fromEntries(page.fields
 
 let cache = null;
 async function fetchAll(filters) {
-  const fetchPage = (offset) =>
-    api("/nodes?" + new URLSearchParams({ ...filters, sort: "short_id:asc", view: "compact", offset: String(offset), limit: String(FETCH_PAGE) }));
+  const sort = filters.status === AVAILABLE ? "status:desc,short_id:asc" : "short_id:asc";
+  const fetchPage = (offset, selected = filters) =>
+    api("/nodes?" + new URLSearchParams({ ...selected, sort, view: "compact", offset: String(offset), limit: String(FETCH_PAGE) }));
   const first = await fetchPage(0);
   const offsets = [];
   for (let offset = FETCH_PAGE; offset < first.total; offset += FETCH_PAGE) offsets.push(offset);
-  const rest = await Promise.all(offsets.map(fetchPage));
-  return [first, ...rest].flatMap(objects);
+  const rest = await Promise.all(offsets.map((offset) => fetchPage(offset, { ...filters, vantage: first.vantage })));
+  return { items: [first, ...rest].flatMap(objects), vantage: first.vantage };
 }
 
 async function load(filters) {
   const key = JSON.stringify(filters);
   if (cache && cache.key === key && Date.now() - cache.at < CACHE_MS) return cache.data;
   const { status = AVAILABLE, ...rest } = filters;
-  const statuses = status === AVAILABLE ? ["UP", "DEGRADED"] : status === ALL ? [null] : [status];
-  const parts = await Promise.all(statuses.map((value) => fetchAll(value ? { ...rest, status: value } : rest)));
-  const data = { items: parts.flat(), at: Date.now() };
+  const result = await fetchAll(status === ALL ? rest : { ...rest, status });
+  const data = { ...result, at: Date.now() };
   cache = { key, at: data.at, data };
   return data;
 }
@@ -57,9 +57,7 @@ function legacyBuckets(params) {
   return [];
 }
 
-export async function render(root, { params, go }) {
-  const vantage = params.get("vantage") || (await defaultVantage());
-  setRowVantage(vantage);
+export async function render(root, { params, go, isCurrent }) {
   const view = VIEWS.some(([v]) => v === params.get("by")) ? params.get("by") || "" : "";
   const chosen = new Set((params.get("g") ? params.get("g").split(",") : legacyBuckets(params)).filter((b) => BUCKETS.includes(b)));
   const quick = new Set(QUICK.filter(([key]) => params.get(key) === "1").map(([key]) => key));
@@ -67,9 +65,12 @@ export async function render(root, { params, go }) {
   const size = SIZES.includes(Number(params.get("size"))) ? Number(params.get("size")) : SIZES[0];
   const filters = {};
   for (const key of API_KEYS) if (params.get(key)) filters[key] = params.get(key);
-  const apiFilters = { ...filters, vantage };
+  const apiFilters = { ...filters };
+  if (params.get("vantage")) apiFilters.vantage = params.get("vantage");
   for (const key of PERCENT) if (apiFilters[key]) apiFilters[key] = String(Number(apiFilters[key]) / 100);
-  const [{ items: loaded, at: loadedAt }, providers] = await Promise.all([load(apiFilters), api("/providers")]);
+  const [{ items: loaded, at: loadedAt, vantage }, providers] = await Promise.all([load(apiFilters), api("/providers")]);
+  if (!isCurrent()) return;
+  setRowVantage(vantage);
 
   // Every state lives in the URL.
   const update = (changes, { keepPage = false } = {}) => {

@@ -142,6 +142,32 @@ def test_catalog_filters_sort_nulls_and_stable_pagination_apply_to_exports(
     assert catalog.nodes()["total"] == 2
 
 
+def test_available_nodes_keep_fresh_status_totals_and_page_bounds(
+    service, monitor_settings, fixture_bytes
+):
+    source, catalog, _ = seed(service, monitor_settings, fixture_bytes, days=1)
+    first, second = catalog.nodes()["items"]
+    with service.sessions.begin() as session:
+        session.get(NodeCurrentStatus, second["id"]).status = "DEGRADED"
+
+    filters = {"status": "AVAILABLE", "source_id": str(source)}
+    page = catalog.page(filters, limit=1)
+    assert page["total"] == 2
+    assert [node["id"] for node in page["items"]] == [first["id"]]
+    next_page = catalog.page(filters, offset=1, limit=1)
+    assert next_page["total"] == 2
+    assert [node["status"] for node in next_page["items"]] == ["DEGRADED"]
+    past_end = catalog.page(filters, offset=2, limit=1)
+    assert past_end["total"] == 2 and past_end["items"] == []
+    assert catalog.page({**filters, "best_per_server": True})["total"] == 1
+
+    with service.sessions.begin() as session:
+        session.get(NodeCurrentStatus, second["id"]).last_checked_at -= timedelta(days=3)
+    assert catalog.page(filters)["total"] == 1
+    assert catalog.page({**filters, "status": "DEGRADED"})["total"] == 0
+    assert catalog.page({**filters, "status": "STALE"})["total"] == 1
+
+
 def test_insufficient_stale_missing_and_poor_history_are_distinct(
     service, monitor_settings, fixture_bytes
 ):

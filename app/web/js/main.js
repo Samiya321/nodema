@@ -51,7 +51,7 @@ async function render() {
     // Pages pass lists and optional (null) sections; flatten them like h() does.
     const append = root.append.bind(root);
     root.append = (...items) => append(...items.flat(Infinity).filter((x) => x !== null && x !== undefined && x !== false));
-    await module.render(root, { params, go, refresh: render, refreshStrip });
+    await module.render(root, { params, go, refresh: render, refreshStrip, isCurrent: () => ticket === rendering });
     if (ticket !== rendering) return;
     page.replaceChildren(root);
     if (shown !== name) {

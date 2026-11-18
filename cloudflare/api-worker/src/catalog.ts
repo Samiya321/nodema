@@ -135,7 +135,7 @@ export async function catalogPage(
 // parses nor re-serializes megabytes of rows (free-plan CPU budget).
 export async function catalogPageText(
   rows: Rows,
-  template: string,
+  defaultTemplate: string,
   freshness: number,
   filters: Row,
   sort: string,
@@ -147,8 +147,9 @@ export async function catalogPageText(
   return String(
     (
       await rows(
-        "SELECT nodema_node_page($1::jsonb,$2,$3,$4,$5,$6,'compact')::text AS page",
-        [JSON.stringify(filters), sort, offset, limit, freshness, template],
+        "SELECT nodema_node_page($1::jsonb,$2,$3,$4,$5," +
+          "coalesce((SELECT template FROM naming_rules WHERE id=1),$6),'compact')::text AS page",
+        [JSON.stringify(filters), sort, offset, limit, freshness, defaultTemplate],
         "INVALID_NODE_QUERY",
       )
     )[0].page,
