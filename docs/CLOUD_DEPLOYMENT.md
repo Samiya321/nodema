@@ -8,11 +8,19 @@
 | API | https://nodema-api.simb.workers.dev；管理接口需要管理员鉴权 |
 | Echo | https://nodema-echo.simb.workers.dev；仅返回调用者的观测信息 |
 | 源码 | https://github.com/Samiya321/nodema |
-| 数据库 | 自建 PostgreSQL 17.12，用户指定云主机，目录 `/root/nodema-postgres`；当前 schema `0025_dashboard_lineage`。旧 Neon 项目已删除 |
+| 数据库 | 自建 PostgreSQL 17.12，用户指定云主机，目录 `/root/nodema-postgres`；当前 schema `0026_maintenance`。旧 Neon 项目已删除 |
 | API 数据库权限 | 独立角色，授予业务 DML；数据库迁移使用单独的 owner 连接 |
 | Hyperdrive | 经 Workers VPC 和 Cloudflare Tunnel 连接本机数据库；禁用查询缓存，源站连接数限制 5 |
 
 管理员密钥、数据库连接、HMAC/AES 密钥和 GitHub 调度 token 保存在本地 `private/` 以及对应平台 Secrets 中，不在本页或 Git 仓库公开。
+
+## 2026-11-18 第二十三次发布：长期运维和总览
+
+- 运行代码 `2e183a8`，schema `0026_maintenance`，Worker `d199753d-668c-44f2-9617-7227040d9e94`，Pages `fbede569-67c0-45e1-84f6-2a23a483e417`。认证 readiness 为真，巡检凭据仅能访问只读 heartbeat；静态 JS/CSS 与发布源码一致。[分支 CI](https://github.com/Samiya321/nodema/actions/runs/44262864674) · [main CI](https://github.com/Samiya321/nodema/actions/runs/44278542254) 通过，覆盖 471 个 Python、37 个 Worker、3 个 Echo 测试与 100 节点合成流水线。
+- [发布前备份](https://github.com/Samiya321/nodema/actions/runs/44260766354) 已在隔离 PostgreSQL 恢复，并按最新脚本升级、降级、再升级。三次均为 56,597 个节点、1,076 个来源、61,236 条节点来源关系。[上线后备份](https://github.com/Samiya321/nodema/actions/runs/44278642892) 为 54,296,995 字节，保留 7 天。[独立恢复演练](https://github.com/Samiya321/nodema/actions/runs/44279243192) 实际下载密文包，在 Runner 临时库恢复，schema、密钥检查及最低权限读取均通过。
+- 生产容量采样服务首次运行成功，五分钟定时器已启用。独立巡检的补发、同批次恢复、活跃租约和异常阈值用合成状态验证。首次巡检请求的默认客户端标识收到 403，触发 [Issue 3](https://github.com/Samiya321/nodema/issues/3)。巡检修正 `1f1e7d3` 明确标识客户端，并重试限流和暂时性故障。[复验 44280203432](https://github.com/Samiya321/nodema/actions/runs/44280203432) 成功，自动关闭 Issue 并发布恢复通知。最近完整日检的容量曲线从下一轮正常日检开始积累。当前生产成品订阅为 0，已用合成方案验证订阅生成与下载规则。
+- 生产浏览器验证 1440、390、320 px 的总览与状态区，全状态列表前两页各 50 行、总数 56,597。生产首屏可用节点请求为 21,859 字节、约 2.52 秒；全状态首批 50 条为 22,260 字节、一次并行验收中约 6.24 秒，第二页为 22,662 字节、约 4.12 秒。隔离生产副本对照，旧全状态首批 10,000 行为 3,352,111 字节，新首屏 50 行为 22,260 字节。按国家和 ASN 汇总改为打开对应视图时请求。均为单次观测。
+- 总览把系统状态、检测动态、来源事项和资产摘要集中在首屏及后续区域。来源异常按根分组，显示预计重试；续期保留原来源 ID 和关联。单条、批量导入与 Sub-Store 物化按归一化的订阅链接去重或记录引用。详见 [生产手册](PRODUCTION_OPERATIONS.md#独立巡检) 和 [来源维护](SOURCES_AIRPORTS_NAMING.md#来源维护)。
 
 ## 2026-11-18 第二十二次发布：导航和来源溯源
 

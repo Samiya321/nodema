@@ -20,7 +20,9 @@
 
 同日上线节点列表读取优化 `4e44b75`，发布时 schema `0024_node_list_reads`。「可用节点」合并为一次查询，总数与当页共享匹配节点。上线记录及隔离基准见 [节点列表提速](CLOUD_DEPLOYMENT.md#2026-11-18-第二十一次发布节点列表提速)。
 
-同日上线导航和溯源，Worker `c8fa6ca`、Pages `006324f`，当前 schema `0025_dashboard_lineage`。新增 `substore_source_references` 记录索引对已有来源的引用。节点仍通过 `node_sources` 进入直接来源，成品通过 `export_members` 进入成员节点。[发布记录](CLOUD_DEPLOYMENT.md#2026-11-18-第二十二次发布导航和来源溯源)
+同日上线导航和溯源，Worker `c8fa6ca`、Pages `006324f`，该次 schema `0025_dashboard_lineage`。新增 `substore_source_references` 记录索引对已有来源的引用。节点仍通过 `node_sources` 进入直接来源，成品通过 `export_members` 进入成员节点。[发布记录](CLOUD_DEPLOYMENT.md#2026-11-18-第二十二次发布导航和来源溯源)
+
+**同日已上线长期运维与总览**，运行代码 `2e183a8`，当前 schema `0026_maintenance`。每日备份、每月隔离恢复、每小时独立巡检和主机容量采样的运行约定见 [生产手册](PRODUCTION_OPERATIONS.md#独立巡检)，页面与后台验收见 [发布记录](CLOUD_DEPLOYMENT.md#2026-11-18-第二十三次发布长期运维和总览)。
 
 先看 git 与实际云端状态。历史记录中的“尚未导入真实节点”和表行数不代表此刻数据库为空；用户可以随时从 Dashboard 导入，禁止据此清库。
 
