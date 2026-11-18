@@ -8,11 +8,19 @@
 | API | https://nodema-api.simb.workers.dev；管理接口需要管理员鉴权 |
 | Echo | https://nodema-echo.simb.workers.dev；仅返回调用者的观测信息 |
 | 源码 | https://github.com/Samiya321/nodema |
-| 数据库 | 自建 PostgreSQL 17.12，用户指定云主机，目录 `/root/nodema-postgres`；当前 schema `0023_identity_naming`。旧 Neon 项目已删除 |
+| 数据库 | 自建 PostgreSQL 17.12，用户指定云主机，目录 `/root/nodema-postgres`；当前 schema `0024_node_list_reads`。旧 Neon 项目已删除 |
 | API 数据库权限 | 独立角色，授予业务 DML；数据库迁移使用单独的 owner 连接 |
 | Hyperdrive | 经 Workers VPC 和 Cloudflare Tunnel 连接本机数据库；禁用查询缓存，源站连接数限制 5 |
 
 管理员密钥、数据库连接、HMAC/AES 密钥和 GitHub 调度 token 保存在本地 `private/` 以及对应平台 Secrets 中，不在本页或 Git 仓库公开。
+
+## 2026-11-18 第二十一次发布：节点列表提速
+
+- 代码 `4e44b75`，生产 schema `0024_node_list_reads`，Worker `db95dd39-393c-4545-83ea-004362f3a13e`，Pages `12f5b4fd-bc28-42da-8d90-63be6339520a`。生产静态模块散列与源码一致，health 200，认证 readiness 为真，未认证 401。[分支 CI 44237426789](https://github.com/Samiya321/nodema/actions/runs/44237426789) 和 [main CI 44237999699](https://github.com/Samiya321/nodema/actions/runs/44237999699) 通过，覆盖 469 个 Python、37 个 Worker、3 个 Echo 测试和 100 节点合成流水线。
+- 发布前 [加密备份 44237223839](https://github.com/Samiya321/nodema/actions/runs/44237223839) 已恢复到独立 PostgreSQL 17 并演练迁移。升级前后均为 38 张表、56,597 个节点和 123,501 条检测明细。更早的独立副本也通过升级、降级、重新升级。新备份有效至北京时间 2026-12-08 12:27。
+- 迁移让可用状态明确带上原 36 小时窗口的时间条件，PostgreSQL 可在连接目录前利用现有索引。总数和分页共用匹配 ID，只对所取页组装结果。页面合并 UP 和 DEGRADED 请求，由列表响应提供默认分级视角；Worker 在同一次数据库往返读取命名模板。查询超时返回可重试的 503。
+- 隔离生产副本对照中，默认可用全结果两次旧 SQL 的耗时合计中位约 185 毫秒，新 SQL 约 95 毫秒。1,655 项结果、排序、去重、偏移量越界及抽查的完整投影一致。生产 HTTP 实测可用全结果 1,468 项、606,620 字节、4.68 秒。50 行取数约 2.07 秒，旧版正常状态的 50 行约 6.41 秒。两类测量的入口与环境见本机记录，生产结果为单次样本。
+- 390 px Playwright 只读复验中，节点请求从两次缩为一次，最慢请求从 10.45 秒降到 5.85 秒，同时省去约 0.98 秒的串行分级设置请求。验证两页各 50 行、国家和 ASN 视图及全选 1,468 项。分组、等级分布及全选仍使用完整筛选集。5.6 万项「全部状态」首 50 行 API 为 2.38 秒，该页面仍需分段取得完整结果。实际夜间日检并发待验证。
 
 ## 2026-11-18 第二十次发布：日检恢复、分级证据和页面优化
 

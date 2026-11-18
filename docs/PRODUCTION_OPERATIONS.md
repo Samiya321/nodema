@@ -81,6 +81,7 @@ PY
 | 订阅 404/鉴权失败 | 检查 token、撤销、到期；不要将完整私有 URL 贴到公开 issue。旧 token hash 不能还原原 token，确需更换由用户触发 |
 | 入口国家/ASN 未知 | 看 geoip-pack 输出；缺记录/校验失败/未安装 MMDB 都可能，不代表节点 DOWN。GitHub 源无需新建 MaxMind 账号，确认 GeoIP provider 即可 |
 | DB/TLS 连接失败 | 检查 PostgreSQL、cloudflared、Hyperdrive 或 Actions 的 SSH 转发状态。核对连接角色、CA 和 PostgreSQL TLS 主机名，保留 verify-full |
+| 节点列表慢或查询超时 | 对照「可用节点」与「全部状态」，记录时间、默认筛选的响应耗时和同时运行的任务。全量分组和全选会读取完整筛选集。查询超时返回 503，性能复现使用隔离副本 |
 | 容量或分钟数增长 | 查运行与用量、活跃任务和保留设置；cleanup 会归档并删除过期明细，应了解其影响后执行，不为验收随意运行 |
 
 每日主流程北京时间 04:17 由 API Worker Cron 派发（不受 GitHub 定时延迟影响），备份每月 1、15 日 UTC 21:41（仓库变量 `BACKUP_SKIP_UNTIL=YYYY-MM-DD` 可跳过此日期之前的定时备份）。转换“不支持”的原因可手动运行只读的 `diagnose.yml` 查看（约 3 MB 传输）。手工执行固定工作流前确认本次任务允许生产写入/检测：

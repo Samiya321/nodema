@@ -18,6 +18,8 @@
 
 **2026-11-18 生产数据库已迁到用户指定主机的自建 PostgreSQL 17。** Pages、Worker 和 GitHub Actions 继续按既有分工运行；旧 Neon 项目已删除，灾备使用 Actions 加密备份。详见 [云端记录](CLOUD_DEPLOYMENT.md) 和 [生产手册](PRODUCTION_OPERATIONS.md)。
 
+同日上线节点列表读取优化 `4e44b75`，当前 schema `0024_node_list_reads`。「可用节点」合并为一次查询，总数与当页共享匹配节点。上线记录及隔离基准见 [节点列表提速](CLOUD_DEPLOYMENT.md#2026-11-18-第二十一次发布节点列表提速)。
+
 先看 git 与实际云端状态。历史记录中的“尚未导入真实节点”和表行数不代表此刻数据库为空；用户可以随时从 Dashboard 导入，禁止据此清库。
 
 ## 0014 上线记录（已于 2026-11-11 按此顺序完成；以后的迁移照此办理）
