@@ -1,0 +1,28 @@
+name: nodema-postgres
+services:
+  postgres:
+    image: postgres:17-bookworm
+    network_mode: host
+    restart: unless-stopped
+    mem_limit: 256m
+    memswap_limit: 512m
+    shm_size: 96m
+    environment:
+      POSTGRES_PASSWORD_FILE: /run/nodema/postgres-password
+      POSTGRES_INITDB_ARGS: --locale-provider=builtin --builtin-locale=C.UTF-8 --encoding=UTF8 --data-checksums
+    command: [postgres, -c, config_file=/etc/nodema/postgresql.conf]
+    volumes:
+      - ./data:/var/lib/postgresql/data
+      - ./config:/etc/nodema:ro
+      - ./secrets/postgres-password:/run/nodema/postgres-password:ro
+      - ./tls:/etc/nodema-tls:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -q -h 127.0.0.1 -p 25432 -U postgres -d postgres"]
+      interval: 15s
+      timeout: 4s
+      retries: 4
+    logging:
+      driver: json-file
+      options:
+        max-size: 5m
+        max-file: "2"

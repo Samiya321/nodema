@@ -78,6 +78,10 @@ jobs:
       geoip_ready: ${{ steps.geoip.outputs.geoip_ready }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: ./.github/actions/database-tunnel
+        if: vars.NODEMA_DATABASE_VIA_SSH == 'true'
+        with:
+          connection: ${{ secrets.NODEMA_POSTGRES_SSH }}
       - id: network
         name: Start network interface counters
         run: python3 scripts/job_network.py
@@ -164,6 +168,10 @@ jobs:
         include: ${{ fromJSON(needs.prepare.outputs.workers) }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: ./.github/actions/database-tunnel
+        if: vars.NODEMA_DATABASE_VIA_SSH == 'true'
+        with:
+          connection: ${{ secrets.NODEMA_POSTGRES_SSH }}
       - id: network
         name: Start network interface counters
         run: python3 scripts/job_network.py
@@ -203,6 +211,10 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: ./.github/actions/database-tunnel
+        if: vars.NODEMA_DATABASE_VIA_SSH == 'true'
+        with:
+          connection: ${{ secrets.NODEMA_POSTGRES_SSH }}
       - id: network
         name: Start network interface counters
         run: python3 scripts/job_network.py

@@ -1,0 +1,32 @@
+name: Connect to private PostgreSQL
+description: Open a restricted SSH port forward for a database job
+inputs:
+  connection:
+    description: SSH endpoint, key, pinned host key and PostgreSQL CA
+    required: true
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        NODEMA_POSTGRES_SSH: ${{ inputs.connection }}
+      run: |
+        set -euo pipefail
+        umask 077
+        tunnel_dir=$(mktemp -d "${RUNNER_TEMP}/nodema-db.XXXXXX")
+        ca_file=/tmp/nodema-postgres-ca.crt
+        trap 'rm -f "$tunnel_dir/key"' EXIT
+        jq -e -r '.key' <<< "$NODEMA_POSTGRES_SSH" > "$tunnel_dir/key"
+        jq -e -r '.known_hosts' <<< "$NODEMA_POSTGRES_SSH" > "$tunnel_dir/known_hosts"
+        jq -e -r '.ca' <<< "$NODEMA_POSTGRES_SSH" > "$tunnel_dir/ca.crt"
+        host=$(jq -e -r '.host' <<< "$NODEMA_POSTGRES_SSH")
+        port=$(jq -e -r '.port' <<< "$NODEMA_POSTGRES_SSH")
+        unset NODEMA_POSTGRES_SSH
+        install -m 600 "$tunnel_dir/ca.crt" "$ca_file"
+        ssh -fNT -p "$port" -i "$tunnel_dir/key" \
+          -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+          -o "UserKnownHostsFile=$tunnel_dir/known_hosts" -o GlobalKnownHostsFile=/dev/null \
+          -o ExitOnForwardFailure=yes -o ConnectTimeout=12 \
+          -o ServerAliveInterval=20 -o ServerAliveCountMax=3 \
+          -L 127.0.0.1:25432:127.0.0.1:25432 "nodema-db-tunnel@$host"
+        printf 'NODEMA_POSTGRES_TUNNEL_CA=%s\n' "$ca_file" >> "$GITHUB_ENV"

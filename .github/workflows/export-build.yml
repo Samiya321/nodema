@@ -20,6 +20,10 @@ jobs:
       ENCRYPTION_KEY_ID: ${{ vars.ENCRYPTION_KEY_ID || 'local-v1' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: ./.github/actions/database-tunnel
+        if: vars.NODEMA_DATABASE_VIA_SSH == 'true'
+        with:
+          connection: ${{ secrets.NODEMA_POSTGRES_SSH }}
       - id: network
         run: python3 scripts/job_network.py
       - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff
