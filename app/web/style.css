@@ -581,7 +581,10 @@ dd .tag { margin-left: 6px; }
   .rail li a { white-space: nowrap; height: 32px; }
   .rail li a[aria-current] { box-shadow: inset 0 -2px 0 var(--ink); }
   .sheet-body .pairs { grid-template-columns: auto minmax(0, 1fr); }
-  .sheet-body td > * { min-width: 0; }
+  .sheet-body .grid-2, .sheet-body .stack { grid-template-columns: minmax(0, 1fr); }
+  .sheet-body .stack > *, .sheet-body details, .sheet-body td, .sheet-body td > * { min-width: 0; }
+  .sheet-body .row { flex-wrap: wrap; }
+  .sheet-body .pairs dd > span { overflow-wrap: anywhere; }
   .strip, #page, .foot { padding-left: 16px; padding-right: 16px; }
   .strip { position: static; padding: 10px 16px; }
   .strip .strip-group { min-width: 0; }
