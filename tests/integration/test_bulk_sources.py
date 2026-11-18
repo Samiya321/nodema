@@ -126,3 +126,24 @@ def test_bulk_url_validation_shared_fixture(fixture_bytes):
             assert item["url"] == case["url"]
         else:
             assert item["status"] == "INVALID", case
+
+
+def test_single_and_bulk_reuse_source_on_renewal(service):
+    first = service.create_sources_bulk("https://store.example/api/subs?token=first")
+    original = UUID(first["items"][0]["id"])
+    repeat = service.create_source(
+        name="same link",
+        source_type=SourceType.SUBSCRIPTION_URL,
+        payload=b"https://STORE.example:443/api/subs?token=first",
+    )
+    assert repeat["id"] == original and repeat["duplicate"] is True
+    updated = service.update_source(
+        original, payload=b"https://store.example/api/subs?token=second"
+    )
+    assert updated["id"] == original
+    duplicate = service.create_sources_bulk("https://store.example/api/subs?token=second")
+    assert duplicate["duplicates"] == 1
+    another = service.create_sources_bulk("https://store.example/api/subs?token=third")
+    assert another["created"] == 1
+    with pytest.raises(AssetError, match="SOURCE_URL_ALREADY_EXISTS"):
+        service.update_source(original, payload=b"https://store.example/api/subs?token=third")

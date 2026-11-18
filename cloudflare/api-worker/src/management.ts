@@ -185,30 +185,7 @@ async function substores(rows: Rows, id?: string) {
 }
 
 async function overviewAttention(rows: Rows) {
-  const [summary] = await rows(`WITH airport_risks AS (
-    SELECT id,name,expires_at,traffic_total,
-      coalesce(traffic_upload,0)+coalesce(traffic_download,0) AS used,
-      CASE WHEN expires_at<=now() THEN 'expired'
-           WHEN traffic_total>0 AND coalesce(traffic_upload,0)+coalesce(traffic_download,0)>=traffic_total THEN 'exhausted'
-           WHEN expires_at<=now()+interval '7 days' THEN 'soon'
-           WHEN traffic_total>0 AND coalesce(traffic_upload,0)+coalesce(traffic_download,0)>traffic_total*0.9 THEN 'low' END AS risk
-    FROM sources WHERE deleted_at IS NULL AND enabled AND nodema_source_kind(kind,detected_kind)='AIRPORT'
-  ), ranked AS (
-    SELECT *,row_number() OVER (PARTITION BY risk ORDER BY expires_at NULLS LAST,id) AS pos,
-      count(*) OVER (PARTITION BY risk)::int AS total FROM airport_risks WHERE risk IS NOT NULL
-  ), substores AS (
-    SELECT id,name,last_error_code,count(*) OVER ()::int AS total FROM sources
-    WHERE deleted_at IS NULL AND detected_kind='SUBSTORE' AND last_sync_status='FAILED'
-    ORDER BY last_checked_at DESC NULLS LAST,id LIMIT 3
-  ) SELECT
-    coalesce((SELECT jsonb_agg(to_jsonb(r) - 'pos' ORDER BY r.risk,r.pos) FROM ranked r WHERE pos<=3),'[]') AS airports,
-    coalesce((SELECT jsonb_agg(to_jsonb(s)) FROM substores s),'[]') AS substores,
-    (SELECT count(*) FILTER (WHERE last_success_at IS NOT NULL)::int FROM sources
-      WHERE deleted_at IS NULL AND last_sync_status='FAILED' AND detected_kind<>'SUBSTORE') AS broken,
-    (SELECT count(*) FILTER (WHERE last_success_at IS NULL)::int FROM sources
-      WHERE deleted_at IS NULL AND last_sync_status='FAILED' AND detected_kind<>'SUBSTORE') AS never_worked,
-    EXISTS(SELECT 1 FROM export_artifacts WHERE revoked_at IS NULL) AS has_exports`);
-  return summary;
+  return (await rows("SELECT nodema_source_attention() AS summary"))[0].summary;
 }
 
 async function asnLabels(rows: Rows) {

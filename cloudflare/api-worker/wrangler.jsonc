@@ -10,5 +10,5 @@
     "DATABASE_PROVIDER":"self_hosted",
     "NAME_TEMPLATE":"{FLAG}{ROUTE}|{OPERATOR} {SEQ}{VARIANT}",
     "GITHUB_REPOSITORY":"Samiya321/nodema","GITHUB_WORKFLOW_REF":"main"},
-  "secrets":{"required":["ADMIN_PASSWORD","GITHUB_DISPATCH_TOKEN"]}
+  "secrets":{"required":["ADMIN_PASSWORD","GITHUB_DISPATCH_TOKEN","MONITOR_TOKEN"]}
 }

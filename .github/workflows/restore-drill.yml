@@ -1,0 +1,70 @@
+name: Monthly restore drill
+on:
+  schedule:
+    - cron: '6 17 3 * *' # Asia/Shanghai, 01:06 on the 4th
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: nodema-restore-drill
+  cancel-in-progress: false
+jobs:
+  restore:
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # This job never receives production connection credentials.
+      DATABASE_URL: postgresql+psycopg://drill:isolated_restore_only@127.0.0.1:55496/restore_drill
+      ENCRYPTION_KEY_B64: ${{ secrets.ENCRYPTION_KEY_B64 }}
+      ENCRYPTION_KEY_ID: ${{ vars.ENCRYPTION_KEY_ID || 'local-v1' }}
+      FINGERPRINT_KEY_B64: ${{ secrets.FINGERPRINT_KEY_B64 }}
+      NODEMA_TRUSTED_BRANCH: ${{ github.event.repository.default_branch }}
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: drill
+          POSTGRES_PASSWORD: isolated_restore_only
+          POSTGRES_DB: restore_drill
+        ports:
+          - 55496:5432
+        options: >-
+          --health-cmd "pg_isready -U drill -d restore_drill"
+          --health-interval 5s --health-timeout 3s --health-retries 12
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff
+        with:
+          python-version: '3.12'
+      - run: uv sync --frozen
+      - name: Restore an actual encrypted backup into the runner database
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          scratch=$(mktemp -d)
+          trap 'rm -rf "$scratch"' EXIT
+          runs=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/backup.yml/runs" \
+            -X GET -f branch="$NODEMA_TRUSTED_BRANCH" -f status=success -F per_page=10 \
+            --jq '.workflow_runs[].id')
+          restored=
+          for run in $runs; do
+            name="encrypted-database-$run"
+            present=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run/artifacts" \
+              --jq ".artifacts[] | select(.name == \"$name\" and .expired == false) | .id")
+            if [ -z "$present" ]; then continue; fi
+            gh run download "$run" -R "$GITHUB_REPOSITORY" -n "$name" -D "$scratch"
+            /usr/bin/test -s "$scratch/database.nma"
+            uv run nodema restore --input-file "$scratch/database.nma" --confirm-restore --docker-client
+            restored=$run
+            break
+          done
+          /usr/bin/test -n "$restored"
+          uv run alembic upgrade head
+          uv run nodema doctor
+          uv run python scripts/verify_restore_drill.py
+          printf 'Encrypted backup #%s restored and verified in isolated PostgreSQL.\n' "$restored" >> "$GITHUB_STEP_SUMMARY"

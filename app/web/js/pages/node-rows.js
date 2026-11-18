@@ -1,5 +1,4 @@
-// Node table: columns, row rendering and client-side ordering. The page loads the
-// whole filtered set once (compact rows), so sorting and paging never hit the database.
+// Node columns and row rendering. Grouped views also use the client-side comparators.
 import { IP_TYPE, KIND, ago, badge, flag, h, ms } from "../core.js";
 import { nodeHref } from "../lineage.js";
 import { GRADES, gradeBadge, isCarrier, vantageName } from "../grades.js";

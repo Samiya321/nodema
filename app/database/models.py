@@ -720,6 +720,32 @@ class DatabaseSample(Base):
     transfer_period_end: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
 
 
+class HostCapacitySample(Base):
+    __tablename__ = "host_capacity_samples"
+    __table_args__ = (
+        sa.CheckConstraint("disk_free >= 0", name="disk_free"),
+        sa.CheckConstraint("disk_total > 0 AND disk_free <= disk_total", name="disk_total"),
+        sa.CheckConstraint("db_bytes >= 0", name="db_bytes"),
+        sa.CheckConstraint("pg_connections >= 0", name="pg_connections"),
+        sa.CheckConstraint("mem_available >= 0", name="mem_available"),
+        sa.CheckConstraint("mem_total > 0 AND mem_available <= mem_total", name="mem_total"),
+        sa.CheckConstraint("postgres_restarts >= 0", name="postgres_restarts"),
+        sa.CheckConstraint("tunnel_restarts >= 0", name="tunnel_restarts"),
+    )
+    taken_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), primary_key=True, server_default=sa.func.now()
+    )
+    disk_free: Mapped[int] = mapped_column(sa.BigInteger)
+    disk_total: Mapped[int] = mapped_column(sa.BigInteger)
+    db_bytes: Mapped[int] = mapped_column(sa.BigInteger)
+    pg_connections: Mapped[int]
+    mem_available: Mapped[int] = mapped_column(sa.BigInteger)
+    mem_total: Mapped[int] = mapped_column(sa.BigInteger)
+    tls_expires_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True))
+    postgres_restarts: Mapped[int]
+    tunnel_restarts: Mapped[int]
+
+
 class ActionRun(Base):
     __tablename__ = "action_runs"
     __table_args__ = (

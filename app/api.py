@@ -227,6 +227,7 @@ def create_app(settings=None, *, assets=None):
             else 409
             if error.code
             in (
+                "SOURCE_URL_ALREADY_EXISTS",
                 "QUALITY_POLICY_CONFLICT",
                 "GRADING_POLICY_CONFLICT",
                 "EXPORT_TOKEN_LEGACY",
@@ -260,6 +261,24 @@ def create_app(settings=None, *, assets=None):
 
         return Usage(assets.sessions).summary(days, database_provider=settings.database_provider)
 
+    @app.get("/api/overview/catalog", dependencies=auth)
+    def overview_catalog():
+        return catalog.overview(include_scans=False)
+
+    @app.get("/api/overview/status", dependencies=auth)
+    def operational_state():
+        with assets.sessions() as session:
+            return session.scalar(sa.text("SELECT nodema_maintenance_state()"))
+
+    @app.get("/api/overview/attention", dependencies=auth)
+    def operational_attention():
+        with assets.sessions() as session:
+            return session.scalar(sa.text("SELECT nodema_source_attention()"))
+
+    @app.get("/api/overview/recovery", dependencies=auth)
+    def operational_recovery():
+        return {"backup_available": False, "drill_available": False}
+
     @app.get("/api/readiness", dependencies=auth)
     def deployment_readiness():
         from app.readiness import readiness
@@ -277,8 +296,8 @@ def create_app(settings=None, *, assets=None):
         return catalog.source_lineage(source_id, relation, offset, limit)
 
     @app.post("/api/sources", dependencies=auth, status_code=201)
-    def add_source(body: SourceCreate):
-        return assets.create_source(
+    def add_source(body: SourceCreate, response: Response):
+        result = assets.create_source(
             name=body.name,
             source_type=body.type,
             payload=body.payload.get_secret_value().encode(),
@@ -286,6 +305,9 @@ def create_app(settings=None, *, assets=None):
             kind=body.kind,
             user_agent=body.user_agent,
         )
+        if result.get("duplicate"):
+            response.status_code = 200
+        return result
 
     @app.post("/api/sources/bulk", dependencies=auth)
     def add_sources_bulk(body: SourceBulkCreate):
@@ -325,11 +347,25 @@ def create_app(settings=None, *, assets=None):
         return assets.sync_source(source_id)
 
     @app.get("/api/nodes", dependencies=auth)
-    def nodes(request: Request, offset: int = 0, limit: int = 100, sort: str = "short_id:asc"):
-        if offset < 0 or not 1 <= limit <= 500:
+    def nodes(
+        request: Request,
+        offset: int = 0,
+        limit: int = 100,
+        sort: str = "short_id:asc",
+        view: str = "full",
+    ):
+        if view not in {"full", "compact", "dashboard", "ids"}:
+            raise AssetError("INVALID_NODE_QUERY")
+        if not 0 <= offset <= 2147483647 or not 1 <= limit <= (
+            20000 if view in {"compact", "ids"} else 500
+        ):
             raise HTTPException(422, "INVALID_PAGINATION")
         return catalog.page(
-            filters_from_params(request.query_params), sort=sort, offset=offset, limit=limit
+            filters_from_params(request.query_params),
+            sort=sort,
+            offset=offset,
+            limit=limit,
+            projection=view,
         )
 
     @app.get("/api/nodes/{node_id}", dependencies=auth)

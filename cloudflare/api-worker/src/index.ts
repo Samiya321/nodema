@@ -2,8 +2,9 @@ import { Client } from "pg";
 import { SafeError, digest, equal, token } from "./crypto.js";
 import { handleExports } from "./export-api.js";
 import { usageSummary } from "./usage.js";
+import { latestBackup, maintenance, recoveryState } from "./maintenance.js";
 import { sourceLineage } from "./lineage.js";
-import { importLinks, subscriptionURL } from "./source-bulk.js";
+import { importLinks, subscriptionURL, withSourceURL } from "./source-bulk.js";
 import { handleManagement, providerName } from "./management.js";
 import {
   catalogPage,
@@ -43,7 +44,7 @@ const sourceColumns =
   "id,name,type,format_hint,enabled,sync_interval_seconds,content_hash,applied_hash,parser_version,last_checked_at,sync_requested_at,last_synced_at,last_sync_status,last_error_code,last_parse_summary,revision,deleted_at," +
   "kind,detected_kind,parent_source_id,origin_label,user_agent,provider_id,traffic_upload,traffic_download,traffic_total,expires_at,userinfo_at,profile_title,profile_url,last_success_at,created_at," +
   "substring(convert_from(url_data,'UTF8') from '^[A-Za-z]+://([^/:?#]+)') AS url_host";
-const SCHEMA_REVISION = "0025_dashboard_lineage";
+const SCHEMA_REVISION = "0026_maintenance";
 // Imports and edits never start Actions; the dashboard asks the user to sync/test.
 const MANUAL_PIPELINE = { dispatched: false, reason: "MANUAL_SYNC" };
 function sourceKind(value: unknown): string {
@@ -212,32 +213,6 @@ async function queueExportBuild(env: Env) {
   }
 }
 
-async function latestBackup(env: Env) {
-  if (!/^[\w.-]+\/[\w.-]+$/.test(env.GITHUB_REPOSITORY) || !env.GITHUB_DISPATCH_TOKEN)
-    return null;
-  try {
-    const response = await fetch(
-      `https://api.github.com/repos/${env.GITHUB_REPOSITORY}/actions/artifacts?per_page=30`,
-      {
-        headers: {
-          Authorization: `Bearer ${env.GITHUB_DISPATCH_TOKEN}`,
-          Accept: "application/vnd.github+json",
-          "User-Agent": "nodema",
-        },
-        signal: AbortSignal.timeout(3500),
-      },
-    );
-    if (!response.ok) return null;
-    const data = await response.json<{ artifacts: { name: string; created_at: string; expires_at: string; expired: boolean; workflow_run?: { head_branch: string } }[] }>();
-    const backup = data.artifacts
-      .filter((item) => /^encrypted-database-\d+$/.test(item.name) && item.workflow_run?.head_branch === env.GITHUB_WORKFLOW_REF)
-      .sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
-    return backup ? { created_at: backup.created_at, expires_at: backup.expires_at, expired: backup.expired } : null;
-  } catch {
-    return null;
-  }
-}
-
 export async function handle(
   request: Request,
   env: Env,
@@ -258,7 +233,9 @@ export async function handle(
         request.headers.get("Authorization")?.replace(/^Bearer /i, "") ?? "";
       if (!env.ADMIN_PASSWORD || env.ADMIN_PASSWORD.length < 24)
         throw new SafeError("ADMIN_TOKEN_REQUIRED", 503);
-      if (!(await equal(provided, env.ADMIN_PASSWORD)))
+      const monitor = path === "/api/ops/heartbeat" && method === "GET" &&
+        (env.MONITOR_TOKEN?.length ?? 0) >= 24 && await equal(provided, env.MONITOR_TOKEN);
+      if (!monitor && !(await equal(provided, env.ADMIN_PASSWORD)))
         throw new SafeError("AUTHENTICATION_REQUIRED", 401);
     }
     if (connect) db = await connect();
@@ -410,13 +387,22 @@ export async function handle(
       dispatch: (workflow, inputs) => dispatch(env, workflow, inputs),
     });
     if (managed) return managed;
+    if ((path === "/api/ops/heartbeat" || path === "/api/overview/status") && method === "GET") {
+      const state = await maintenance(rows, SCHEMA_REVISION);
+      if (!state) throw new SafeError("DATABASE_OR_SCHEMA_UNAVAILABLE", 503);
+      return json(state);
+    }
+    if (path === "/api/overview/recovery" && method === "GET")
+      return json(await recoveryState(env));
     if (path === "/api/usage" && method === "GET") {
       const [summary, backup] = await Promise.all([
         usageSummary(rows, Number(url.searchParams.get("days") ?? 30)),
-        latestBackup(env),
+        latestBackup(env).catch(() => null),
       ]);
       return json({ ...summary, database_provider: env.DATABASE_PROVIDER ?? "neon", latest_backup: backup });
     }
+    if (path === "/api/overview/catalog" && method === "GET")
+      return json(await catalogOverview(rows, await template(), number(env.FRESHNESS_HOURS, 36)));
     if (path === "/api/overview" && method === "GET") {
       const aggregate = await catalogOverview(
         rows,
@@ -454,23 +440,23 @@ export async function handle(
       });
     }
     if (path === "/api/nodes" && method === "GET") {
-      // view=compact: only the list fields, so a whole filtered set fits one request.
+      // The list serves a bounded dashboard page; compact remains for grouped views.
       const view = url.searchParams.get("view") ?? "full";
-      if (view !== "full" && view !== "compact")
+      if (!["full", "compact", "dashboard", "ids"].includes(view))
         throw new SafeError("INVALID_NODE_QUERY");
       const offset = Number(url.searchParams.get("offset") ?? 0),
         limit = Number(url.searchParams.get("limit") ?? 100);
       if (
         !Number.isInteger(offset) ||
-        offset < 0 ||
+        (offset < 0 || offset > 2147483647) ||
         !Number.isInteger(limit) ||
         limit < 1 ||
-        limit > (view === "compact" ? 20000 : 500)
+        limit > (["compact", "ids"].includes(view) ? 20000 : 500)
       )
         throw new SafeError("INVALID_PAGINATION", 422);
       const filters = filtersFromParams(url.searchParams),
         sort = url.searchParams.get("sort") ?? "short_id:asc";
-      if (view === "compact")
+      if (view === "compact" || view === "ids" || view === "dashboard")
         return new Response(
           await catalogPageText(
             rows,
@@ -480,6 +466,7 @@ export async function handle(
             sort,
             offset,
             limit,
+            view,
           ),
           {
             headers: {
@@ -629,17 +616,18 @@ export async function handle(
     if (path === "/api/sources" && method === "GET")
       return json(
         await rows(
-          `SELECT ${sourceColumns},nodema_source_effective_kind(sources) AS effective_kind,counts.*
+          `SELECT ${sourceColumns},nodema_source_effective_kind(sources) AS effective_kind,counts.*,nodema_source_next_attempt(sources) AS next_attempt
            FROM sources CROSS JOIN LATERAL nodema_source_counts(sources,$1) counts
            WHERE deleted_at IS NULL ORDER BY created_at,id`,
           [number(env.FRESHNESS_HOURS, 36)],
         ),
       );
-    const sourceInput = async (id: string, type: string, data: string) => {
+    const sourceInput = (type: string, data: string): [Buffer | null, Buffer | null] => {
       if (!data.trim()) throw new SafeError("EMPTY_INPUT");
       if (new TextEncoder().encode(data).length > 10485760)
         throw new SafeError("INPUT_TOO_LARGE", 413);
       if (type === "SUBSCRIPTION_URL") {
+        if (Buffer.byteLength(data.trim()) > 8192) throw new SafeError("SUBSCRIPTION_URL_TOO_LONG");
         return [Buffer.from(subscriptionURL(data), "utf8"), null];
       }
       return [null, Buffer.from(data, "utf8")];
@@ -656,24 +644,21 @@ export async function handle(
         ].includes(type)
       )
         throw new SafeError("INVALID_SOURCE_TYPE_OR_FORMAT");
-      const id = crypto.randomUUID(),
-        [url, payload] = await sourceInput(id, type, text(data.payload));
-      const saved = (
-        await rows(
+      const [url, payload] = sourceInput(type, text(data.payload));
+      const values = [crypto.randomUUID(), label(data.name), type, formatHint(data.format_hint),
+        url, payload, sourceKind(data.kind), userAgent(data.user_agent)];
+      return await withSourceURL(rows, url, async () => {
+        const existing = url && (await rows(
+          `SELECT ${sourceColumns} FROM sources WHERE type='SUBSCRIPTION_URL' AND deleted_at IS NULL AND url_data=$1
+           ORDER BY created_at,id LIMIT 1`, [url],
+        ))[0];
+        if (existing) return json({ ...existing, duplicate: true, pipeline: { dispatched: false, reason: "NO_NEW_SOURCES" } });
+        const [saved] = await rows(
           `INSERT INTO sources(id,name,type,format_hint,url_data,payload_data,kind,user_agent,sync_requested_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,NOW()) RETURNING ${sourceColumns}`,
-          [
-            id,
-            label(data.name),
-            type,
-            formatHint(data.format_hint),
-            url,
-            payload,
-            sourceKind(data.kind),
-            userAgent(data.user_agent),
-          ],
-        )
-      )[0];
-      return json({ ...saved, pipeline: MANUAL_PIPELINE }, 201);
+          values,
+        );
+        return json({ ...saved, pipeline: MANUAL_PIPELINE }, 201);
+      });
     }
     if (path === "/api/sources/bulk" && method === "POST") {
       const result = await importLinks(rows, await body(request));
@@ -720,77 +705,84 @@ export async function handle(
         return json({ status: "DELETED" });
       }
       if (method === "PATCH") {
-        const data = await body(request),
-          sets = ["revision=revision+1", "updated_at=NOW()"],
-          values: unknown[] = [id];
-        const set = (key: string, value: unknown) => {
-          values.push(value);
-          sets.push(`${key}=$${values.length}`);
-        };
-        if ("name" in data) set("name", label(data.name));
-        if ("enabled" in data) {
-          if (typeof data.enabled !== "boolean")
-            throw new SafeError("INVALID_REQUEST", 422);
-          set("enabled", data.enabled);
-        }
-        if ("sync_interval_seconds" in data) {
-          if (
-            !Number.isInteger(data.sync_interval_seconds) ||
-            Number(data.sync_interval_seconds) <= 0
-          )
-            throw new SafeError("INVALID_SYNC_INTERVAL");
-          set("sync_interval_seconds", data.sync_interval_seconds);
-        }
-        if ("format_hint" in data)
-          set("format_hint", formatHint(data.format_hint));
-        if ("kind" in data) set("kind", sourceKind(data.kind));
-        if ("user_agent" in data) set("user_agent", userAgent(data.user_agent));
-        if ("provider_id" in data) {
-          if (data.provider_id === null) set("provider_id", null);
-          else if (typeof data.provider_name === "string") {
-            // Move this link to a new airport group in one step.
-            const created = await rows(
-              "INSERT INTO providers(id,name) VALUES($1,$2) RETURNING id",
-              [crypto.randomUUID(), providerName(data.provider_name)],
-            );
-            set("provider_id", created[0].id);
-          } else {
-            const target = uuid(String(data.provider_id));
-            if (!(await rows("SELECT id FROM providers WHERE id=$1", [target])).length)
-              throw new SafeError("PROVIDER_NOT_FOUND", 404);
-            set("provider_id", target);
+        const data = await body(request);
+        const input = "payload" in data ? sourceInput(String(existing.type), text(data.payload)) : null;
+        return await withSourceURL(rows, input?.[0] ?? null, async () => {
+          if (input?.[0] && (await rows(
+            "SELECT 1 FROM sources WHERE type='SUBSCRIPTION_URL' AND deleted_at IS NULL AND url_data=$1 AND id<>$2 LIMIT 1",
+            [input[0], id],
+          )).length) {
+            // An unchanged URL can coexist with legacy duplicates.
+            const [same] = await rows("SELECT 1 FROM sources WHERE id=$1 AND url_data=$2", [id, input[0]]);
+            if (!same) throw new SafeError("SOURCE_URL_ALREADY_EXISTS", 409);
           }
-        }
-        if ("payload" in data) {
-          const [url, payload] = await sourceInput(
-            id,
-            String(existing.type),
-            text(data.payload),
-          );
-          set("url_data", url);
-          set("payload_data", payload);
-          sets.push("content_hash=NULL");
-        }
-        if ("payload" in data || "format_hint" in data)
-          sets.push(
-            "applied_hash=NULL",
-            "parser_version=NULL",
-            "last_sync_status='NEVER'",
-            "last_error_code=NULL",
-            "last_parse_summary='{}'::jsonb",
-          );
-        const needsSync =
-          "payload" in data || "format_hint" in data || data.enabled === true;
-        if (needsSync) sets.push("sync_requested_at=NOW()");
-        const saved = (
-          await rows(
-            `UPDATE sources SET ${sets.join(",")} WHERE id=$1 AND deleted_at IS NULL RETURNING ${sourceColumns}`,
-            values,
-          )
-        )[0];
-        return json({
-          ...saved,
-          ...(needsSync && saved.enabled ? { pipeline: MANUAL_PIPELINE } : {}),
+          const sets = ["revision=revision+1", "updated_at=NOW()"],
+            values: unknown[] = [id];
+          const set = (key: string, value: unknown) => {
+            values.push(value);
+            sets.push(`${key}=$${values.length}`);
+          };
+          if ("name" in data) set("name", label(data.name));
+          if ("enabled" in data) {
+            if (typeof data.enabled !== "boolean")
+              throw new SafeError("INVALID_REQUEST", 422);
+            set("enabled", data.enabled);
+          }
+          if ("sync_interval_seconds" in data) {
+            if (
+              !Number.isInteger(data.sync_interval_seconds) ||
+              Number(data.sync_interval_seconds) <= 0
+            )
+              throw new SafeError("INVALID_SYNC_INTERVAL");
+            set("sync_interval_seconds", data.sync_interval_seconds);
+          }
+          if ("format_hint" in data)
+            set("format_hint", formatHint(data.format_hint));
+          if ("kind" in data) set("kind", sourceKind(data.kind));
+          if ("user_agent" in data) set("user_agent", userAgent(data.user_agent));
+          if ("provider_id" in data) {
+            if (data.provider_id === null) set("provider_id", null);
+            else if (typeof data.provider_name === "string") {
+              // Move this link to a new airport group in one step.
+              const created = await rows(
+                "INSERT INTO providers(id,name) VALUES($1,$2) RETURNING id",
+                [crypto.randomUUID(), providerName(data.provider_name)],
+              );
+              set("provider_id", created[0].id);
+            } else {
+              const target = uuid(String(data.provider_id));
+              if (!(await rows("SELECT id FROM providers WHERE id=$1", [target])).length)
+                throw new SafeError("PROVIDER_NOT_FOUND", 404);
+              set("provider_id", target);
+            }
+          }
+          if (input) {
+            set("url_data", input[0]);
+            set("payload_data", input[1]);
+            sets.push("content_hash=NULL");
+          }
+          if ("payload" in data || "format_hint" in data)
+            sets.push(
+              "applied_hash=NULL",
+              "parser_version=NULL",
+              "last_sync_status='NEVER'",
+              "last_error_code=NULL",
+              "last_parse_summary='{}'::jsonb",
+            );
+          const needsSync =
+            "payload" in data || "format_hint" in data || data.enabled === true;
+          if (needsSync) sets.push("sync_requested_at=NOW()");
+          const saved = (
+            await rows(
+              `UPDATE sources SET ${sets.join(",")} WHERE id=$1 AND deleted_at IS NULL RETURNING ${sourceColumns}`,
+              values,
+            )
+          )[0];
+          if (!saved) throw new SafeError("SOURCE_NOT_FOUND", 404);
+          return json({
+            ...saved,
+            ...(needsSync && saved.enabled ? { pipeline: MANUAL_PIPELINE } : {}),
+          });
         });
       }
     }

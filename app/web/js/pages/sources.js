@@ -5,6 +5,7 @@ import {
   badge,
   busy,
   confirm,
+  date,
   dialog,
   empty,
   errorText,
@@ -17,7 +18,7 @@ import {
   toast,
 } from "../core.js";
 import { syncSources } from "../strip.js";
-import { sourceHref } from "../lineage.js";
+import { pageHref, sourceHref } from "../lineage.js";
 
 const TYPES = { SUBSCRIPTION_URL: "订阅链接", RAW_TEXT: "节点文本", UPLOADED_FILE: "上传文件", SINGLE_URI: "单个节点" };
 const IMPORT_PART = 100; // links per bulk request; the list itself is unlimited
@@ -178,6 +179,7 @@ export function editSource(source, done) {
     field(
       source.type === "SUBSCRIPTION_URL" ? "更换链接（留空不变）" : "替换内容（留空不变）",
       h("textarea", { name: "payload", rows: 3 }),
+      source.parent_source_id ? "此链接来自上级索引。如需长期更换，请先更新上级索引中的条目。" : "换链接会保留来源编号及节点历史。",
     ),
     h("div", { class: "row end wide" }, h("button", { class: "primary", type: "submit" }, "保存")),
   );
@@ -221,10 +223,22 @@ export async function render(root, { params, go, refresh, refreshStrip }) {
   const sort = ORDER[params.get("sort")] ? params.get("sort") : "name";
   const q = (params.get("q") || "").toLowerCase();
   const names = Object.fromEntries(all.map((s) => [s.id, s.name]));
+  const rootID = params.get("root");
+  const parentById = new Map(all.map((s) => [s.id, s.parent_source_id]));
+  const inRoot = (s) => {
+    const seen = new Set();
+    for (let id = s.id; id && !seen.has(id); id = parentById.get(id)) {
+      if (id === rootID) return true;
+      seen.add(id);
+    }
+    return false;
+  };
   const list = all
     .filter((s) => {
       if (view === "CHILD" ? !s.parent_source_id : view && s.effective_kind !== view) return false;
+      if (rootID && !inRoot(s)) return false;
       if (status && s.last_sync_status !== status) return false;
+      if (params.has("active") && !s.enabled) return false;
       if (history === "worked" && !s.last_success_at) return false;
       if (history === "never" && s.last_success_at) return false;
       return !q || s.name.toLowerCase().includes(q) || (s.url_host || "").includes(q);
@@ -339,7 +353,7 @@ export async function render(root, { params, go, refresh, refreshStrip }) {
           ? h("span", { class: "tag", title: "同步后根据响应自动识别为自建或机场" }, "待识别")
           : h("span", { class: "tag " + ({ AIRPORT: "air", SUBSTORE: "store" }[s.effective_kind] || "own") }, KIND[s.effective_kind]),
     },
-    { label: "同步", render: (s) => h("div", { class: "name-cell" }, badge(s.last_sync_status), s.last_error_code ? h("span", { class: "small bad-text" }, errorText(s.last_error_code)) : null, s.sync_requested_at ? h("span", { class: "small muted" }, "待同步") : null) },
+    { label: "同步", render: (s) => h("div", { class: "name-cell" }, badge(s.last_sync_status), s.last_error_code ? h("span", { class: "small bad-text" }, errorText(s.last_error_code)) : null, s.sync_requested_at ? h("span", { class: "small muted" }, "待同步") : null, s.last_sync_status === "FAILED" && s.next_attempt ? h("span", { class: "small muted" }, `预计重试 ${date(s.next_attempt)}`) : null) },
     {
       label: "节点",
       class: "num",
@@ -406,6 +420,7 @@ export async function render(root, { params, go, refresh, refreshStrip }) {
       ),
       addButton,
     ),
+    rootID ? h("p", { class: "page-sub" }, "上游范围 ", h("a", { href: sourceHref(rootID) }, names[rootID] || "查看根来源"), " · ", h("a", { href: pageHref("sources", { status, history }) }, "清除上游范围")) : null,
     adder,
     h(
       "div",

@@ -1,5 +1,4 @@
-import { KIND, SCAN_KIND, ago, api, badge, bytes, daysUntil, empty, errorText, flag, h } from "../core.js";
-import { loadPipeline, openTestDialog, syncSources } from "../strip.js";
+import { KIND, SCAN_KIND, ago, api, badge, bytes, date, daysUntil, errorText, flag, h } from "../core.js";
 import { defaultVantage, distribution, gradeBadge, vantageName, vantageSwitch } from "../grades.js";
 import { pageHref, scanHref, sourceHref } from "../lineage.js";
 
@@ -32,65 +31,6 @@ function qualityPanel(status, vantage, go) {
   );
 }
 
-function probePanel(status) {
-  const latest = status?.latest;
-  return h(
-    "section",
-    { class: "panel" },
-    h("header", { class: "panel-head" }, h("h2", {}, "接入测量"), h("a", { href: "#/scans?tab=probes" }, "运行记录")),
-    latest
-      ? h(
-          "dl",
-          { class: "pairs" },
-          h("dt", {}, "最近一次"),
-          h("dd", {}, `${ago(latest.started_at)}${latest.peak ? "（晚高峰）" : ""} · ${latest.tests} 次测试`),
-          h("dt", {}, "今天已用"),
-          h("dd", {}, `${status.tests_today} 次（${latest.authenticated ? "账号模式，按剩余额度运行" : "匿名模式，按剩余额度运行"}）`),
-          h("dt", {}, "已覆盖网段"),
-          h("dd", {}, `${status.prefixes_graded} 个（7 天内）；三网晚高峰 ${status.prefixes_peak} 个；港新英 ${status.prefixes_overseas} 个`),
-          h("dt", {}, "在线家宽探针"),
-          h("dd", {}, ["CN-CT", "CN-CU", "CN-CM"].map((c) => `${vantageName(c)} ${latest.probes?.[c] ?? "?"}`).join(" · ")),
-        )
-      : h("p", { class: "muted" }, "还没有运行过。部署后每小时自动运行一次（北京时间 19:30–23:30 只测三网晚高峰）。"),
-    h("p", { class: "hint" }, "数据来自 Globalping 社区探针的 TCP 握手，测量记录在 Globalping 上公开可查。"),
-  );
-}
-
-function probeNotes(status) {
-  const notes = [];
-  const latest = status?.latest;
-  if (!latest) return notes;
-  if (latest.error_code) notes.push(["bad", `接入测量失败：${PROBE_ERRORS[latest.error_code] || latest.error_code}`, "#/scans?tab=probes"]);
-  else if (latest.failed) notes.push(["warn", `上次接入测量有 ${latest.failed} 个请求失败，成功 ${latest.measurements} 次；不代表节点不可用`, "#/scans?tab=probes"]);
-  if (status.rate_limited_7d) notes.push(["warn", `接入测量 7 天内 ${status.rate_limited_7d} 次触达 Globalping 额度`, "#/scans?tab=probes"]);
-  for (const c of ["CN-CT", "CN-CU", "CN-CM"])
-    if ((latest.probes?.[c] ?? 2) < 2) notes.push(["warn", `${vantageName(c)}在线家宽探针少于 2 个，该运营商的等级会停在待定或最高 B`, "#/scans?tab=probes"]);
-  return notes;
-}
-
-// One suggestion that follows the workflow: add sources -> sync -> test -> export.
-function nextStep(overview, pipeline, hasExports) {
-  // Only nodes the daily check covers: airports outside its scope stay untested on purpose.
-  const scope = pipeline.settings?.daily_scan_scope || "SELF_HOSTED";
-  const groups = scope === "ALL" ? GROUPS : [scope];
-  const untested = pipeline.active_scans?.length
-    ? 0
-    : groups.reduce((n, g) => n + (overview.groups?.[g]?.statuses?.UNKNOWN || 0), 0);
-  if (!pipeline.sources_total)
-    return ["还没有来源", "添加订阅链接、Sub-Store API 或节点文本。", h("a", { class: "button primary", href: "#/sources" }, "添加来源")];
-  if (pipeline.pending_sources)
-    return [`${pipeline.pending_sources} 个来源等待同步`, "同步只拉取和解析，不会检测节点。", h("button", { type: "button", class: "primary", onclick: (e) => syncSources(null, e.target, { pendingOnly: true }) }, "同步待处理来源")];
-  if (untested)
-    return [
-      `${untested} 个${scope === "ALL" ? "" : KIND[scope]}节点还没有检测`,
-      "每日定时检测会覆盖它们；也可以现在开始，或在节点页只勾选一部分。",
-      h("button", { type: "button", class: "primary", onclick: openTestDialog }, "开始检测"),
-    ];
-  if (!hasExports)
-    return ["生成你的订阅链接", "按落地国家、类别等条件保存方案，节点检测后会自动更新。", h("a", { class: "button primary", href: "#/exports" }, "创建订阅")];
-  return null;
-}
-
 const GROUPS = ["SELF_HOSTED", "AIRPORT"];
 
 function groupPanel(key, data) {
@@ -116,8 +56,8 @@ function groupPanel(key, data) {
     h(
       "p",
       { class: "big-figure" },
-      h("span", { class: "figure" }, up),
-      h("span", { class: "of" }, ` / ${total} 可用`),
+      h("span", { class: "figure" }, format(up)),
+      h("span", { class: "of" }, ` / ${format(total)} 可用`),
     ),
     h(
       "ul",
@@ -127,117 +67,208 @@ function groupPanel(key, data) {
           "li",
           {},
           h("a", { href: `#/nodes?node_group=${key}&status=${status}` }, h("span", { class: "dot " + tone }), label),
-          h("strong", {}, n),
+          h("strong", {}, format(n)),
         ),
       ),
     ),
-    h("p", { class: "muted small" }, `参与检测 ${data?.eligible || 0} 个`),
+    h("p", { class: "muted small" }, `参与检测 ${format(data?.eligible || 0)} 个`),
   );
 }
 
-function attention(summary) {
+const format = (n) => Number(n).toLocaleString("zh-CN");
+const usage = pageHref("ops", { tab: "usage" });
+const probes = pageHref("ops", { tab: "probes" });
+const settings = pageHref("settings");
+const sourceProblems = (params = {}) => pageHref("sources", { status: "FAILED", active: "1", ...params });
+const timestamp = (value) => value ? h("time", { datetime: value, title: date(value) }, ago(value)) : "暂无记录";
+const olderThan = (value, hours, observed = Date.now()) => !value || observed - Date.parse(value) > hours * 3600000;
+
+function tile(label, value, description, href) {
+  return h("a", { href, class: "overview-tile" }, h("span", {}, label),
+    h("strong", {}, value == null ? "—" : format(value)), h("small", {}, description));
+}
+
+function statusLine(label, tone, state, detail, href) {
+  return h("li", {}, h("a", { href }, h("span", { class: "dot " + tone, "aria-hidden": "true" }), label),
+    h("strong", {}, state), h("span", { class: "overview-status-detail" }, detail));
+}
+
+function statusPanel(ops, recovery) {
+  const observed = Date.parse(ops.observed_at);
+  const scan = ops.last_daily;
+  const complete = ops.last_complete;
+  const behind = olderThan(complete?.finished_at, 30, observed);
+  const inProgress = scan?.status === "RUNNING" && scan.lease_active;
+  const incomplete = scan && scan.status !== "COMPLETED";
+  const lastComplete = complete ? ["上次完整 ", timestamp(complete.finished_at)] : "还没有完整日检";
+  const daily = !ops.daily_enabled ? ["mute", "已暂停", "定时检测已关闭"]
+    : inProgress ? ["info", "运行中", lastComplete]
+    : incomplete || behind ? ["warn", incomplete ? "未完成" : "待检查", lastComplete]
+    : ["ok", "正常", lastComplete];
+  const probe = ops.probe;
+  const probeState = !ops.probe_enabled ? ["mute", "已暂停", "定时测量已关闭"]
+    : olderThan(probe?.finished_at, 3, observed) ? ["warn", "待检查", ["最近完成 ", timestamp(probe?.finished_at)]]
+    : probe.error_code ? ["warn", "有异常", PROBE_ERRORS[probe.error_code] || "上次测量有错误"]
+    : ["ok", "正常", [timestamp(probe.finished_at), ` · ${format(probe.measurements)} 个样本`]];
+  const host = ops.host;
+  const sampled = !olderThan(host?.taken_at, 0.5, observed);
+  const disk = sampled ? Math.round(100 * host.disk_free / host.disk_total) : null;
+  const certDays = sampled ? Math.ceil((Date.parse(host.tls_expires_at) - observed) / 86400000) : null;
+  const hostState = sampled
+    ? [disk < 20 || certDays <= 30 ? "warn" : "ok", disk < 20 ? "磁盘偏低" : certDays <= 30 ? "证书将到期" : "正常",
+      `剩余磁盘 ${disk}% · TLS 剩余 ${certDays} 天`]
+    : ["mute", "采样待更新", host ? timestamp(host.taken_at) : "暂无容量样本"];
+  const backup = recovery?.backup;
+  const drill = recovery?.drill;
+  const backupLine = !recovery ? ["mute", "查询中", "正在读取备份记录"]
+    : !recovery.backup_available ? ["warn", "记录不可用", "无法读取云端备份记录"]
+    : !backup ? ["warn", "无可用备份", "没有发现有效备份包"]
+    : [olderThan(backup.created_at, 36, observed) ? "warn" : "ok",
+      olderThan(backup.created_at, 36, observed) ? "备份较旧" : "已备份", timestamp(backup.created_at)];
+  const drillLine = !recovery ? ["mute", "查询中", "正在读取演练记录"]
+    : !recovery.drill_available ? ["mute", "记录不可用", "无法读取云端演练记录"]
+    : !drill ? ["mute", "待演练", "暂无自动恢复记录"]
+    : [drill.result === "success" && !olderThan(drill.finished_at, 38 * 24, observed) ? "ok" : "warn",
+      drill.result === "success" ? (olderThan(drill.finished_at, 38 * 24, observed) ? "演练较旧" : "通过") : "未通过", timestamp(drill.finished_at)];
+  const ex = ops.exports;
+  const exports = !ex.active ? ["mute", "未配置", "尚无生效中的订阅方案"]
+    : [ex.unavailable ? "warn" : ex.serving === ex.active ? "ok" : "info",
+      ex.unavailable ? "需检查" : ex.serving === ex.active ? "可下载" : "构建中",
+      `${format(ex.serving)} / ${format(ex.active)} 可下载${ex.pending ? ` · ${format(ex.pending)} 个待构建` : ""}`];
+  return h("ul", { class: "overview-status" },
+    statusLine("服务与数据库", "ok", "可用", "页面 API 已连到 PostgreSQL", usage),
+    statusLine("每日检测", ...daily, scan ? scanHref(scan.id) : settings),
+    statusLine("接入测量", ...probeState, probes),
+    statusLine("主机容量", ...hostState, usage),
+    statusLine("加密备份", ...backupLine, usage),
+    statusLine("恢复演练", ...drillLine, drill?.run_id ? `https://github.com/Samiya321/nodema/actions/runs/${drill.run_id}` : usage),
+    statusLine("成品订阅", ...exports, "#/exports"),
+  );
+}
+
+function attention(summary, ops) {
+  const s = ops?.sources;
   const items = [];
-  const kinds = [
-    ["soon", "warn", (s) => `${s.name} ${daysUntil(s.expires_at) || "今天"}${daysUntil(s.expires_at) ? " 天后" : ""}到期`],
-    ["low", "warn", (s) => `${s.name} 剩余 ${bytes(Number(s.traffic_total) - Number(s.used))}`],
-    ["expired", "bad", (s) => `${s.name} 已过期`],
-    ["exhausted", "bad", (s) => `${s.name} 流量已用完`],
-  ];
-  for (const [risk, tone, label] of kinds) {
-    const group = summary.airports.filter((s) => s.risk === risk);
-    for (const source of group) items.push([tone, label(source), sourceHref(source.id)]);
-    if (group[0]?.total > group.length)
-      items.push([tone, `另有 ${group[0].total - group.length} 条同类机场提醒`, pageHref("sources", { tab: "airport", state: risk })]);
+  for (const group of summary.groups.filter((g) => g.worked).slice(0, 3)) {
+    const title = group.total > 1 ? `${group.name} · ${format(group.total)} 个异常` : group.name;
+    items.push(h("li", {}, h("div", {}, h("a", { href: group.total > 1
+      ? sourceProblems({ root: group.id, sort: "problems" }) : sourceHref(group.example_id) }, title),
+      h("p", {}, [`${format(group.worked)} 个曾同步成功`, ...group.errors.map(errorText),
+        group.next_attempt ? `预计重试 ${date(group.next_attempt)}` : null].filter(Boolean).join(" · ")))));
   }
-  for (const source of summary.substores)
-    items.push(["bad", `Sub-Store「${source.name}」无法访问：${errorText(source.last_error_code)}`, sourceHref(source.id, "children")]);
-  if (summary.substores[0]?.total > summary.substores.length)
-    items.push(["bad", `另有 ${summary.substores[0].total - summary.substores.length} 个 Sub-Store 无法访问`, "#/substore?state=failed"]);
-  if (summary.broken) items.push(["warn", `${summary.broken} 个来源之前正常、最近拉取失败`, "#/sources?status=FAILED&history=worked"]);
-  if (summary.never_worked) items.push(["mute", `${summary.never_worked} 个来源仍未成功拉取`, "#/sources?status=FAILED&history=never"]);
-  return items;
+  for (const [risk, label] of [["expired", "已过期"], ["exhausted", "流量已用完"], ["soon", "7 天内到期"], ["low", "流量不足"]]) {
+    const match = summary.airports.find((a) => a.risk === risk);
+    if (match) items.push(h("li", {}, h("div", {},
+      h("a", { href: pageHref("sources", { tab: "airport", state: risk }) }, `${format(match.total)} 个机场${label}`),
+      h("p", {}, match.name, risk === "low" ? ` · 剩余 ${bytes(Number(match.traffic_total) - Number(match.used))}`
+        : risk === "soon" && daysUntil(match.expires_at) ? ` · ${daysUntil(match.expires_at)} 天后到期` : ""))));
+  }
+  return h("div", { class: "overview-attention" },
+    items.length ? h("ul", {}, items) : h("p", { class: "muted" }, "当前没有曾正常的来源失效或机场异常。"),
+    h("div", { class: "row wrap" },
+      summary.broken ? h("a", { href: sourceProblems({ history: "worked", sort: "problems" }) }, `曾成功 · ${format(summary.broken)}`) : null,
+      summary.never_worked ? h("a", { href: sourceProblems({ history: "never", sort: "problems" }) }, `从未成功 · ${format(summary.never_worked)}`) : null,
+      s?.pending ? h("a", { href: pageHref("sources", { status: "NEVER" }) }, `待同步 · ${format(s.pending)}`) : null,
+    ));
 }
 
-// Node selections run with scope ALL: fewer nodes than everything testable means "selected".
-function scopeLabel(run, overview) {
-  if (run.scope !== "ALL") return KIND[run.scope] || "全部";
-  const everything = GROUPS.reduce((n, g) => n + (overview.groups?.[g]?.eligible || 0), 0);
-  return everything && run.node_count < everything ? `所选 ${run.node_count} 个节点` : "全部";
+function scanActivity(ops) {
+  const latest = ops.latest_scan;
+  return h("div", { class: "stack" },
+    latest ? h("div", { class: "overview-run" },
+      h("div", {}, h("a", { href: scanHref(latest.id) }, `${latest.scan_date} · ${SCAN_KIND[latest.kind] || "检测"}`), " ", badge(latest.status)),
+      h("p", {}, `${format(latest.done)} / ${format(latest.node_count)} 已完成 · ${latest.scope === "ALL" ? "全部" : KIND[latest.scope]}`))
+      : h("p", { class: "muted" }, "暂无检测批次。"),
+    ops.daily_history.length ? h("div", {}, h("h3", {}, "最近 7 个日检批次"),
+      h("ol", { class: "overview-history" }, ops.daily_history.map((run) => h("li", {},
+        h("a", { href: scanHref(run.id), title: `${run.scan_date} · ${format(run.node_count)} 个节点` },
+          h("span", {}, run.scan_date.slice(5)), badge(run.status)))))) : null,
+    ops.queued_scan_at ? h("p", { class: "muted" }, "有检测请求正在排队 · ", timestamp(ops.queued_scan_at)) : null);
 }
 
-export async function render(root, { params, go }) {
-  const vantage = params.get("vantage") || (await defaultVantage());
-  const [overview, summary, pipeline, probe] = await Promise.all([
-    api("/overview"),
-    api("/overview/attention"),
-    loadPipeline(),
-    api("/probe-status?vantage=" + encodeURIComponent(vantage)).catch(() => null),
-  ]);
-  const step = nextStep(overview, pipeline, summary.has_exports);
-  const latest = overview.latest_scan;
-  const complete = overview.latest_completed_scan;
-  const notes = [...attention(summary), ...probeNotes(probe)];
-  const countries = Object.entries(overview.countries || {})
-    .filter(([c]) => c !== "UNK")
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 12);
-  root.append(
-    h("h1", { class: "page-title" }, "总览"),
-    step
-      ? h("section", { class: "next-step" }, h("div", {}, h("h2", {}, step[0]), h("p", { class: "muted" }, step[1])), step[2])
-      : null,
-    h(
-      "div",
-      { class: "grid-2" },
-      h(
-        "section",
-        { class: "panel" },
-        h("header", { class: "panel-head" }, h("h2", {}, "需要处理")),
-        notes.length
-          ? h(
-              "ul",
-              { class: "notes" },
-              notes.map(([tone, text, href]) => h("li", {}, h("span", { class: "dot " + tone }), h("a", { href }, text))),
-            )
-          : h("p", { class: "muted" }, "没有过期机场、失效 Sub-Store 或失败的来源。"),
-      ),
-      h(
-        "section",
-        { class: "panel" },
-        h("header", { class: "panel-head" }, h("h2", {}, "最近一次检测"), h("a", { href: "#/ops" }, "全部记录")),
-        latest
-          ? h(
-              "dl",
-              { class: "pairs" },
-              h("dt", {}, "批次"),
-              h("dd", {}, h("a", { href: scanHref(latest.id) }, `${latest.scan_date} ${SCAN_KIND[latest.kind] || latest.kind} · ${scopeLabel(latest, overview)}`)),
-              h("dt", {}, "状态"),
-              h("dd", {}, badge(latest.status)),
-              h("dt", {}, "节点"),
-              h("dd", {}, `${latest.items?.DONE || 0} / ${latest.node_count} 已完成`),
-              h("dt", {}, "开始"),
-              h("dd", {}, ago(latest.started_at)),
-              h("dt", {}, "最近完整日检"),
-              h("dd", {}, complete ? h("a", { href: scanHref(complete.id) }, `${complete.scan_date} · ${ago(complete.finished_at)}`) : "尚无"),
-            )
-          : empty("还没有检测记录", "点击顶部的检测按钮开始。"),
-      ),
-    ),
-    h("div", { class: "grid-2" }, GROUPS.map((key) => groupPanel(key, overview.groups?.[key]))),
-    h("div", { class: "grid-2" }, qualityPanel(probe, vantage, go), probePanel(probe)),
-    h(
-      "section",
-      { class: "panel" },
-      h("header", { class: "panel-head" }, h("h2", {}, "可用节点落地地区")),
-      countries.length
-        ? h(
-            "ul",
-            { class: "country-list" },
-            countries.map(([code, n]) =>
-              h("li", {}, h("a", { href: `#/nodes?exit_country=${code}` }, flag(code), " ", code, h("strong", {}, n))),
-            ),
-          )
-        : h("p", { class: "muted" }, "完成检测后显示节点的落地地区。"),
-    ),
+function section(title, href, action, content) {
+  return h("section", { class: "panel overview-panel" }, h("header", { class: "panel-head" },
+    h("h2", {}, title), href ? h("a", { href }, action) : null), content);
+}
+
+function pending(label) {
+  return h("div", { class: "overview-slot" }, label);
+}
+
+export function render(root, { params, go, refresh, isCurrent }) {
+  let ops, recovery, catalog, issues;
+  const metrics = h("div", { class: "overview-tiles" });
+  const system = pending("正在检查系统状态…");
+  const summary = pending("正在汇总来源问题…");
+  const scans = pending("正在读取检测记录…");
+  const assets = pending("正在统计节点…");
+  const grade = pending("正在统计质量分布…");
+  const checked = h("p", { class: "page-sub", role: "status" }, "正在检查…");
+  const drawTiles = () => metrics.replaceChildren(
+    tile("当前可用节点", catalog ? ((catalog.statuses.UP || 0) + (catalog.statuses.DEGRADED || 0)) : null,
+      catalog ? `共 ${format(catalog.total)} 个入库节点` : "查看节点", "#/nodes"),
+    tile("已登记来源", ops?.sources.total, ops ? `${format(ops.sources.roots)} 个根来源 · ${format(ops.sources.children)} 个子来源` : "查看来源", "#/sources"),
+    tile("待检查来源", issues?.broken, issues ? `${format(issues.never_worked)} 个从未成功` : "查看同步失败", sourceProblems({ history: "worked" })),
+    tile("成品订阅", ops?.exports.active, ops ? `${format(ops.exports.serving)} 个可下载` : "查看订阅", "#/exports"),
   );
+  const hydrate = (request, target, update) => {
+    void request.then((value) => {
+      if (isCurrent()) update(value);
+    }).catch(() => {
+      if (isCurrent()) target.replaceChildren(h("p", { class: "muted", role: "status" }, "暂时无法读取，请刷新重试。"));
+    });
+  };
+  const drawStatus = () => {
+    if (ops) system.replaceChildren(statusPanel(ops, recovery));
+  };
+  const drawAttention = () => {
+    if (issues) summary.replaceChildren(attention(issues, ops));
+  };
+  const vantage = params.get("vantage") ? Promise.resolve(params.get("vantage")) : defaultVantage();
+  drawTiles();
+  root.append(
+    h("header", { class: "page-head" }, h("div", {}, h("h1", { class: "page-title" }, "总览"), checked),
+      h("button", { type: "button", onclick: refresh }, "刷新")),
+    metrics,
+    h("div", { class: "overview-top" },
+      section("系统状态", "#/ops", "运行记录", system),
+      section("待处理事项", sourceProblems(), "来源异常", summary)),
+    section("检测动态", "#/ops", "全部检测", scans),
+    assets, grade,
+  );
+  hydrate(api("/overview/status").catch((error) => {
+    if (isCurrent()) {
+      checked.textContent = "系统状态暂时无法读取";
+      scans.replaceChildren(h("p", { class: "muted" }, "检测记录随系统状态更新。"));
+    }
+    throw error;
+  }), system, (data) => {
+    ops = data;
+    checked.textContent = `状态更新于 ${date(ops.observed_at)}`;
+    drawStatus();
+    drawAttention();
+    drawTiles();
+    scans.replaceChildren(scanActivity(ops));
+  });
+  hydrate(api("/overview/recovery").catch(() => ({})), system, (data) => {
+    recovery = data;
+    drawStatus();
+  });
+  hydrate(api("/overview/attention"), summary, (data) => {
+    issues = data;
+    drawAttention();
+    drawTiles();
+  });
+  hydrate(api("/overview/catalog"), assets, (data) => {
+    catalog = data;
+    drawTiles();
+    const countries = Object.entries(data.countries || {}).filter(([code]) => code !== "UNK").sort((a, b) => b[1] - a[1]).slice(0, 12);
+    assets.replaceChildren(
+      h("div", { class: "grid-2" }, GROUPS.map((key) => groupPanel(key, data.groups?.[key]))),
+      countries.length ? section("可用节点落地", "#/nodes?by=country", "按国家查看",
+        h("ul", { class: "country-list" }, countries.map(([code, n]) => h("li", {},
+          h("a", { href: pageHref("nodes", { exit_country: code }) }, flag(code), " ", code, h("strong", {}, format(n))))))) : null);
+  });
+  hydrate(vantage.then((v) => api("/probe-status?vantage=" + encodeURIComponent(v)).then((value) => [v, value])), grade,
+    ([v, value]) => grade.replaceChildren(qualityPanel(value, v, go)));
 }

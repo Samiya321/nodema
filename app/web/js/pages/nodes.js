@@ -1,6 +1,3 @@
-// Node list. The grade distribution is the page's headline and its grade filter; one
-// row holds search, the view and two quick switches; every other condition sits in the
-// "筛选" panel. Three views share the loaded set: a table, countries, and an ASN ranking.
 import { ago, api, busy, debounce, empty, h, select, toast } from "../core.js";
 import { testNodes } from "../strip.js";
 import { BUCKETS, COLUMNS, bucketOf, headRow, nodeRow, setRowVantage, sortNodes } from "./node-rows.js";
@@ -20,12 +17,47 @@ const QUICK = [
 const FETCH_PAGE = 10000; // compact rows per request; there is no overall cap
 // Reuse the filtered collection across the list, country and ASN views.
 const CACHE_MS = 10 * 60_000;
+const SORT_COLUMNS = {
+  name: ["name"], grade: ["quality_grade"], rtt: ["peak_rtt_ms"], udp: ["udp_state", "udp_ms"],
+  avail: ["avail_7d", "checked_7d"], route: ["entry_country", "exit_country"],
+  operator: ["operator_label"], checked: ["last_checked_at"],
+};
 const count = (n) => n.toLocaleString("zh-CN");
 
 // Rows arrive as positional arrays; "fields" names the positions.
 const objects = (page) => page.items.map((row) => Object.fromEntries(page.fields.map((name, i) => [name, row[i]])));
 
 let cache = null;
+let pageCache = null;
+let selection = null;
+
+function listFilters(filters) {
+  const { status = AVAILABLE, ...rest } = filters;
+  return status === ALL ? rest : { ...rest, status };
+}
+
+async function dashboardPage(filters, sort, page, size) {
+  const args = new URLSearchParams({ ...filters, sort, offset: String(page * size), limit: String(size), view: "dashboard" });
+  const key = args.toString();
+  if (pageCache?.key === key && Date.now() - pageCache.data.at < CACHE_MS) return pageCache.data;
+  const result = await api("/nodes?" + key);
+  if (page && page * size >= result.total) return dashboardPage(filters, sort, Math.max(0, Math.ceil(result.total / size) - 1), size);
+  const data = { ...result, items: objects(result), page, at: Date.now() };
+  pageCache = { key, data };
+  return data;
+}
+
+async function matchingIDs(filters) {
+  const limit = 10000;
+  const request = (offset, vantage = filters.vantage) => api("/nodes?" + new URLSearchParams({
+    ...filters, ...(vantage ? { vantage } : {}), view: "ids", offset: String(offset), limit: String(limit),
+  }));
+  const first = await request(0);
+  const ids = first.items.flat();
+  for (let offset = limit; offset < first.total; offset += limit)
+    ids.push(...(await request(offset, first.vantage)).items.flat());
+  return ids;
+}
 async function fetchAll(filters) {
   const sort = filters.status === AVAILABLE ? "status:desc,short_id:asc" : "short_id:asc";
   const fetchPage = (offset, selected = filters) =>
@@ -40,13 +72,12 @@ async function fetchAll(filters) {
 async function load(filters) {
   const key = JSON.stringify(filters);
   if (cache && cache.key === key && Date.now() - cache.at < CACHE_MS) return cache.data;
-  const { status = AVAILABLE, ...rest } = filters;
-  const result = await fetchAll(status === ALL ? rest : { ...rest, status });
+  const result = await fetchAll(listFilters(filters));
   const data = { ...result, at: Date.now() };
   cache = { key, at: data.at, data };
   return data;
 }
-export const invalidateNodes = () => (cache = null);
+export function invalidateNodes() { cache = pageCache = selection = null; }
 window.addEventListener("nodema:nodes-changed", invalidateNodes);
 
 // Links from older pages still say min_quality_grade=A / quality_grade=PENDING / unreachable.
@@ -67,14 +98,27 @@ export async function render(root, { params, go, isCurrent }) {
   const view = VIEWS.some(([v]) => v === params.get("by")) ? params.get("by") || "" : "";
   const chosen = new Set((params.get("g") ? params.get("g").split(",") : legacyBuckets(params)).filter((b) => BUCKETS.includes(b)));
   const quick = new Set(QUICK.filter(([key]) => params.get(key) === "1").map(([key]) => key));
-  const [sortKey, sortDir] = (params.get("sort") || "grade:asc").split(":");
+  const [requestedSort, requestedDirection] = (params.get("sort") || "grade:asc").split(":");
+  const sortKey = Object.hasOwn(SORT_COLUMNS, requestedSort) ? requestedSort : "grade";
+  const sortDir = requestedDirection === "desc" ? "desc" : "asc";
+  const sqlSort = SORT_COLUMNS[sortKey].map((column) => `${column}:${sortDir}`).join(",");
   const size = SIZES.includes(Number(params.get("size"))) ? Number(params.get("size")) : SIZES[0];
   const filters = {};
   for (const key of API_KEYS) if (params.get(key)) filters[key] = params.get(key);
   const apiFilters = { ...filters };
   if (params.get("vantage")) apiFilters.vantage = params.get("vantage");
   for (const key of PERCENT) if (apiFilters[key]) apiFilters[key] = String(Number(apiFilters[key]) / 100);
-  const [{ items: loaded, at: loadedAt, vantage }, providers] = await Promise.all([load(apiFilters), api("/providers")]);
+  const query = listFilters(apiFilters);
+  if (quick.has("udp")) query.udp = "true";
+  if (quick.has("home")) query.exit_ip_type = "RESIDENTIAL";
+  if (chosen.size) query.quality_buckets = [...chosen].join(",");
+  const requestedPage = Number(params.get("page") || 0);
+  const pageIndex = Number.isSafeInteger(requestedPage) && requestedPage >= 0 && requestedPage * size <= 2147483647 ? requestedPage : 0;
+  const [result, providers] = await Promise.all([
+    view ? load(apiFilters) : dashboardPage(query, sqlSort, pageIndex, size),
+    api("/providers"),
+  ]);
+  const { items: loaded, at: loadedAt, vantage, facets } = result;
   if (!isCurrent()) return;
   setRowVantage(vantage);
 
@@ -89,12 +133,13 @@ export async function render(root, { params, go, isCurrent }) {
   };
   const reset = () => go("nodes", new URLSearchParams({ vantage, ...(view ? { by: view } : {}) }));
 
-  // Quick switches narrow the loaded set; grade buckets then narrow what is listed.
-  const all = loaded.filter((n) => QUICK.every(([key, , , test]) => !quick.has(key) || test(n)));
-  const counts = Object.fromEntries(BUCKETS.map((b) => [b, 0]));
-  for (const n of all) counts[bucketOf(n)]++;
-  const items = chosen.size ? all.filter((n) => chosen.has(bucketOf(n))) : all;
-  const sorted = sortNodes(items, COLUMNS[sortKey] ? sortKey : "grade", sortDir === "desc" ? "desc" : "asc");
+  const all = view ? loaded.filter((n) => QUICK.every(([key, , , test]) => !quick.has(key) || test(n))) : null;
+  const counts = Object.fromEntries(BUCKETS.map((b) => [b, facets?.buckets?.[b] || 0]));
+  for (const n of all || []) counts[bucketOf(n)]++;
+  const sorted = view
+    ? sortNodes(chosen.size ? all.filter((n) => chosen.has(bucketOf(n))) : all, sortKey, sortDir)
+    : loaded;
+  const total = view ? sorted.length : result.total;
 
   // ---- headline: the grade distribution, one toggle per bucket ----
   const shown = BUCKETS.filter((b) => counts[b] || chosen.has(b) || ["S", "A", "B", "C", "D"].includes(b));
@@ -166,11 +211,11 @@ export async function render(root, { params, go, isCurrent }) {
       "button",
       { type: "button", class: "toggle", "aria-pressed": String(quick.has(key)), title: hint, onclick: () => update({ [key]: quick.has(key) ? "" : "1" }) },
       text,
-      h("span", { class: "toggle-n" }, count(loaded.filter(test).length)),
+      h("span", { class: "toggle-n" }, count(facets ? facets[key] : loaded.filter(test).length)),
     ),
   );
   const panelSet = Object.keys(filters).filter((k) => k !== "q" && k !== "source_id").length;
-  const countries = [...new Set(loaded.map((n) => n.exit_country).filter(Boolean))].sort();
+  const countries = facets ? [...(facets.countries || [])] : [...new Set(loaded.map((n) => n.exit_country).filter(Boolean))].sort();
   if (filters.exit_country && !countries.includes(filters.exit_country)) countries.unshift(filters.exit_country);
   const panelButton = h(
     "button",
@@ -191,7 +236,9 @@ export async function render(root, { params, go, isCurrent }) {
 
   // ---- selection across the whole filtered set ----
   // Each checkbox in a table head selects a known set of ids (the page, or an ASN group).
-  const picked = new Set();
+  const selectionKey = JSON.stringify([query, vantage]);
+  if (selection?.key !== selectionKey) selection = { key: selectionKey, ids: new Set() };
+  const picked = selection.ids;
   const scope = [];
   const rowsRoot = h("div", { class: "rows-root" });
   const bar = h("div", { class: "selection-bar", role: "region", "aria-label": "批量操作", hidden: true });
@@ -209,14 +256,17 @@ export async function render(root, { params, go, isCurrent }) {
     }
     bar.hidden = picked.size === 0;
     barCount.textContent = `已选 ${count(picked.size)} 个`;
-    widen.hidden = picked.size >= sorted.length;
-    widen.textContent = `选中全部 ${count(sorted.length)} 个结果`;
+    widen.hidden = picked.size >= total;
+    widen.textContent = `选中全部 ${count(total)} 个结果`;
   };
   const toggle = (ids, on) => {
     for (const id of ids) on ? picked.add(id) : picked.delete(id);
     refreshPicks();
   };
-  widen.addEventListener("click", () => toggle(sorted.map((n) => n.id), true));
+  widen.addEventListener("click", (e) => busy(e.currentTarget, async () => {
+    const ids = view ? sorted.map((n) => n.id) : await matchingIDs({ ...query, vantage });
+    if (isCurrent()) toggle(ids, true);
+  }));
   const bulk = (enabled) => (e) =>
     busy(e.target, async () => {
       const ids = [...picked];
@@ -272,10 +322,10 @@ export async function render(root, { params, go, isCurrent }) {
       onOpen: (asn) => update({ by: "", exit_asn: asn ? String(asn) : "", asort: "" }),
     });
   } else {
-    const pages = Math.max(1, Math.ceil(sorted.length / size));
-    const page = Math.min(Math.max(0, Number(params.get("page") || 0) || 0), pages - 1);
+    const pages = Math.max(1, Math.ceil(total / size));
+    const page = result.page;
     const pickAll = h("input", { type: "checkbox", "aria-label": "选择本页节点" });
-    const pageNodes = sorted.slice(page * size, (page + 1) * size);
+    const pageNodes = sorted;
     pickAll.addEventListener("change", () => toggle(pageNodes.map((n) => n.id), pickAll.checked));
     scope.push({ box: pickAll, ids: pageNodes.map((n) => n.id) });
     const tbody = h("tbody", {}, pageNodes.map((n) => nodeRow(n, false, toggle)));
@@ -289,7 +339,7 @@ export async function render(root, { params, go, isCurrent }) {
         h(
           "footer",
           { class: "table-foot" },
-          h("span", { class: "range" }, `第 ${count(page * size + 1)}–${count(Math.min(sorted.length, (page + 1) * size))} 个，共 ${count(sorted.length)} 个`),
+          h("span", { class: "range" }, `第 ${count(page * size + 1)}–${count(Math.min(total, (page + 1) * size))} 个，共 ${count(total)} 个`),
           h("label", { class: "size" }, "每页", sizePick),
           pageLinks(page, pages, (target) => update({ page: target ? String(target) : "" }, { keepPage: true })),
         ),
@@ -299,9 +349,10 @@ export async function render(root, { params, go, isCurrent }) {
   }
 
   // ---- header ----
-  const available = loaded.filter((n) => n.status === "UP" || n.status === "DEGRADED").length;
-  const subtitle = filters.status ? `${count(loaded.length)} 个节点，其中可用 ${count(available)} 个` : `${count(loaded.length)} 个可用节点`;
-  const exportable = sorted.some((n) => n.status === "UP" && n.enabled) && filters.eligible !== "false";
+  const available = facets?.available ?? loaded.filter((n) => n.status === "UP" || n.status === "DEGRADED").length;
+  const candidates = facets?.total ?? loaded.length;
+  const subtitle = filters.status ? `${count(candidates)} 个节点，其中可用 ${count(available)} 个` : `${count(candidates)} 个可用节点`;
+  const exportable = (facets ? facets.exportable > 0 : sorted.some((n) => n.status === "UP" && n.enabled)) && filters.eligible !== "false";
   const exportParams = new URLSearchParams({ ...filters, new: "1", vantage });
   exportParams.delete("status");
   exportParams.delete("eligible");

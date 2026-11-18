@@ -82,7 +82,7 @@ BOOLEAN_KEYS = (
 
 
 def filters_from_params(params):
-    if set(params) - FILTER_KEYS - {"offset", "limit", "sort"}:
+    if set(params) - FILTER_KEYS - {"offset", "limit", "sort", "view"}:
         raise AssetError("INVALID_NODE_QUERY")
     result = {k: v for k, v in params.items() if k in FILTER_KEYS and v != ""}
     for key in BOOLEAN_KEYS:
@@ -113,7 +113,8 @@ class Catalog:
                 for row in session.execute(
                     sa.text(
                         "SELECT s.id,nodema_source_label(s)->>'url_host' AS url_host,"
-                        " nodema_source_effective_kind(s) AS effective_kind, c.*"
+                        " nodema_source_effective_kind(s) AS effective_kind,"
+                        " nodema_source_next_attempt(s) AS next_attempt, c.*"
                         " FROM sources s CROSS JOIN LATERAL nodema_source_counts(s,:fresh) c"
                         " WHERE s.deleted_at IS NULL"
                     ),
@@ -210,7 +211,16 @@ class Catalog:
         }
         return self.page(filters, sort=sort, offset=offset, limit=limit)
 
-    def page(self, filters=None, *, sort="short_id:asc", offset=0, limit=100, template=None):
+    def page(
+        self,
+        filters=None,
+        *,
+        sort="short_id:asc",
+        offset=0,
+        limit=100,
+        template=None,
+        projection="full",
+    ):
         if (
             type(offset) is not int
             or offset < 0
@@ -229,7 +239,7 @@ class Catalog:
                 result = session.scalar(
                     sa.text(
                         "SELECT nodema_node_page(CAST(:filters AS jsonb),"
-                        ":sort,:offset,:limit,:fresh,:tpl)"
+                        ":sort,:offset,:limit,:fresh,:tpl,:projection)"
                     ),
                     {
                         "filters": json.dumps(filters or {}, default=str, allow_nan=False),
@@ -238,6 +248,7 @@ class Catalog:
                         "limit": limit,
                         "fresh": self.settings.freshness_hours,
                         "tpl": template or self.template(),
+                        "projection": projection,
                     },
                 )
         except (TypeError, ValueError):
@@ -310,14 +321,21 @@ class Catalog:
             ]
         return node
 
-    def overview(self):
+    def overview(self, *, include_scans=True):
         with self.sessions() as session:
             aggregate = session.scalar(
                 sa.text("""
-                WITH data AS (SELECT status,eligible,exit_country
+                WITH data AS (SELECT status,eligible,exit_country,node_group
                   FROM nodema_catalog(:fresh,:tpl,'GENERAL'))
                 SELECT jsonb_build_object('total',(SELECT count(*) FROM data),
                   'eligible',(SELECT count(*) FROM data WHERE eligible),
+                  'groups',coalesce((SELECT jsonb_object_agg(node_group,jsonb_build_object(
+                    'total',total,'eligible',eligible,'statuses',statuses))
+                    FROM (SELECT node_group,sum(n) total,sum(e) eligible,
+                      jsonb_object_agg(status,n) statuses
+                      FROM (SELECT node_group,status,count(*) n,
+                        count(*) FILTER(WHERE eligible) e
+                        FROM data GROUP BY 1,2) s GROUP BY node_group) g),'{}'),
                   'statuses',coalesce((SELECT jsonb_object_agg(status,n) FROM
                     (SELECT status,count(*) n FROM data GROUP BY status) s),'{}'),
                   'countries',coalesce((SELECT jsonb_object_agg(country,n) FROM
@@ -326,6 +344,8 @@ class Catalog:
             """),
                 {"fresh": self.settings.freshness_hours, "tpl": self.template()},
             )
+        if not include_scans:
+            return aggregate
         runs = ScanService(self.assets, self.settings).list()
         latest = ScanService(self.assets, self.settings).get(runs[0]["id"]) if runs else None
         with self.sessions() as session:

@@ -34,7 +34,7 @@ const FOLDED = [
 const FOLDED_KEYS = FOLDED.flatMap(([, keys]) => keys);
 export const COMMON_KEYS = ["status", "protocol", "node_group", "provider_id", "exit_country", "best_per_server"];
 export const PANEL_KEYS = [...COMMON_KEYS, ...FOLDED_KEYS];
-// Database filters (sent to the API); grade buckets, quick toggles, sort and page are local.
+// Fields from the filter panel; the list also sends grades, quick toggles, sort and page.
 export const API_KEYS = ["q", "source_id", ...PANEL_KEYS];
 
 export function display(key, value) {

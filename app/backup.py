@@ -2,6 +2,7 @@
 
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 from sqlalchemy.engine import make_url
@@ -44,10 +45,12 @@ def command(tool, docker_client):
         return [tool]
     result = ["docker", "run", "--rm", "-i"]
     tunnel_ca = os.environ.get("NODEMA_POSTGRES_TUNNEL_CA")
+    if tunnel_ca or sys.platform == "linux":
+        result += ["--network", "host"]
     if tunnel_ca:
         # Actions exposes its SSH forward on the runner loopback interface.
         ca_mount = f"type=bind,src={tunnel_ca},dst={tunnel_ca},readonly"
-        result += ["--network", "host", "--mount", ca_mount]
+        result += ["--mount", ca_mount]
     for key in (
         "PGHOST",
         "PGPORT",

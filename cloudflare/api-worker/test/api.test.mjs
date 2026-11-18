@@ -22,6 +22,7 @@ const env = {
   ENCRYPTION_KEY_ID: "test-v1",
   ENCRYPTION_KEY_B64: Buffer.alloc(32, "E").toString("base64"),
   ADMIN_PASSWORD: "synthetic-worker-admin-password-long-enough",
+  MONITOR_TOKEN: "synthetic-read-only-monitor-token",
   NAME_TEMPLATE: "{FLAG}{ROUTE}|{OPERATOR} {SEQ}{VARIANT}",
   FRESHNESS_HOURS: "36",
   EXPORT_TTL_HOURS: "24",
@@ -317,7 +318,7 @@ print(json.dumps(s.sync_source(UUID('${sourceId}')),default=str))`),
         assert.equal(outdated.checks.schema, false);
       } finally {
         await db.query(
-          "UPDATE alembic_version SET version_num='0008_export_projection'",
+          "UPDATE alembic_version SET version_num='0026_maintenance'",
         );
         await db.end();
       }
@@ -1693,6 +1694,30 @@ print(json.dumps(refresh.refresh(session_factory(make_engine(os.environ['DATABAS
     compact.items.map((row) => [row[at("quality_grade")], row[at("peak_rtt_ms")], row[at("server_best_grade")]]),
     [["A", 120, "A"], ["A", 120, "A"]],
   );
+  const dashboard = `/api/nodes?view=dashboard&source_id=${source.id}&vantage=CN-CT&sort=quality_grade:asc&limit=1`;
+  const firstPage = await (await request(dashboard)).json();
+  const secondPage = await (await request(dashboard + "&offset=1")).json();
+  assert.equal(firstPage.total, 2);
+  assert.equal(firstPage.items.length, 1);
+  assert.equal(secondPage.items.length, 1);
+  const nodeIDColumn = firstPage.fields.indexOf("id");
+  assert.notEqual(firstPage.items[0][nodeIDColumn], secondPage.items[0][nodeIDColumn]);
+  assert.deepEqual(firstPage.facets, secondPage.facets);
+  const selected = await (await request(dashboard + "&quality_buckets=S")).json();
+  assert.deepEqual(selected.facets.buckets, firstPage.facets.buckets);
+  assert.equal(selected.total, selected.facets.buckets.S ?? 0);
+  const ids = await (await request(dashboard.replace("view=dashboard", "view=ids"))).json();
+  assert.deepEqual(ids.fields, ["id"]);
+  assert.equal(ids.total, 2);
+  assert.equal(ids.items[0].length, 1);
+  const heartbeat = await (await request("/api/overview/status")).json();
+  assert.equal(typeof heartbeat.sources.total, "number");
+  assert.equal(typeof heartbeat.exports.serving, "number");
+  const monitor = (path) => handle(new Request("https://assets.example" + path, {
+    headers: { Authorization: "Bearer " + env.MONITOR_TOKEN },
+  }), env, connect);
+  assert.equal((await monitor("/api/ops/heartbeat")).status, 200);
+  assert.equal((await monitor("/api/sources")).status, 401);
   const hk = await (await request(`/api/nodes?source_id=${source.id}&vantage=HK&min_quality_grade=S`)).json();
   assert.equal(hk.total, 2);
   assert.equal(hk.items[0].quality_grade, "S");

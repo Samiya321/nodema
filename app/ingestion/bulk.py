@@ -10,6 +10,18 @@ MAX_BULK_BYTES = 131072
 MAX_URL_BYTES = 8192
 
 
+def subscription_url(value):
+    value = value.strip()
+    if len(value.encode()) > MAX_URL_BYTES:
+        raise AssetError("SUBSCRIPTION_URL_TOO_LONG")
+    url = validate_url(value, allow_http=True)
+    parsed = urlsplit(url)
+    if (parsed.scheme, parsed.port) in (("https", 443), ("http", 80)):
+        host = f"[{parsed.hostname}]" if ":" in parsed.hostname else parsed.hostname
+        url = parsed._replace(netloc=host).geturl()
+    return url
+
+
 def prepare_links(value, name_prefix="批量订阅"):
     if not isinstance(value, str):
         raise AssetError("INVALID_REQUEST")
@@ -31,13 +43,7 @@ def prepare_links(value, name_prefix="批量订阅"):
     for line, value in lines:
         item = {"line": line}
         try:
-            if len(value.encode()) > MAX_URL_BYTES:
-                raise AssetError("SUBSCRIPTION_URL_TOO_LONG")
-            url = validate_url(value, allow_http=True)
-            parsed = urlsplit(url)
-            if (parsed.scheme, parsed.port) in (("https", 443), ("http", 80)):
-                host = f"[{parsed.hostname}]" if ":" in parsed.hostname else parsed.hostname
-                url = parsed._replace(netloc=host).geturl()
+            url = subscription_url(value)
             item.update(url=url, name=f"{name_prefix.strip()} {line:03d}")
         except AssetError as error:
             item.update(status="INVALID", error_code=error.code)

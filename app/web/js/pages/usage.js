@@ -47,9 +47,10 @@ export function projection(samples, transfer, now = Date.now()) {
 
 export async function render(root, { params, go }) {
   const days = params.get("days") || "30";
-  const [data, probe] = await Promise.all([
+  const [data, probe, ops] = await Promise.all([
     api("/usage?days=" + encodeURIComponent(days)),
     api("/probe-status").catch(() => null),
+    api("/overview/status").catch(() => null),
   ]);
   const t = data.totals;
   const range = select("days", [["7", "近 7 天"], ["30", "近 30 天"], ["90", "近 90 天"], ["365", "近 365 天"]], days, "用量时间范围");
@@ -106,6 +107,12 @@ export async function render(root, { params, go }) {
       latest
         ? h("p", {}, `项目数据 ${bytes(latest.table_bytes)}，数据库共 ${bytes(latest.database_bytes)}，窗口内增长 ${bytes(data.database_growth_bytes)}（${date(latest.taken_at)} 采样）。`)
         : h("p", { class: "muted" }, "还没有容量采样。"),
+      ops?.host ? h("p", {}, `剩余磁盘 ${bytes(ops.host.disk_free)} / ${bytes(ops.host.disk_total)} · 可用内存 ${bytes(ops.host.mem_available)} · 证书有效至 ${date(ops.host.tls_expires_at)}`) : null,
+      ops?.capacity_24h?.samples ? h("p", { class: "muted" },
+        `过去 24 小时 · ${ops.capacity_24h.samples} 次采样 · 连接峰值 ${ops.capacity_24h.connections_peak} · 数据库峰值 ${bytes(ops.capacity_24h.db_peak_bytes)}`) : null,
+      ops?.last_daily_capacity?.samples
+        ? h("p", { class: "muted" }, `${ops.last_daily_capacity.scan_date} 日检期间 · ${ops.last_daily_capacity.samples} 次采样 · 连接峰值 ${ops.last_daily_capacity.connections_peak} · 最低可用内存 ${bytes(ops.last_daily_capacity.mem_min_bytes)}`)
+        : selfHosted ? h("p", { class: "muted" }, "等待采集下一次完整日检期间的容量。") : null,
       data.latest_backup
         ? h("p", { class: data.latest_backup.expired ? "bad-text" : "muted" }, `最近加密备份 ${date(data.latest_backup.created_at)} · ${data.latest_backup.expired ? "已过期" : "有效至 " + date(data.latest_backup.expires_at)}`)
         : h("p", { class: "muted" }, "暂时无法确认加密备份产物。"),

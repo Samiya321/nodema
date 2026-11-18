@@ -19,8 +19,9 @@ from app.domain import (
     issue_dicts,
 )
 from app.ingestion.airport import is_info_node, parse_airport_headers
+from app.ingestion.bulk import subscription_url
 from app.ingestion.children import apply_airport, materialize
-from app.ingestion.fetcher import Fetcher, validate_url
+from app.ingestion.fetcher import Fetcher
 from app.naming import DEFAULT_TEMPLATE, render_name
 from app.parsers import PARSER_VERSION, parse_document
 from app.parsers.substore import parse_substore_index
@@ -156,7 +157,7 @@ class AssetService:
             raise AssetError("INPUT_TOO_LARGE")
         if source_type == SourceType.SUBSCRIPTION_URL:
             try:
-                url = validate_url(payload.decode("utf-8").strip(), allow_http=True)
+                url = subscription_url(payload.decode("utf-8"))
             except UnicodeError:
                 raise AssetError("UNSAFE_SUBSCRIPTION_URL") from None
             return {
@@ -186,6 +187,28 @@ class AssetService:
             raise AssetError("INVALID_SUBSCRIPTION_USER_AGENT")
         return value
 
+    @staticmethod
+    def _lock_source_urls(session):
+        session.execute(
+            sa.text(
+                "SELECT pg_advisory_xact_lock(hashtextextended("
+                "current_schema() || ':nodema:source-bulk', 0))"
+            )
+        )
+
+    @staticmethod
+    def _existing_url(session, value):
+        return session.scalar(
+            sa.select(Source)
+            .where(
+                Source.deleted_at.is_(None),
+                Source.type == SourceType.SUBSCRIPTION_URL.value,
+                Source.url_data == value,
+            )
+            .order_by(Source.created_at, Source.id)
+            .limit(1)
+        )
+
     def create_source(
         self,
         *,
@@ -204,15 +227,25 @@ class AssetService:
         values = self._input(source_id, source_type, payload)
         with self.sessions.begin() as session:
             self._verify_keys(session)
+            name, kind, user_agent = (
+                self._label(name),
+                self._kind(kind),
+                self._user_agent(user_agent),
+            )
+            if values["url_data"]:
+                self._lock_source_urls(session)
+                existing = self._existing_url(session, values["url_data"])
+                if existing:
+                    return {**self._source_dto(existing), "duplicate": True}
             source = Source(
                 id=source_id,
-                name=self._label(name),
+                name=name,
                 type=source_type.value,
                 format_hint=format_hint.value,
                 sync_interval_seconds=self.sync_interval,
                 sync_requested_at=utcnow(),
-                kind=self._kind(kind),
-                user_agent=self._user_agent(user_agent),
+                kind=kind,
+                user_agent=user_agent,
                 **values,
             )
             session.add(source)
@@ -235,12 +268,7 @@ class AssetService:
             return bulk_result(items)
         with self.sessions.begin() as session:
             # Serialize concurrent bulk imports in this schema, including empty catalogs.
-            session.execute(
-                sa.text(
-                    "SELECT pg_advisory_xact_lock(hashtextextended("
-                    "current_schema() || ':nodema:source-bulk', 0))"
-                )
-            )
+            self._lock_source_urls(session)
             self._verify_keys(session)
             existing = {
                 bytes(source.url_data): source
@@ -314,6 +342,8 @@ class AssetService:
         user_agent=...,
     ):
         with self.sessions.begin() as session:
+            if payload is not None:
+                self._lock_source_urls(session)
             source = self._source(session, source_id, lock=True)
             if kind is not None:
                 source.kind = self._kind(kind)
@@ -336,7 +366,11 @@ class AssetService:
                     raise AssetError("INVALID_FORMAT") from None
             if payload is not None:
                 self._verify_keys(session)
-                for k, v in self._input(source.id, source.type, payload).items():
+                values = self._input(source.id, source.type, payload)
+                url = values["url_data"]
+                if url and url != source.url_data and self._existing_url(session, url):
+                    raise AssetError("SOURCE_URL_ALREADY_EXISTS")
+                for k, v in values.items():
                     setattr(source, k, v)
                 source.content_hash = None
             if payload is not None or format_hint is not None:
@@ -477,6 +511,8 @@ class AssetService:
             unchanged = False
         now = utcnow()
         with self.sessions.begin() as session:
+            if index is not None:
+                self._lock_source_urls(session)
             source = self._source(session, source_id, lock=True)
             if source.revision != revision:
                 raise AssetError("SOURCE_CHANGED_RETRY")

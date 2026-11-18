@@ -127,6 +127,7 @@ export const ERRORS = {
   INVALID_SCAN_SCOPE: "检测范围无效。",
   SOURCE_DISABLED: "来源已暂停，请先启用。",
   NO_ENABLED_SOURCES: "所选来源都已暂停或删除，没有可同步的来源。",
+  SOURCE_URL_ALREADY_EXISTS: "这个链接已登记。请打开现有来源，避免重复同步。",
   SOURCE_NOT_FOUND: "来源不存在或已删除。",
   PROVIDER_NOT_FOUND: "机场分组不存在。",
   INVALID_PROVIDER_NAME: "分组名称需为 1–80 个字符，且不能包含链接。",

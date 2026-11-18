@@ -1,9 +1,13 @@
 name: Daily node health
+run-name: ${{ inputs.monitor_retry && 'Maintenance retry · daily' || 'Daily node health' }}
 on:
   # 04:17 Asia/Shanghai is started by the API Worker's Cron Trigger with trigger=schedule
   # (cloudflare/api-worker wrangler.jsonc): GitHub's own schedule ran 4-5 hours late.
   workflow_dispatch:
     inputs:
+      monitor_retry:
+        type: boolean
+        default: false
       trigger:
         description: schedule follows the dashboard's daily setting; manual always tests
         required: false

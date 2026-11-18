@@ -142,6 +142,7 @@ export async function catalogPageText(
   sort: string,
   offset: number,
   limit: number,
+  projection: "compact" | "dashboard" | "ids" = "compact",
 ): Promise<string> {
   if (Object.keys(filters).some((key) => !filterKeys.has(key)))
     throw new SafeError("INVALID_NODE_QUERY");
@@ -149,8 +150,8 @@ export async function catalogPageText(
     (
       await rows(
         "SELECT nodema_node_page($1::jsonb,$2,$3,$4,$5," +
-          "coalesce((SELECT template FROM naming_rules WHERE id=1),$6),'compact')::text AS page",
-        [JSON.stringify(filters), sort, offset, limit, freshness, defaultTemplate],
+          "coalesce((SELECT template FROM naming_rules WHERE id=1),$6),$7)::text AS page",
+        [JSON.stringify(filters), sort, offset, limit, freshness, defaultTemplate, projection],
         "INVALID_NODE_QUERY",
       )
     )[0].page,

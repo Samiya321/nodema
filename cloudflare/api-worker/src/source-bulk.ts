@@ -64,6 +64,23 @@ export function subscriptionURL(value: string): string {
   return url.href;
 }
 
+export const lockSourceURLs = (rows: Rows) =>
+  rows("SELECT pg_advisory_xact_lock(hashtextextended(current_schema() || ':nodema:source-bulk', 0))");
+
+export async function withSourceURL<T>(rows: Rows, url: Uint8Array | null, work: () => Promise<T>) {
+  if (!url) return work();
+  await rows("BEGIN");
+  try {
+    await lockSourceURLs(rows);
+    const result = await work();
+    await rows("COMMIT");
+    return result;
+  } catch (error) {
+    await rows("ROLLBACK");
+    throw error;
+  }
+}
+
 export async function importLinks(rows: Rows, data: Row) {
   if (typeof data.urls !== "string")
     throw new SafeError("INVALID_REQUEST", 422);
@@ -107,9 +124,7 @@ export async function importLinks(rows: Rows, data: Row) {
   if (valid.length) {
     await rows("BEGIN");
     try {
-      await rows(
-        "SELECT pg_advisory_xact_lock(hashtextextended(current_schema() || ':nodema:source-bulk', 0))",
-      );
+      await lockSourceURLs(rows);
       const existing = new Map(
         (
           await rows(

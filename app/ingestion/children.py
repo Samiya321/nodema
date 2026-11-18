@@ -17,6 +17,7 @@ from sqlalchemy.dialects.postgresql import insert
 
 from app.database.models import NodeSource, Provider, Source, SubstoreSourceReference
 from app.domain import AssetError, InputFormat, SourceType
+from app.ingestion.bulk import subscription_url
 from app.ingestion.fetcher import validate_url
 
 MAX_DEPTH = 3
@@ -83,18 +84,38 @@ def materialize(session, parent, index, now: datetime, sync_interval: int):
             data = value.encode()
             child = children.get(origin)
             if child is None and kind == SourceType.SUBSCRIPTION_URL:
+                try:
+                    canonical = subscription_url(value).encode()
+                except AssetError:
+                    continue
                 shared = session.scalar(
-                    sa.select(Source.id).where(
+                    sa.select(Source)
+                    .where(
                         Source.deleted_at.is_(None),
                         Source.type == SourceType.SUBSCRIPTION_URL.value,
-                        Source.url_data == data,
+                        Source.url_data.in_({data, canonical}),
                     )
+                    .order_by(Source.created_at, Source.id)
+                    .limit(1)
                 )
                 if shared is not None:
-                    summary["shared"] += 1
-                    if shared != parent.id:
-                        references.setdefault(shared, child_label)
-                    continue
+                    if shared.parent_source_id != parent.id:
+                        summary["shared"] += 1
+                        if shared.id != parent.id:
+                            references.setdefault(shared.id, child_label)
+                        continue
+                    if shared.origin_key in wanted:
+                        summary["duplicates"] += 1
+                        continue
+                    # A renewed link can already belong to this same child. Reattach
+                    # the upstream entry to that child without creating a reference.
+                    children.pop(shared.origin_key, None)
+                    shared.origin_key, shared.origin_label = origin, child_label
+                    shared.updated_at = now
+                    shared.revision += 1
+                    children[origin] = shared
+                    child = shared
+                data = canonical
             if child is None:
                 session.add(
                     Source(

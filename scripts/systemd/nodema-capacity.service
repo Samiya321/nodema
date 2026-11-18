@@ -1,0 +1,10 @@
+[Unit]
+Description=Sample Nodema PostgreSQL and host capacity
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/root/nodema-postgres
+ExecStart=/root/nodema-postgres/sample_postgres_host.sh /root/nodema-postgres/tls/server.crt
+TimeoutStartSec=25s

@@ -1,4 +1,5 @@
 name: Entry probes and grades
+run-name: ${{ inputs.monitor_retry && 'Maintenance retry · probe' || 'Entry probes and grades' }}
 on:
   # Started every hour at :30 UTC by the API Worker's Cron Trigger (cloudflare/api-worker
   # wrangler.jsonc): GitHub's own schedule was delayed by hours or dropped. Beijing
@@ -6,6 +7,9 @@ on:
   # reachability and route samples.
   workflow_dispatch:
     inputs:
+      monitor_retry:
+        type: boolean
+        default: false
       refresh_only:
         description: Recompute grades from existing observations
         type: boolean

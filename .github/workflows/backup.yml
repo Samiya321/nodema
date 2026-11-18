@@ -1,8 +1,13 @@
 name: Encrypted database backup
+run-name: ${{ inputs.monitor_retry && 'Maintenance retry · backup' || 'Encrypted database backup' }}
 on:
   schedule:
-    - cron: '41 21 1,15 * *' # twice a month (05:41 Asia/Shanghai on the 2nd and 16th); ~0.2 GB Neon transfer each
+    - cron: '41 16 * * *' # 00:41 Asia/Shanghai, before the daily check
   workflow_dispatch:
+    inputs:
+      monitor_retry:
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -23,7 +28,7 @@ jobs:
         run: |
           if [ "$GITHUB_EVENT_NAME" = schedule ] && [ -n "$SKIP_UNTIL" ] && [[ "$(date -u +%F)" < "$SKIP_UNTIL" ]]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "Scheduled backup skipped until $SKIP_UNTIL (saves Neon transfer)." >> "$GITHUB_STEP_SUMMARY"
+            echo "Scheduled backup skipped until $SKIP_UNTIL." >> "$GITHUB_STEP_SUMMARY"
           fi
   backup:
     needs: window
@@ -49,17 +54,12 @@ jobs:
           python-version: '3.12'
       - id: dependencies
         run: uv sync --frozen
-      - name: Note optional backup is disabled
-        if: env.ENCRYPTION_KEY_B64 == ''
-        run: echo "Encrypted backup skipped because no backup key is configured." >> "$GITHUB_STEP_SUMMARY"
       - run: uv run nodema backup --output-file backups/database.nma --docker-client
-        if: env.ENCRYPTION_KEY_B64 != ''
-      - if: env.ENCRYPTION_KEY_B64 != ''
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: encrypted-database-${{ github.run_id }}
           path: backups/database.nma
-          retention-days: 20 # runs twice a month: always one backup on hand
+          retention-days: 7
           if-no-files-found: error
       - name: Record job network usage
         if: always() && steps.network.outcome == 'success' && steps.dependencies.outcome == 'success'

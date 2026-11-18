@@ -112,10 +112,16 @@ export async function render(root, { params, go, refresh, refreshStrip }) {
     field("API 地址", h("input", { name: "payload", type: "url", required: true, size: 48, placeholder: "https://…/api/subs" })),
     h("button", { type: "submit", class: "primary" }, "添加"),
   );
+  const result = h("p", { class: "muted small", role: "status" });
+  form.append(result);
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     await busy(e.submitter, async () => {
-      await api("/sources", { method: "POST", body: { ...Object.fromEntries(new FormData(form)), type: "SUBSCRIPTION_URL" } });
+      const saved = await api("/sources", { method: "POST", body: { ...Object.fromEntries(new FormData(form)), type: "SUBSCRIPTION_URL" } });
+      if (saved.duplicate) {
+        result.replaceChildren("该链接已登记为 ", h("a", { href: sourceHref(saved.id, "children") }, saved.name));
+        return;
+      }
       toast("已添加。点击顶部“同步来源”读取订阅列表。", "ok");
       reload();
     });

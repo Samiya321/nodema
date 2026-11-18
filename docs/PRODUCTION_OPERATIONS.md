@@ -81,10 +81,10 @@ PY
 | 订阅 404/鉴权失败 | 检查 token、撤销、到期；不要将完整私有 URL 贴到公开 issue。旧 token hash 不能还原原 token，确需更换由用户触发 |
 | 入口国家/ASN 未知 | 看 geoip-pack 输出；缺记录/校验失败/未安装 MMDB 都可能，不代表节点 DOWN。GitHub 源无需新建 MaxMind 账号，确认 GeoIP provider 即可 |
 | DB/TLS 连接失败 | 检查 PostgreSQL、cloudflared、Hyperdrive 或 Actions 的 SSH 转发状态。核对连接角色、CA 和 PostgreSQL TLS 主机名，保留 verify-full |
-| 节点列表慢或查询超时 | 对照「可用节点」与「全部状态」，记录时间、默认筛选的响应耗时和同时运行的任务。全量分组和全选会读取完整筛选集。查询超时返回 503，性能复现使用隔离副本 |
+| 节点列表慢或查询超时 | 对照「可用节点」与「全部状态」，记录时间、默认筛选的响应耗时和同时运行的任务。普通列表只读取当前页，按国家与 ASN 汇总在打开对应视图时加载；选择全部结果时按页只读取节点 ID。查询超时返回 503，性能复现使用隔离副本 |
 | 容量或分钟数增长 | 查运行与用量、活跃任务和保留设置；cleanup 会归档并删除过期明细，应了解其影响后执行，不为验收随意运行 |
 
-每日主流程北京时间 04:17 由 API Worker Cron 派发（不受 GitHub 定时延迟影响），备份每月 1、15 日 UTC 21:41（仓库变量 `BACKUP_SKIP_UNTIL=YYYY-MM-DD` 可跳过此日期之前的定时备份）。转换“不支持”的原因可手动运行只读的 `diagnose.yml` 查看（约 3 MB 传输）。手工执行固定工作流前确认本次任务允许生产写入/检测：
+每日主流程北京时间 04:17 由 API Worker Cron 派发（不受 GitHub 定时延迟影响），备份每天北京时间 00:41（仓库变量 `BACKUP_SKIP_UNTIL=YYYY-MM-DD` 可跳过此日期之前的定时备份）。转换“不支持”的原因可手动运行只读的 `diagnose.yml` 查看（约 3 MB 传输）。手工执行固定工作流前确认本次任务允许生产写入/检测：
 
 ```bash
 # 只同步来源（不检测）
@@ -103,6 +103,13 @@ gh workflow run export-build.yml --repo Samiya321/nodema --ref main
 
 等级重算（`nodema grade refresh`）每次重写约 4 万行，只在 Actions 内运行（`daily-check.yml` 收尾、`entry-probe.yml` 到期时）。需要主动按已有样本重新定档时，可用 `entry-probe.yml` 的 `refresh_only=true`，跳过新的外部测量并执行重算与订阅构建。
 
+## 独立巡检
+
+- `maintenance-watch.yml` 每小时 :53 由 GitHub 独立触发，检查 Pages → Worker → PostgreSQL、日检完整性、接入测量、新备份产物、恢复演练和生效订阅的构建。手动运行默认仅检查，`apply=true` 同时启用补跑和告警。
+- 等待到北京时间 06:45 再补发漏掉的当日日检。有尚未完成的批次时，等运行退出、租约释放，再用同批次 ID 补跑一次。接入超过 3 小时或备份超过 36 小时未产出时补发一次。活跃的工作流继续等待。持续异常在 GitHub 合并成一条巡检 Issue，恢复后关闭并通知。Issue 仅含固定检查名称和运维入口。
+- `MONITOR_TOKEN` 在 Actions 与 Worker 各有同一个 Secret，有效范围为 `GET /api/ops/heartbeat`。普通管理入口沿用管理员凭据。备份产物和恢复演练由 Runner 直接从 GitHub 读取。
+- 主机 systemd 每 5 分钟在 `/root/nodema-postgres` 采样 PostgreSQL 数据量、连接数、磁盘、可用内存、容器重启计数和数据库 TLS 到期日，保留采样 14 天。用量页列出 24 小时峰值与最近完整日检期间的采样。磁盘低于 20%、可用内存低于 5%、证书余期少于 30 天或样本缺失 30 分钟时提醒。历史结果与日统计继续使用当前容量预算；结合首次正常夜间采样再复核预算。
+
 ## 自建 PostgreSQL 运维
 
 - 主机在用户授权的服务器上，配置、数据、证书和 Tunnel token 位于 `/root/nodema-postgres`。主机地址、SSH 管理身份和资源 ID 见本机私密交接。只在该子目录用 `docker compose -f compose.yml -f tunnel.yml ps` 检查本项目。
@@ -114,7 +121,9 @@ gh workflow run export-build.yml --repo Samiya321/nodema --ref main
 
 ## 备份、恢复与数据库搬家
 
-加密数据库备份每月 1、15 日（UTC）上传为 Actions artifact，保留 20 天；GeoIP 密文包保留 1 天。用量页按实际备份包显示创建时间和到期时间。排查缺包时检查 run 的上传步骤，定时跳过也可能显示运行成功。需要长期恢复点时，将加密备份与对应密钥分开保管。失去 AES 密钥就无法解密对应备份。
+加密数据库备份每天北京时间 00:41 上传为 Actions artifact，保留 7 天；历史 20 天保留期继续按原包到期时间生效。总览和用量页按默认分支实际存在的备份包显示时间。定时跳过也可能显示运行成功，排查缺包时检查上传步骤。需要长期恢复点时，将加密备份与对应密钥分开保管。
+
+每月 4 日北京时间 01:06 运行 `restore-drill.yml`。独立 Runner 下载最新有效密文包，恢复到任务内的临时 PostgreSQL 17，执行迁移、存储密钥检查与最小只读角色验收。演练只接收备份密钥和固定的临时库连接。总览链接到最近一次演练。可手动派发该工作流验证新备份。
 
 `private/cloud-backup-smoke.nma` 是最初云端备份验收文件，不是最新生产快照；不能拿它覆盖用户后来导入的数据。恢复前核对文件时间、来源、AES key ID、目标 DB 与最近一次隔离恢复证据。
 

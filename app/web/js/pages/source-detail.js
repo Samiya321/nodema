@@ -7,7 +7,7 @@ import {
 const RELATIONS = [["present", "上游仍包含", "present_count"], ["current", "当前可用", "up_count"],
   ["stale", "通过但已过期", "stale_up_count"], ["history", "全部关联", "node_count"]];
 
-export async function renderSourceDetail(root, { params, go }) {
+export async function renderSourceDetail(root, { params, go, refresh, refreshStrip }) {
   const id = params.get("source");
   const pageIndex = readPage(params);
   const query = new URLSearchParams({ offset: pageIndex * LINEAGE_PAGE_SIZE, limit: LINEAGE_PAGE_SIZE });
@@ -46,9 +46,13 @@ export async function renderSourceDetail(root, { params, go }) {
       { label: "首次收录", render: (n) => date(n.first_seen_at) },
       { label: "最近出现", render: (n) => date(n.last_seen_at) },
     ], page.items, { empty: empty("此范围无节点") });
+  const edit = !item.deleted_at && h("button", { type: "button", onclick: async () => {
+    const [{ editSource }, source] = await Promise.all([import("./sources.js"), api(`/sources/${encodeURIComponent(id)}`)]);
+    editSource(source, () => { refresh(); refreshStrip(); });
+  } }, item.type === "SUBSCRIPTION_URL" ? "编辑或续期" : "编辑来源");
   root.append(
     h("a", { class: "return-link", href: pageHref("sources", sourceTab === "all" ? {} : { tab: sourceTab }) }, "返回来源列表"),
-    h("header", { class: "title-row" }, h("h1", { class: "page-title" }, item.name), copyPageLink(location.hash)),
+    h("header", { class: "title-row" }, h("h1", { class: "page-title" }, item.name), h("div", { class: "row wrap" }, edit, copyPageLink(location.hash))),
     h("section", { class: "panel stack" }, h("h2", {}, "来源路径"), sourcePath(chain, { current: true }),
       h("dl", { class: "pairs" },
         h("dt", {}, "来源类别"), h("dd", {}, sourceKind(item)),
@@ -59,6 +63,7 @@ export async function renderSourceDetail(root, { params, go }) {
           href: pageHref("sources", { tab: "airport", provider: item.provider_id }),
         }, item.provider_name || "查看分组"))] : null,
         h("dt", {}, "最近同步"), h("dd", {}, badge(item.last_sync_status), " ", date(item.last_checked_at)),
+        item.last_success_at ? [h("dt", {}, "最近成功"), h("dd", {}, date(item.last_success_at))] : null,
         item.last_error_code ? [h("dt", {}, "同步问题"), h("dd", {}, errorText(item.last_error_code))] : null,
       ),
     ),
