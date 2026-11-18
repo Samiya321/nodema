@@ -4,7 +4,7 @@
 
 ## 身份、环境与资料位置
 
-本机根目录为 `REPOSITORY_ROOT`，命令默认从仓库根运行。公开仓库 main 只放源码和文档，生产 PostgreSQL 数据留在已授权的云主机。private 被 Git 和 Docker build context 忽略。
+命令默认从仓库根运行。公开仓库 main 只放源码和文档，生产 PostgreSQL 数据留在已授权的云主机。`private/` 被 Git 和 Docker build context 忽略。
 
 - `private/README.md`：本机私密资料索引、资源与认证说明。
 - `private/deployment-state.json`：资源 ID、部署 commit/版本与历史验收标记；不是实时状态。

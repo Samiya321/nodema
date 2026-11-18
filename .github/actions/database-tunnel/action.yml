@@ -4,12 +4,16 @@ inputs:
   connection:
     description: SSH endpoint, key, pinned host key and PostgreSQL CA
     required: true
+  protect_entry_probes:
+    description: Exclude the SSH endpoint from this job's external entry measurements
+    default: 'false'
 runs:
   using: composite
   steps:
     - shell: bash
       env:
         NODEMA_POSTGRES_SSH: ${{ inputs.connection }}
+        PROTECT_ENTRY_PROBES: ${{ inputs.protect_entry_probes }}
       run: |
         set -euo pipefail
         umask 077
@@ -22,11 +26,19 @@ runs:
         host=$(jq -e -r '.host' <<< "$NODEMA_POSTGRES_SSH")
         port=$(jq -e -r '.port' <<< "$NODEMA_POSTGRES_SSH")
         unset NODEMA_POSTGRES_SSH
+        [[ "$host" =~ ^[a-zA-Z0-9.:_-]+$ && "$port" =~ ^[0-9]+$ ]]
+        printf '::add-mask::%s\n' "$host"
         install -m 600 "$tunnel_dir/ca.crt" "$ca_file"
         ssh -fNT -p "$port" -i "$tunnel_dir/key" \
           -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
           -o "UserKnownHostsFile=$tunnel_dir/known_hosts" -o GlobalKnownHostsFile=/dev/null \
           -o ExitOnForwardFailure=yes -o ConnectTimeout=12 \
           -o ServerAliveInterval=20 -o ServerAliveCountMax=3 \
-          -L 127.0.0.1:25432:127.0.0.1:25432 "nodema-db-tunnel@$host"
+          -L 127.0.0.1:25432:127.0.0.1:25432 "nodema-db-tunnel@$host" >/dev/null 2>&1 || {
+            echo "::error::DATABASE_TUNNEL_CONNECTION_FAILED"
+            exit 1
+          }
         printf 'NODEMA_POSTGRES_TUNNEL_CA=%s\n' "$ca_file" >> "$GITHUB_ENV"
+        if [ "$PROTECT_ENTRY_PROBES" = true ]; then
+          printf 'NODEMA_POSTGRES_SSH_HOST=%s\n' "$host" >> "$GITHUB_ENV"
+        fi
