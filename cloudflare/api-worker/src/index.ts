@@ -210,6 +210,32 @@ async function queueExportBuild(env: Env) {
   }
 }
 
+async function latestBackup(env: Env) {
+  if (!/^[\w.-]+\/[\w.-]+$/.test(env.GITHUB_REPOSITORY) || !env.GITHUB_DISPATCH_TOKEN)
+    return null;
+  try {
+    const response = await fetch(
+      `https://api.github.com/repos/${env.GITHUB_REPOSITORY}/actions/artifacts?per_page=30`,
+      {
+        headers: {
+          Authorization: `Bearer ${env.GITHUB_DISPATCH_TOKEN}`,
+          Accept: "application/vnd.github+json",
+          "User-Agent": "nodema",
+        },
+        signal: AbortSignal.timeout(3500),
+      },
+    );
+    if (!response.ok) return null;
+    const data = await response.json<{ artifacts: { name: string; created_at: string; expires_at: string; expired: boolean; workflow_run?: { head_branch: string } }[] }>();
+    const backup = data.artifacts
+      .filter((item) => /^encrypted-database-\d+$/.test(item.name) && item.workflow_run?.head_branch === env.GITHUB_WORKFLOW_REF)
+      .sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
+    return backup ? { created_at: backup.created_at, expires_at: backup.expires_at, expired: backup.expired } : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function handle(
   request: Request,
   env: Env,
@@ -375,11 +401,13 @@ export async function handle(
       dispatch: (workflow, inputs) => dispatch(env, workflow, inputs),
     });
     if (managed) return managed;
-    if (path === "/api/usage" && method === "GET")
-      return json({
-        ...await usageSummary(rows, Number(url.searchParams.get("days") ?? 30)),
-        database_provider: env.DATABASE_PROVIDER ?? "neon",
-      });
+    if (path === "/api/usage" && method === "GET") {
+      const [summary, backup] = await Promise.all([
+        usageSummary(rows, Number(url.searchParams.get("days") ?? 30)),
+        latestBackup(env),
+      ]);
+      return json({ ...summary, database_provider: env.DATABASE_PROVIDER ?? "neon", latest_backup: backup });
+    }
     if (path === "/api/overview" && method === "GET") {
       const aggregate = await catalogOverview(
         rows,

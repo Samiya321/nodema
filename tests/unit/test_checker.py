@@ -217,7 +217,9 @@ def test_node_dns_timeout_with_healthy_runner_is_node_failure(monitor_settings, 
     assert result.timeout_stages == ["DNS"]
 
 
-def test_node_dns_timeout_with_broken_runner_is_environment(monitor_settings, fixture_bytes):
+def test_node_dns_timeout_with_broken_runner_is_environment(
+    monkeypatch, monitor_settings, fixture_bytes
+):
     class Broken(Echo):
         calls = 0
 
@@ -225,6 +227,7 @@ def test_node_dns_timeout_with_broken_runner_is_environment(monitor_settings, fi
             Broken.calls += 1
             raise AssetError("ECHO_REQUEST_FAILED")
 
+    monkeypatch.setattr("app.checker.health.time.sleep", lambda _: None)
     checker = HealthChecker(
         monitor_settings, runtime=Runtime(), echo=Broken(), geoip=Geo(), resolver=TimeoutResolver()
     )
@@ -232,7 +235,7 @@ def test_node_dns_timeout_with_broken_runner_is_environment(monitor_settings, fi
     second = checker.check(dns_identity(fixture_bytes), "N2")
     assert first.status == second.status == "ENVIRONMENT_ERROR"
     assert first.error_code == "RUNNER_NETWORK_ERROR"
-    assert Broken.calls == 1  # the canary verdict is shared for a short TTL
+    assert Broken.calls == 2  # two attempts, with a shared verdict across both nodes
 
 
 def test_crashed_runtime_is_restarted_once(monkeypatch, monitor_settings, fixture_bytes):

@@ -111,6 +111,9 @@ export async function render(root, { params, go }) {
       latest
         ? h("p", {}, `项目数据 ${bytes(latest.table_bytes)}，数据库共 ${bytes(latest.database_bytes)}，窗口内增长 ${bytes(data.database_growth_bytes)}（${date(latest.taken_at)} 采样）。`)
         : h("p", { class: "muted" }, "还没有容量采样。"),
+      data.latest_backup
+        ? h("p", { class: data.latest_backup.expired ? "bad-text" : "muted" }, `最近加密备份 ${date(data.latest_backup.created_at)} · ${data.latest_backup.expired ? "已过期" : "有效至 " + date(data.latest_backup.expires_at)}`)
+        : h("p", { class: "muted" }, "暂时无法确认加密备份产物。"),
     ),
     h("h2", {}, "Actions 执行"),
     capped(
