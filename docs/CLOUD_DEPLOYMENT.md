@@ -8,11 +8,19 @@
 | API | https://nodema-api.simb.workers.dev；管理接口需要管理员鉴权 |
 | Echo | https://nodema-echo.simb.workers.dev；仅返回调用者的观测信息 |
 | 源码 | https://github.com/Samiya321/nodema |
-| 数据库 | 自建 PostgreSQL 17.12，用户指定云主机，目录 `/root/nodema-postgres`；当前 schema `0026_maintenance`。旧 Neon 项目已删除 |
+| 数据库 | 自建 PostgreSQL 17.12，用户指定云主机，目录 `/root/nodema-postgres`；当前 schema `0027_node_observations`。旧 Neon 项目已删除 |
 | API 数据库权限 | 独立角色，授予业务 DML；数据库迁移使用单独的 owner 连接 |
 | Hyperdrive | 经 Workers VPC 和 Cloudflare Tunnel 连接本机数据库；禁用查询缓存，源站连接数限制 5 |
 
 管理员密钥、数据库连接、HMAC/AES 密钥和 GitHub 调度 token 保存在本地 `private/` 以及对应平台 Secrets 中，不在本页或 Git 仓库公开。
+
+## 2026-11-25 第二十四次发布：节点证据、独立日检和登录会话
+
+- 运行提交 `0c60995`，schema `0027_node_observations`。Worker 版本 `37a0300c-1031-4f9e-b0b9-3268f2969666`，Pages 部署 `bf19f7e2-782f-49cb-9802-b07b6a3cbd68`。[Pages 部署](https://bf19f7e2.nodema-dashboard.pages.dev) · [发布分支 CI](https://github.com/Samiya321/nodema/actions/runs/45473947379) · [main CI](https://github.com/Samiya321/nodema/actions/runs/45475269590)
+- 上线前 [加密备份](https://github.com/Samiya321/nodema/actions/runs/45471903099) 已恢复至独立 PostgreSQL 17。往返验证 `0026 → 0027 → 0026 → 0027`，节点、来源、检测明细和来源关联的数量一致。合成回归 479 项 Python、40 项 Worker、3 项 Echo，附六协议回环、30 节点共享运行时和 100 节点流水线。初次本机批量 UDP 回环出现一次失败，独立重跑和最终发布分支 CI 通过。
+- 生产烟测通过 Pages 与 Worker 健康、匿名 401、Cookie 登录与清除、跨源拒绝、Bearer、巡检凭据权限、数据库 readiness、节点分页、分阶段用量和 Pages 模块散列。生产会话签发此次实测 1.08 秒。
+- [生产等级重算](https://github.com/Samiya321/nodema/actions/runs/45475385939) 使用已存观测。三网 1,592 个当前可用节点中 1,256 个有接入参考或实测，116 个通过端点确认。生产只读抽查覆盖 42 个多地址节点，端点确认或 S/A/D 归属数为 0。日检、同步和归档的端到端耗时以各自后续正常定时运行核验。
+- 恢复前一应用版本应核对 schema 相容性。保留迁移后已写入的信息，先诊断并使用兼容版本修复；隔离迁移往返仅为恢复演练证据。最新备份与版本标识在本机部署记录中。
 
 ## 2026-11-18 第二十三次发布：长期运维和总览
 

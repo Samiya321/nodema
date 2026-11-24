@@ -2,6 +2,8 @@
 
 时间均为北京时间。约 03:20 只读核对生产 Pages、Worker、认证就绪状态、任务汇总、GitHub Actions 步骤日志和备份产物。Actions 使用 main `9c4d85d`，生产认证就绪检查通过，发布记录中的 schema 为 `0026_maintenance`。
 
+本页生产观测记录的是优化之前的基线。节点链路与登录随后随 `0c60995` 上线，现场证据见 [发布记录](CLOUD_DEPLOYMENT.md#2026-11-25-第二十四次发布节点证据独立日检和登录会话)。
+
 ## 生产运行
 
 | 检查 | 结果 |
@@ -50,8 +52,8 @@
 
 发布前明确区分 DNS 候选、TCP 预检命中和实际代理连接。只有确定的 IP 和端口才用于节点级端点确认。地址不明确时保留参考档，避免单一候选地址的失败或成功外推到整个节点。用同一份隔离数据比较新旧等级迁移、各运营商覆盖和成品候选变化，再决定测量预算是否要调整。优先修证据口径，保留当前 RTT、丢包和可用率阈值。[分级设计](NODE_GRADING_DESIGN.md) · [重算步骤](https://github.com/Samiya321/nodema/actions/runs/45257814772)
 
-## 本地已完成的登录改动
+## 登录改动
 
 管理员密钥只在登录请求的 Authorization 头中传一次。Worker 在连接数据库之前签发 8 小时的同源会话，使用 `Secure`、`HttpOnly`、`SameSite=Strict` 的 Cookie，Cookie 不保存管理员密钥。刷新先查会话，退出清除本浏览器的 Cookie 并通知同源已打开的标签页。Cookie 鉴权的写操作要求 Origin 精确匹配。外部管理 API 保留 Bearer，巡检 token 范围仍为 heartbeat。签名会话无服务器会话表，退出清除浏览器里的值，已被复制的值按自身到期时间失效。
 
-本地改动基于 `9a07936`，所在分支包含尚未发布的 `0027_node_observations`。会话功能本身无需迁移、新 Secret 或新服务。独立发布时应将鉴权改动移到兼容生产 `0026_maintenance` 的分支，先发布 Worker，再发布 Pages。现网仍使用原登录。验证范围见 [状态记录](STATUS.md)。
+会话功能随 `0027_node_observations` 发布，在数据库连接之前完成鉴权。验证范围见 [状态记录](STATUS.md)。

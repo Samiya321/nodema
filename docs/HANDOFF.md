@@ -22,7 +22,9 @@
 
 同日上线导航和溯源，Worker `c8fa6ca`、Pages `006324f`，该次 schema `0025_dashboard_lineage`。新增 `substore_source_references` 记录索引对已有来源的引用。节点仍通过 `node_sources` 进入直接来源，成品通过 `export_members` 进入成员节点。[发布记录](CLOUD_DEPLOYMENT.md#2026-11-18-第二十二次发布导航和来源溯源)
 
-**同日已上线长期运维与总览**，运行代码 `2e183a8`，当前 schema `0026_maintenance`。每日备份、每月隔离恢复、每小时独立巡检和主机容量采样的运行约定见 [生产手册](PRODUCTION_OPERATIONS.md#独立巡检)，页面与后台验收见 [发布记录](CLOUD_DEPLOYMENT.md#2026-11-18-第二十三次发布长期运维和总览)。
+**同日已上线长期运维与总览**，当时运行代码 `2e183a8`、schema `0026_maintenance`。每日备份、每月隔离恢复、每小时独立巡检和主机容量采样的运行约定见 [生产手册](PRODUCTION_OPERATIONS.md#独立巡检)，页面与后台验收见 [发布记录](CLOUD_DEPLOYMENT.md#2026-11-18-第二十三次发布长期运维和总览)。
+
+**2026-11-25 已上线节点链路优化与 Dashboard 会话**，运行代码 `0c60995`，生产 schema `0027_node_observations`。来源同步、日检、归档分别调度，端点分级排除多地址歧义，登录使用 8 小时 Cookie。恢复演练和线上验证见 [发布记录](CLOUD_DEPLOYMENT.md#2026-11-25-第二十四次发布节点证据独立日检和登录会话)。
 
 先看 git 与实际云端状态。历史记录中的“尚未导入真实节点”和表行数不代表此刻数据库为空；用户可以随时从 Dashboard 导入，禁止据此清库。
 
@@ -35,7 +37,7 @@
 
 ## 用户最终决策（覆盖早期方案）
 
-2026-11-18 用户批准出口变动、DNS 响应校验、同地址族直连对照、七天时间线，以及端点补测、分级证据与节点页调整。方案用既有测试结果和预算，代码迁移为 `0027_node_observations`，尚未部署。结果和排除私密接入地址的配置见 [节点分级设计](NODE_GRADING_DESIGN.md) 与 [生产手册](PRODUCTION_OPERATIONS.md#公开仓库与接入测量)。
+2026-11-18 用户批准出口变动、DNS 响应校验、同地址族直连对照、七天时间线，以及端点补测、分级证据与节点页调整。方案用既有测试结果和预算，已随 `0027_node_observations` 于 11-25 发布。结果和排除私密接入地址的配置见 [节点分级设计](NODE_GRADING_DESIGN.md) 与 [生产手册](PRODUCTION_OPERATIONS.md#公开仓库与接入测量)。
 
 | 事项 | 当前要求 |
 | --- | --- |
@@ -159,7 +161,7 @@ pytest 和 Worker 测试会在此数据库创建/删除临时 schema；缺少测
 - psycopg 连接要求 postgresql+psycopg；系统 CA 在 session.py 中解析，备份保留 TLS/CA/channel binding 参数。不要降为 sslmode=disable 解决 TLS 问题。
 - GitHub 自带 GITHUB_WORKFLOW_REF 是 workflow 路径，不是可信分支名；用量收集用显式 trusted branch。
 - 跳过的 GitHub Job 不计 Runner 时长，且 GitHub 记账时间可能倒置。
-- 新迁移必须同步 app/readiness.py、Worker readiness 和相关测试；严格 head 检查可能在不兼容版本部署时暂时拒绝登录。
+- 新迁移必须同步 app/readiness.py、Worker readiness 和相关测试；严格 head 检查会影响数据库就绪状态和相应管理接口。
 - GitHub 权限、平台额度与最新官方 API 用法应在实际改动时重新查证，不把本文件当永久平台保证。
 
 ## 下一位维护者的交接责任
