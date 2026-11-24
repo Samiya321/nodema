@@ -15,7 +15,7 @@ on:
         default: manual
         options: [manual, schedule]
       run_id:
-        description: Existing scan UUID to resume (empty syncs requested sources and starts a new test)
+        description: Existing scan UUID to resume (empty starts a new test)
         required: false
         type: string
       scope:
@@ -73,8 +73,7 @@ jobs:
   prepare:
     if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ubuntu-latest
-    # Source sync runs here first; hundreds of subscriptions need more than 20 minutes.
-    timeout-minutes: 90
+    timeout-minutes: 20
     outputs:
       workers: ${{ steps.plan.outputs.workers }}
       run_ids: ${{ steps.plan.outputs.run_ids }}
@@ -95,19 +94,6 @@ jobs:
       - id: dependencies
         run: uv sync --frozen
       - run: uv run alembic upgrade head
-      - name: Archive expired scan detail
-        run: uv run nodema cleanup
-      - name: Synchronize authorized sources
-        if: inputs.run_id == ''
-        shell: bash
-        run: |
-          set +e
-          uv run nodema source sync-all --due-only
-          result=$?
-          set -e
-          if [ "$result" -ne 0 ] && [ "$result" -ne 2 ]; then exit "$result"; fi
-      - name: Build subscriptions after source updates
-        run: uv run nodema export build-pending
       - id: plan
         env:
           REQUESTED_RUN_ID: ${{ inputs.run_id }}
@@ -277,9 +263,6 @@ jobs:
       - name: Publish current subscriptions
         if: always() && steps.dependencies.outcome == 'success'
         run: uv run nodema export build-pending
-      - name: Archive completed or expired scan detail
-        if: "!cancelled() && steps.dependencies.outcome == 'success'"
-        run: uv run nodema cleanup
       - name: Record job network usage
         if: always() && steps.network.outcome == 'success' && steps.dependencies.outcome == 'success'
         env:

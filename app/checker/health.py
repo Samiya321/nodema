@@ -264,6 +264,7 @@ class HealthChecker:
         )
         return (
             self.settings.check_force_full
+            or self.context.get("force_full", False)
             or int.from_bytes(hashlib.sha256(seed.encode()).digest()[:8], "big") / 2**64
             < self.settings.precheck_sample_rate
         )
@@ -477,6 +478,8 @@ class HealthChecker:
         result.udp_status, result.udp_duration_ms = checked.status, checked.duration_ms
         result.udp_exit_ip = checked.exit_ip
         result.precheck_metadata["udp"] = checked.attempts
+        if any(attempt.get("error") == "timeout" for attempt in checked.attempts):
+            result.timeout_stages.append("UDP")
 
     def probe(self, result, ready, listener=None):
         """The proxy request itself. listener=(port, alive) uses a shared batch runtime
@@ -495,6 +498,8 @@ class HealthChecker:
             except AssetError as error:
                 if listener is not None and not listener[1]():
                     raise AssetError("MIHOMO_BATCH_CRASHED") from None
+                if error.code == "ECHO_TIMEOUT":
+                    result.timeout_stages.append("HTTPS")
                 fallback_ms = self._works_without_echo(error, port, ready.get("retry_echo_timeout"))
                 if fallback_ms is None:
                     raise
@@ -535,8 +540,6 @@ class HealthChecker:
             self._udp(result, ready, port)
         except AssetError as error:
             result.error_code = error.code
-            if error.code == "ECHO_TIMEOUT":
-                result.timeout_stages.append("HTTPS")
             if error.code == "RUNTIME_CONFIG_REJECTED":
                 result.status = "UNSUPPORTED"
             elif error.code.startswith("MIHOMO_"):

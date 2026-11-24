@@ -156,6 +156,7 @@ export async function probeStatus(rows: Rows, vantage: string | null, fresh = 36
   return (await rows(`SELECT nodema_probe_status($1) || (
     SELECT jsonb_build_object('coverage_total',count(*),
       'coverage_measured',count(*) FILTER (WHERE g.access_band IS NOT NULL),
+      'coverage_endpoint_verified',count(*) FILTER (WHERE g.endpoint_verified),
       'coverage_excluded',count(*) FILTER (WHERE c.last_exit_asn=13335))
     FROM node_current_status c JOIN nodema_node_scope scope ON scope.node_id=c.node_id AND scope.eligible
     LEFT JOIN node_grades g ON g.node_id=c.node_id AND g.vantage=$1

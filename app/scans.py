@@ -219,6 +219,7 @@ class ScanService:
                 scan_date=scan_date,
                 kind="MANUAL" if manual else "SUPPLEMENTAL" if existing else "DAILY",
                 scope=scope,
+                force_full=bool(manual and node_ids and len(set(node_ids)) <= 50),
                 status="PENDING" if rows else "COMPLETED",
                 node_count=len(rows),
                 shard_count=count,
@@ -478,7 +479,7 @@ class ScanService:
             raise AssetError("SHARD_LEASE_LOST")
         shard.last_heartbeat_at = now()
         shard.lease_until = now() + timedelta(seconds=self.settings.shard_lease_seconds)
-        return shard
+        return shard, run
 
     def claim(self, run_id, shard_no, owner):
         with self.sessions.begin() as session:
@@ -513,7 +514,7 @@ class ScanService:
 
     def _record_many(self, run_id, shard_no, owner, records, usage=None):
         with self.sessions.begin() as session:
-            shard = self._owned(session, run_id, shard_no, owner)
+            shard, _ = self._owned(session, run_id, shard_no, owner)
             items = {
                 item.node_id: item
                 for item in session.scalars(
@@ -567,7 +568,7 @@ class ScanService:
 
     def _reserve(self, run_id, shard_no, owner, ids):
         with self.sessions.begin() as session:
-            self._owned(session, run_id, shard_no, owner)
+            _, run = self._owned(session, run_id, shard_no, owner)
             attempts = dict(
                 session.execute(
                     sa.update(ScanItem)
@@ -591,6 +592,7 @@ class ScanService:
                 identity = json.loads(bytes(node.config_data))
                 context = dict(
                     round_id=str(run_id),
+                    force_full=run.force_full,
                     next_full_check_at=current.next_full_check_at if current else None,
                     probe_key=current.probe_key if current else None,
                     retry_echo_timeout=bool(
@@ -872,7 +874,7 @@ class ScanService:
                         batching,
                     )
             with self.sessions.begin() as session:
-                shard = self._owned(session, run_id, shard_no, owner)
+                shard, _ = self._owned(session, run_id, shard_no, owner)
                 pending = session.scalar(
                     sa.select(sa.func.count())
                     .select_from(ScanItem)
@@ -979,6 +981,9 @@ class ScanService:
     def _publish(self, session, run, results):
         if not results:
             return
+        session.execute(
+            sa.text("SELECT pg_advisory_xact_lock(hashtext('nodema_shared_credentials'))")
+        )
         current_rows, stat_rows = [], []
         for result in results:
             if result.status not in TERMINAL:

@@ -8,7 +8,7 @@ import sqlalchemy as sa
 
 from app.catalog import Catalog
 from app.checker.health import Observation
-from app.database.models import NodeCurrentStatus, NodeDailyStats, RunnerNodeSummary, ScanItem
+from app.database.models import Node, NodeCurrentStatus, NodeDailyStats, RunnerNodeSummary, ScanItem
 from app.database.models import TestResult as Result
 from app.domain import SourceType
 from app.quality import QualityService
@@ -152,6 +152,34 @@ def test_cooldown_publication_is_idempotent_skips_do_not_extend_failures(service
     with service.sessions() as session:
         current = session.scalars(sa.select(NodeCurrentStatus)).one()
         assert current.consecutive_failures == 0 and current.next_full_check_at is None
+
+
+def test_small_selected_recheck_passes_full_probe_context(service, monitor_settings):
+    source(service, 2)
+    contexts = []
+
+    class Checker:
+        def set_context(self, **context):
+            contexts.append(context["force_full"])
+
+        def preflight(self):
+            pass
+
+        def close(self):
+            pass
+
+        def check(self, *args):
+            return Observation(status="UP", probe_key=PROBE)
+
+    with service.sessions() as session:
+        nodes = list(session.scalars(sa.select(Node.id)))
+    scans = ScanService(service, monitor_settings, checker_factory=Checker)
+    selected = scans.create(manual=True, node_ids=nodes[:1])
+    scans.run_shard(selected["id"], 0)
+    scans.finalize(selected["id"])
+    whole_scope = scans.create(manual=True)
+    scans.run_shard(whole_scope["id"], 0)
+    assert contexts == [True, False, False]
 
 
 def test_runner_statistics_use_final_full_outcomes_same_probe_and_window(service, monitor_settings):

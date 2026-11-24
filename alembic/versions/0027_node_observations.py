@@ -67,6 +67,24 @@ def patch_page(reverse=False):
 
 
 OBSERVATIONS = """
+CREATE FUNCTION nodema_mark_imported_credentials(keys text[]) RETURNS integer LANGUAGE plpgsql AS $$
+DECLARE changed integer;
+BEGIN
+ PERFORM pg_advisory_xact_lock(hashtext('nodema_shared_credentials'));
+ WITH groups AS (
+   SELECT n.credential_key, count(*) AS nodes, count(DISTINCT n.server_host) AS hosts,
+     count(DISTINCT c.last_exit_country) AS countries
+   FROM nodes n LEFT JOIN node_current_status c ON c.node_id=n.id
+   WHERE n.credential_key IS NOT NULL AND n.credential_key=ANY(keys)
+   GROUP BY n.credential_key
+ )
+ UPDATE nodes n SET credential_shared=(g.nodes>=5 AND (g.hosts>=2 OR g.countries>=3))
+ FROM groups g WHERE n.credential_key=g.credential_key
+   AND n.credential_shared<>(g.nodes>=5 AND (g.hosts>=2 OR g.countries>=3));
+ GET DIAGNOSTICS changed = ROW_COUNT;
+ RETURN changed;
+END $$;
+
 CREATE FUNCTION nodema_recent_exit(nid uuid) RETURNS jsonb LANGUAGE sql STABLE AS $$
  WITH bounds AS (SELECT (now() AT TIME ZONE 'Asia/Shanghai')::date AS today),
  exits AS (
@@ -112,6 +130,10 @@ $$;
 
 
 def upgrade():
+    op.add_column(
+        "scan_runs",
+        sa.Column("force_full", sa.Boolean(), nullable=False, server_default=sa.false()),
+    )
     op.add_column("node_grades", sa.Column("access_evidence", sa.Text()))
     op.add_column("node_grades", sa.Column("limiting_vantage", sa.Text()))
     op.add_column(
@@ -127,5 +149,7 @@ def downgrade():
     op.execute("DROP FUNCTION nodema_node_observations(uuid)")
     op.execute("DROP FUNCTION nodema_stable_exit(uuid)")
     op.execute("DROP FUNCTION nodema_recent_exit(uuid)")
+    op.execute("DROP FUNCTION nodema_mark_imported_credentials(text[])")
     for column in ("access_evidence", "limiting_vantage", "endpoint_verified"):
         op.drop_column("node_grades", column)
+    op.drop_column("scan_runs", "force_full")

@@ -2,6 +2,7 @@ import hashlib
 import hmac
 import json
 from datetime import UTC, datetime, timedelta
+from time import perf_counter
 from urllib.parse import urlsplit
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
@@ -411,7 +412,7 @@ class AssetService:
             if not hmac.compare_digest(actual, node.fingerprint):
                 raise AssetError("FINGERPRINT_KEY_MISMATCH")
 
-    def sync_source(self, source_id: UUID, *, force=False):
+    def sync_source(self, source_id: UUID, *, force=False, timings=None):
         from app.usage import Usage
 
         event_id, started = uuid4(), utcnow()
@@ -419,7 +420,7 @@ class AssetService:
             self.fetcher.reset_metrics()
         outcome = "FAILED"
         try:
-            result = self._sync_source(source_id, force=force)
+            result = self._sync_source(source_id, force=force, timings=timings)
             outcome = result["status"]
             return result
         except AssetError as error:
@@ -463,7 +464,12 @@ class AssetService:
         )
         return body, {}
 
-    def _sync_source(self, source_id: UUID, *, force=False):
+    def _sync_source(self, source_id: UUID, *, force=False, timings=None):
+        def record(phase, started):
+            if timings is not None:
+                timings[phase] = timings.get(phase, 0) + perf_counter() - started
+
+        read_started = perf_counter()
         with self.sessions() as session:
             source = self._source(session, source_id)
             if not source.enabled:
@@ -471,14 +477,17 @@ class AssetService:
             self._verify_keys(session)
             revision, source_type, hint = source.revision, source.type, source.format_hint
             old_hash, old_parser = source.applied_hash, source.parser_version
+            was_substore = source.detected_kind == "SUBSTORE"
             user_agent = source.user_agent
             stored_data = (
                 source.url_data
                 if source_type == SourceType.SUBSCRIPTION_URL
                 else source.payload_data
             )
+        record("database_read", read_started)
         payload, report, error, digest = None, None, None, None
         airport, index, url_host = None, None, None
+        fetch_started = perf_counter()
         try:
             raw = bytes(stored_data)
             if source_type == SourceType.SUBSCRIPTION_URL:
@@ -486,29 +495,78 @@ class AssetService:
                 url_host = urlsplit(url).hostname
                 payload, headers = self._fetch(url, user_agent)
                 airport = parse_airport_headers(headers)
-                if InputFormat(hint) == InputFormat.AUTO:
+            else:
+                payload = raw
+            if len(payload) > self.max_bytes:
+                raise AssetError("INPUT_TOO_LARGE")
+        except AssetError as exc:
+            error = exc.code
+        finally:
+            record("fetch", fetch_started)
+        parse_started = perf_counter()
+        unchanged = False
+        try:
+            if not error:
+                digest = hashlib.sha256(payload).hexdigest()
+                unchanged = not force and digest == old_hash and old_parser == PARSER_VERSION
+                if (
+                    source_type == SourceType.SUBSCRIPTION_URL
+                    and InputFormat(hint) == InputFormat.AUTO
+                    and (not unchanged or was_substore)
+                ):
                     index = parse_substore_index(
                         payload,
                         required=urlsplit(url).path.rstrip("/").endswith("/api/subs"),
                         max_items=self.max_items,
                     )
-            else:
-                payload = raw
-            if len(payload) > self.max_bytes:
-                raise AssetError("INPUT_TOO_LARGE")
-            digest = hashlib.sha256(payload).hexdigest()
-            unchanged = not force and digest == old_hash and old_parser == PARSER_VERSION
-            if not unchanged and index is None:
-                report = parse_document(
-                    payload, InputFormat(hint), max_bytes=self.max_bytes, max_items=self.max_items
-                )
-                if source_type == SourceType.SINGLE_URI and (
-                    len(report.nodes) != 1 or report.issues
-                ):
-                    raise AssetError("SINGLE_URI_REQUIRES_ONE_NODE")
+                if not unchanged and index is None:
+                    report = parse_document(
+                        payload,
+                        InputFormat(hint),
+                        max_bytes=self.max_bytes,
+                        max_items=self.max_items,
+                    )
+                    if source_type == SourceType.SINGLE_URI and (
+                        len(report.nodes) != 1 or report.issues
+                    ):
+                        raise AssetError("SINGLE_URI_REQUIRES_ONE_NODE")
         except AssetError as exc:
             error = exc.code
             unchanged = False
+        finally:
+            record("parse", parse_started)
+        write_started = perf_counter()
+        try:
+            return self._apply_sync(
+                source_id,
+                revision,
+                payload,
+                digest,
+                airport,
+                url_host,
+                index,
+                report,
+                unchanged,
+                error,
+                timings,
+            )
+        finally:
+            record("database_write", write_started)
+
+    def _apply_sync(
+        self,
+        source_id,
+        revision,
+        payload,
+        digest,
+        airport,
+        url_host,
+        index,
+        report,
+        unchanged,
+        error,
+        timings,
+    ):
         now = utcnow()
         with self.sessions.begin() as session:
             if index is not None:
@@ -563,7 +621,7 @@ class AssetService:
                     "parsed": False,
                 }
                 return {"source_id": source_id, "status": "UNCHANGED", "parsed": False}
-            return self._apply(session, source, report, digest, now)
+            return self._apply(session, source, report, digest, now, timings=timings)
 
     def _apply_index(self, session, source, index, digest, now):
         source.detected_kind = "SUBSTORE"
@@ -586,7 +644,7 @@ class AssetService:
             "children": summary,
         }
 
-    def _apply(self, session, source, report, digest, now):
+    def _apply(self, session, source, report, digest, now, *, timings=None):
         grouped, info_nodes = {}, 0
         airport = source.kind == "AIRPORT" or (
             source.kind == "AUTO" and source.detected_kind == "AIRPORT"
@@ -599,7 +657,11 @@ class AssetService:
             if fp not in grouped:
                 grouped[fp] = (parsed, set())
             grouped[fp][1].add(parsed.original_name)
-        observed, created = [], 0
+        # Serialize node writes with scan publication before either holds node row locks.
+        session.execute(
+            sa.text("SELECT pg_advisory_xact_lock(hashtext('nodema_shared_credentials'))")
+        )
+        observed, created, new_keys = [], 0, set()
         ordered = sorted(grouped)  # deterministic lock order across concurrent sources
         for offset in range(0, len(ordered), 250):
             batch = ordered[offset : offset + 250]
@@ -639,7 +701,11 @@ class AssetService:
                 .returning(Node.id, Node.fingerprint)
             ).all()
             resolved = {fp: node_id for node_id, fp in rows}
-            created += sum(value["id"] == resolved[value["fingerprint"]] for value in candidates)
+            for value in candidates:
+                if value["id"] == resolved[value["fingerprint"]]:
+                    created += 1
+                    if value["credential_key"]:
+                        new_keys.add(value["credential_key"])
             observed.extend(resolved.values())
             old_links = {}
             if not report.complete:
@@ -677,10 +743,17 @@ class AssetService:
                     },
                 )
             )
-        session.execute(sa.text("SELECT nodema_assign_names()"))
-        if created:
-            # New nodes can complete a shared-credential group (airport nodes, 0020).
-            session.execute(sa.text("SELECT nodema_mark_shared_credentials()"))
+        # Names derive from scan results, which imports do not modify.
+        if new_keys:
+            started = perf_counter()
+            session.execute(
+                sa.text("SELECT nodema_mark_imported_credentials(CAST(:keys AS text[]))"),
+                {"keys": sorted(new_keys)},
+            )
+            if timings is not None:
+                timings["classify_credentials"] = (
+                    timings.get("classify_credentials", 0) + perf_counter() - started
+                )
         if report.complete:
             session.execute(
                 sa.update(NodeSource)

@@ -86,6 +86,8 @@ PY
 
 每日主流程北京时间 04:17 由 API Worker Cron 派发（不受 GitHub 定时延迟影响），备份每天北京时间 00:41（仓库变量 `BACKUP_SKIP_UNTIL=YYYY-MM-DD` 可跳过此日期之前的定时备份）。转换“不支持”的原因可手动运行只读的 `diagnose.yml` 查看（约 3 MB 传输）。手工执行固定工作流前确认本次任务允许生产写入/检测：
 
+发布 `0027_node_observations` 后，02:30 独立派发来源同步，04:17 日检读取已提交的来源数据。07:30 独立派发历史归档；归档设锁等待 3 秒和单语句 5 分钟预算。来源同步每批最多预取 32 条，默认生产批次在 60 分钟后停止启动新分组。日志仅汇总状态、错误码及阶段耗时，未启动的来源按旧检查时间留给下一轮。根据用量页的 DNS、TCP、HTTPS 和 UDP 分阶段计数调整检测参数。同一批最多 50 个明确选中的节点会跳过预检门控和失败冷却，做完整复测。
+
 ```bash
 # 只同步来源（不检测）
 gh workflow run source-sync.yml --repo Samiya321/nodema --ref main
@@ -106,6 +108,7 @@ gh workflow run export-build.yml --repo Samiya321/nodema --ref main
 ## 独立巡检
 
 - `maintenance-watch.yml` 每小时 :53 由 GitHub 独立触发，检查 Pages → Worker → PostgreSQL、日检完整性、接入测量、新备份产物、恢复演练和生效订阅的构建。手动运行默认仅检查，`apply=true` 同时启用补跑和告警。
+- 发布 `0027_node_observations` 后，API Worker 每小时 :30 同时派发一轮巡检，保留 GitHub 的独立触发。两个入口运行同一个串行巡检工作流，共用活跃工作检查与滚动补跑窗口。Worker 记录结构化调度状态和耗时，调用日志关闭。
 - 等待到北京时间 06:45 再补发漏掉的当日日检。有尚未完成的批次时，等运行退出、租约释放，再用同批次 ID 补跑一次。接入超过 3 小时或备份超过 36 小时未产出时补发一次。活跃的工作流继续等待。持续异常在 GitHub 合并成一条巡检 Issue，恢复后关闭并通知。Issue 仅含固定检查名称和运维入口。
 - `MONITOR_TOKEN` 在 Actions 与 Worker 各有同一个 Secret，有效范围为 `GET /api/ops/heartbeat`。普通管理入口沿用管理员凭据。备份产物和恢复演练由 Runner 直接从 GitHub 读取。
 - 主机 systemd 每 5 分钟在 `/root/nodema-postgres` 采样 PostgreSQL 数据量、连接数、磁盘、可用内存、容器重启计数和数据库 TLS 到期日，保留采样 14 天。用量页列出 24 小时峰值与最近完整日检期间的采样。磁盘低于 20%、可用内存低于 5%、证书余期少于 30 天或样本缺失 30 分钟时提醒。历史结果与日统计继续使用当前容量预算；结合首次正常夜间采样再复核预算。

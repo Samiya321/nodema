@@ -25,7 +25,7 @@ function qualityPanel(status, vantage, go) {
             ),
           ),
           h("p", { class: "muted small" }, `只统计当前可用的节点；定档于 ${ago(status.graded_at)}。`),
-          status.coverage_total != null ? h("p", { class: "muted small" }, `已有接入依据 ${status.coverage_measured} / ${status.coverage_total} 个当前可用节点，其中 CF 落地排除 ${status.coverage_excluded} 个。`) : null,
+          status.coverage_total != null ? h("p", { class: "muted small" }, `当前可用 ${status.coverage_total} 个 · 有接入参考或实测 ${status.coverage_measured} 个 · 端点已确认 ${status.coverage_endpoint_verified} 个 · CF 落地排除 ${status.coverage_excluded} 个。`) : null,
         )
       : h("p", { class: "muted" }, "还没有定档。完成至少 3 天检测后出现等级；接入测量每小时运行一次。"),
   );

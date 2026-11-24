@@ -110,6 +110,11 @@ def ipv4(values: Iterable) -> str | None:
     return None
 
 
+def confirmed_ipv4(values: list | None) -> str | None:
+    """The core receives the entire pinned answer list, so only a single address is attributable."""
+    return ipv4(values) if values and len(values) == 1 else None
+
+
 def prefix_of(ip: str, entry_asn: int | None) -> str:
     return CF_PREFIX if entry_asn == CLOUDFLARE_ASN else ip.rsplit(".", 1)[0]
 

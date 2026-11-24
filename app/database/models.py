@@ -226,6 +226,7 @@ class ScanRun(Base):
     archived_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
     archive_summary: Mapped[dict] = mapped_column(JSONB, server_default=sa.text("'{}'::jsonb"))
     scope: Mapped[str] = mapped_column(sa.Text, server_default="ALL")
+    force_full: Mapped[bool] = mapped_column(server_default=sa.false())
 
 
 class ScanShard(Base):

@@ -58,7 +58,7 @@ def excluded_ips(settings) -> set[str]:
 def load_nodes(
     session, fresh_hours: int, coverage: str, excluded=frozenset()
 ) -> list[planner.EntryNode]:
-    """Distinct entries (protocol, first IPv4, port, entry ASN) with node counts."""
+    """Distinct entries with a single attributable IPv4 address and node counts."""
     scope = (
         " AND n.id IN (SELECT m.node_id FROM export_members m"
         " JOIN export_artifacts e ON e.id=m.export_id"
@@ -69,8 +69,7 @@ def load_nodes(
     rows = session.execute(
         sa.text(
             "SELECT n.protocol,n.server_port,c.entry_asn,"
-            " (SELECT e FROM jsonb_array_elements_text(coalesce(t.entry_ips,'[]')) e"
-            "   WHERE e ~ '^[0-9]{1,3}([.][0-9]{1,3}){3}$' LIMIT 1) ip,count(*) n,"
+            " CASE WHEN jsonb_array_length(t.entry_ips)=1 THEN t.entry_ips->>0 END ip,count(*) n,"
             " bool_or(EXISTS(SELECT 1 FROM export_members m"
             "   JOIN export_artifacts e ON e.id=m.export_id"
             "   WHERE m.node_id=n.id AND e.revoked_at IS NULL"

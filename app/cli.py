@@ -9,8 +9,10 @@ import secrets
 import sys
 import tempfile
 import traceback
+from collections import Counter
 from datetime import date
 from pathlib import Path
+from time import perf_counter
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 import typer
@@ -268,9 +270,9 @@ RETRIED_ERRORS = frozenset({"FETCH_TIMEOUT"})
 RETRY_FETCH_WORKERS = 4
 
 
-def _sync_one(assets, source_id):
+def _sync_one(assets, source_id, timings=None):
     try:
-        return assets.sync_source(source_id)
+        return assets.sync_source(source_id, timings=timings)
     except AssetError as error:
         return {"source_id": source_id, "status": "FAILED", "error_code": error.code}
     except Exception as error:  # noqa: BLE001 - one source must not stop the run
@@ -279,7 +281,20 @@ def _sync_one(assets, source_id):
         return {"source_id": source_id, "status": "FAILED", "error_code": "SYNC_INTERNAL_ERROR"}
 
 
-def _retry_timeouts(assets, results):
+def _source_batches(assets, ids, timings, deadline, *, workers=None):
+    # Bound prefetched bodies in memory and start applying after the first group.
+    for offset in range(0, len(ids), 32):
+        if deadline is not None and perf_counter() >= deadline:
+            break
+        batch = ids[offset : offset + 32]
+        started = perf_counter()
+        assets.fetcher.prefetch(assets.fetch_targets(batch), workers=workers)
+        timings["prefetch"] += perf_counter() - started
+        for source_id in batch:
+            yield source_id, _sync_one(assets, source_id, timings)
+
+
+def _retry_timeouts(assets, results, timings, deadline):
     """Sync every source that timed out once more; its result replaces the first one."""
     positions = {
         result["source_id"]: index
@@ -288,62 +303,99 @@ def _retry_timeouts(assets, results):
     }
     if not positions:
         return
-    assets.fetcher.prefetch(assets.fetch_targets(list(positions)), workers=RETRY_FETCH_WORKERS)
-    for source_id, index in positions.items():
-        results[index] = {**_sync_one(assets, source_id), "retried": True}
+    for source_id, result in _source_batches(
+        assets, list(positions), timings, deadline, workers=RETRY_FETCH_WORKERS
+    ):
+        results[positions[source_id]] = {**result, "retried": True}
 
 
 @source_app.command("sync-all")
 @safe_command
-def source_sync_all(due_only: bool = False, fetch_workers: int = 16, pending_only: bool = False):
+def source_sync_all(
+    due_only: bool = False,
+    fetch_workers: int = 16,
+    pending_only: bool = False,
+    budget_seconds: int = typer.Option(0, min=0),
+    summary: bool = False,
+):
     from app.ingestion.prefetch import PrefetchingFetcher
 
     assets = service()
     # Downloads run in parallel; parsing and database writes stay sequential.
     assets.fetcher = PrefetchingFetcher(assets.fetcher, workers=fetch_workers)
     results, seen = [], set()
+    timings = Counter()
+    deadline = perf_counter() + budget_seconds if budget_seconds else None
+    deferred = 0
+    scan_timezone = Settings().scan_timezone if due_only else None
     # Sub-Store indexes create child sources during a sync; follow them for a few rounds.
     for _round in range(4):
         batch = []
+        at = now()
         for source in assets.list_sources():
             if not source["enabled"] or source["id"] in seen:
                 continue
-            if (
-                pending_only
-                and source["sync_requested_at"] is None
-                and source["last_sync_status"] != "NEVER"
-            ):
+            requested = source["sync_requested_at"] is not None
+            first_sync = source["last_sync_status"] == "NEVER"
+            if pending_only and not (requested or first_sync):
                 continue
-            if due_only and source_dormant(source, now()):
+            if due_only and not requested and source_dormant(source, at):
                 continue
             if (
                 due_only
+                and not (requested or first_sync)
                 and not source_due(
                     source["last_checked_at"],
                     source["sync_interval_seconds"],
-                    now(),
-                    Settings().scan_timezone,
+                    at,
+                    scan_timezone,
                 )
-                and source["sync_requested_at"] is None
-                and source["last_sync_status"] != "NEVER"
             ):
                 continue
-            batch.append(source["id"])
+            batch.append(source)
         if not batch:
             break
-        assets.fetcher.prefetch(assets.fetch_targets(batch))
-        for source_id in batch:
+        if due_only:
+            # A budget stop leaves timestamps intact and gives older sources priority next round.
+            batch.sort(
+                key=lambda source: (
+                    source["sync_requested_at"] is None,
+                    source["last_checked_at"] is not None,
+                    source["last_checked_at"],
+                )
+            )
+        ids = [source["id"] for source in batch]
+        for source_id, result in _source_batches(assets, ids, timings, deadline):
             seen.add(source_id)
-            results.append(_sync_one(assets, source_id))
-    _retry_timeouts(assets, results)
+            results.append(result)
+        deferred = sum(source_id not in seen for source_id in ids)
+        if deferred:
+            break
+    _retry_timeouts(assets, results, timings, deadline)
     from app import share_links
 
-    try:
-        share_links.fill_missing(assets.sessions)
-    except Exception as error:  # noqa: BLE001 - QR links must never fail a source sync
-        typer.echo(f"share links skipped: {type(error).__name__}", err=True)
-    output(results)
-    if any(result["status"] in ("FAILED", "PARTIAL") for result in results):
+    if not deferred:
+        try:
+            share_links.fill_missing(assets.sessions)
+        except Exception as error:  # noqa: BLE001 - QR links must never fail a source sync
+            typer.echo(f"share links skipped: {type(error).__name__}", err=True)
+    if summary:
+        output(
+            {
+                "source_sync": {
+                    "outcomes": Counter(result["status"] for result in results),
+                    "errors": Counter(r["error_code"] for r in results if r.get("error_code")),
+                    "parse_issue_codes": Counter(
+                        issue["code"] for r in results for issue in r.get("issues", ())
+                    ),
+                    "wall_seconds": {key: round(value, 3) for key, value in timings.items()},
+                    "deferred": deferred,
+                }
+            }
+        )
+    else:
+        output(results)
+    if deferred or any(result["status"] in ("FAILED", "PARTIAL") for result in results):
         raise typer.Exit(2)
 
 
@@ -586,7 +638,10 @@ def probe_run():
     """One Globalping round within this hour's remaining budget (counts only)."""
     from app.probes import runner
 
-    output(runner.run(service().sessions, Settings()))
+    result = runner.run(service().sessions, Settings())
+    output(result)
+    if result.get("status") == "API_ERROR":
+        raise typer.Exit(2)
 
 
 @grade_app.command("refresh")

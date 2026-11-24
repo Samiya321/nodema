@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { readFileSync } from "node:fs";
 import YAML from "yaml";
 import { Client } from "pg";
-import { cronTick, handle, nameFor, probeTick } from "../dist/index.js";
+import { cronTick, handle, nameFor, probeTick, runScheduled } from "../dist/index.js";
 import { Cipher } from "../dist/crypto.js";
 import { render } from "../dist/formats.js";
 import { withName } from "../dist/share.js";
@@ -1817,4 +1817,25 @@ test("the 04:17 cron starts the daily check as a scheduled run", async () => {
   const workflow = readFileSync(fileURLToPath(new URL("../../../.github/workflows/daily-check.yml", import.meta.url)), "utf8");
   assert.doesNotMatch(workflow, /^\s+schedule:/m); // one trigger only: no double daily runs
   assert.match(workflow, /inputs\.trigger == 'schedule'/);
+  assert.doesNotMatch(workflow, /nodema (source sync-all|cleanup)/);
+});
+
+test("the hourly cron keeps sync and archive off the daily check's critical path", async () => {
+  const env = { GITHUB_REPOSITORY: "owner/repo", GITHUB_DISPATCH_TOKEN: "synthetic-token", GITHUB_WORKFLOW_REF: "main" };
+  const calls = new Map();
+  const respond = async (url, init) => {
+    calls.set(new URL(url).pathname.split("/").at(-2), JSON.parse(init.body).inputs);
+    return new Response(null, { status: 204 });
+  };
+  const cases = [
+    ["2026-11-24T18:30:00Z", "source-sync.yml"],
+    ["2026-11-24T23:30:00Z", "archive.yml"],
+    ["2026-11-24T15:30:00Z", null],
+  ];
+  for (const [time, extra] of cases) {
+    calls.clear();
+    await runScheduled("30 * * * *", Date.parse(time), env, respond);
+    assert.deepEqual([...calls.keys()], ["entry-probe.yml", "maintenance-watch.yml", ...(extra ? [extra] : [])]);
+    assert.deepEqual(calls.get("maintenance-watch.yml"), { apply: "true" });
+  }
 });

@@ -40,6 +40,10 @@ SUMS = ", ".join(f"COALESCE(SUM({key}),0)::bigint AS {key}" for key in COUNTERS)
 HEALTH_SQL = """
 SELECT COUNT(*)::int AS attempts, COUNT(DISTINCT node_id)::int AS nodes,
  COUNT(*) FILTER (WHERE jsonb_array_length(timeout_stages)>0)::int AS timeout_attempts,
+ COUNT(*) FILTER (WHERE jsonb_exists(timeout_stages,'DNS'))::int AS dns_timeouts,
+ COUNT(*) FILTER (WHERE jsonb_exists(timeout_stages,'TCP'))::int AS tcp_timeouts,
+ COUNT(*) FILTER (WHERE jsonb_exists(timeout_stages,'HTTPS'))::int AS https_timeouts,
+ COUNT(*) FILTER (WHERE jsonb_exists(timeout_stages,'UDP'))::int AS udp_timeouts,
  COUNT(*) FILTER (WHERE status='ENVIRONMENT_ERROR')::int AS environment_attempts,
  ROUND(AVG(check_duration_ms),2) AS mean_check_ms
 FROM test_results WHERE checked_at >= :since

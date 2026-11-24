@@ -51,7 +51,8 @@ jobs:
           python-version: '3.12'
       - id: dependencies
         run: uv sync --frozen
-      - name: Measure entries (counts only in the log)
+      - id: measure
+        name: Measure entries (counts only in the log)
         if: '!inputs.refresh_only'
         continue-on-error: true
         timeout-minutes: 30
@@ -69,6 +70,9 @@ jobs:
       - name: Rebuild subscriptions that filter by grade
         if: always() && steps.dependencies.outcome == 'success'
         run: uv run nodema export build-pending
+      - name: Report failed measurement
+        if: "!cancelled() && steps.measure.outcome == 'failure'"
+        run: exit 1
       - name: Record job network usage
         if: '!cancelled() && steps.network.outcome == ''success'' && steps.dependencies.outcome == ''success'''
         env:

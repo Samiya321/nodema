@@ -1,25 +1,10 @@
 // Shared DOM, API and formatting helpers. Everything is built with DOM APIs
 // (never innerHTML), so node names and remote metadata can't inject markup.
 
-const TOKEN_KEY = "nodema.session";
-
-export const session = {
-  get token() {
-    try {
-      return sessionStorage.getItem(TOKEN_KEY) || "";
-    } catch {
-      return "";
-    }
-  },
-  set token(value) {
-    try {
-      if (value) sessionStorage.setItem(TOKEN_KEY, value);
-      else sessionStorage.removeItem(TOKEN_KEY);
-    } catch {
-      /* private mode: the token simply isn't remembered across reloads */
-    }
-  },
-};
+let sessionVersion = 0;
+export function invalidateSession() {
+  sessionVersion++;
+}
 
 export function h(tag, attrs = {}, ...children) {
   const node = document.createElement(tag);
@@ -52,19 +37,25 @@ export class ApiError extends Error {
   }
 }
 
-export async function api(path, { method = "GET", body } = {}) {
+export async function api(path, { method = "GET", body, authorization } = {}) {
+  const version = sessionVersion;
+  const sessionRequest = path === "/session";
   let response;
   try {
     response = await fetch("/api" + path, {
       method,
       headers: {
-        Authorization: "Bearer " + session.token,
+        ...(authorization === undefined ? {} : { Authorization: "Bearer " + authorization }),
         ...(body === undefined ? {} : { "Content-Type": "application/json" }),
       },
       body: body === undefined ? undefined : JSON.stringify(body),
       cache: "no-store",
+      credentials: "same-origin",
+      redirect: "error",
+      signal: sessionRequest ? AbortSignal.timeout(12000) : undefined,
     });
   } catch {
+    if (version !== sessionVersion) throw new ApiError("SESSION_ENDED", 0);
     throw new ApiError("NETWORK_ERROR", 0);
   }
   let data = null;
@@ -73,9 +64,11 @@ export async function api(path, { method = "GET", body } = {}) {
   } catch {
     data = null;
   }
+  if (version !== sessionVersion) throw new ApiError("SESSION_ENDED", 0);
   if (!response.ok) {
     const code = data?.error_code || data?.detail || "OPERATION_FAILED";
-    if (response.status === 401) window.dispatchEvent(new CustomEvent("nodema:logout"));
+    if (!sessionRequest && response.status === 401)
+      window.dispatchEvent(new CustomEvent("nodema:session-expired"));
     throw new ApiError(code, response.status);
   }
   return data;
@@ -157,6 +150,8 @@ export const ERRORS = {
   DATABASE_UNAVAILABLE: "数据库暂时无法连接，请稍后重试。",
   DATABASE_QUERY_FAILED: "数据库请求失败，请稍后重试。",
   ADMIN_TOKEN_REQUIRED: "服务端尚未配置管理员密钥。",
+  INVALID_ADMIN_TOKEN: "管理员密钥有误，请重新输入。",
+  SESSION_ORIGIN_REQUIRED: "无法验证登录来源，请从节点台页面重试。",
   OPERATION_FAILED: "操作失败，请稍后重试。",
   // Source/scan outcomes shown in tables.
   FETCH_TIMEOUT: "拉取超时",
@@ -261,6 +256,7 @@ export function toast(message, tone = "info") {
   toastTimer = setTimeout(() => region.replaceChildren(), tone === "bad" ? 9000 : 5000);
 }
 export function fail(error) {
+  if (error?.status === 401 || error?.code === "SESSION_ENDED") return;
   toast(errorText(error?.code || error?.message), "bad");
 }
 

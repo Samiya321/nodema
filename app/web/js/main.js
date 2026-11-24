@@ -1,5 +1,5 @@
-import { api, errorText, h, session } from "./core.js";
-import { renderStrip, refreshStrip } from "./strip.js";
+import { api, errorText, fail, h, invalidateSession } from "./core.js";
+import { renderStrip, refreshStrip, stopStrip } from "./strip.js";
 import { pageHref } from "./lineage.js";
 
 const PAGES = [
@@ -18,11 +18,25 @@ const ALIASES = {
 };
 
 const page = document.getElementById("page");
+const app = document.getElementById("app");
+const login = document.getElementById("login");
+const loginTitle = document.getElementById("login-title");
+const loginForm = document.getElementById("login-form");
+const loginToken = document.getElementById("login-token");
+const loginError = document.getElementById("login-error");
+const loginSubmit = document.getElementById("login-submit");
+const sessionStatus = document.getElementById("session-status");
+const sessionRetry = document.getElementById("session-retry");
+const logoutButtons = document.querySelectorAll("[data-logout]");
+const sessions = typeof BroadcastChannel === "function" ? new BroadcastChannel("nodema-session") : null;
+
 document.querySelector(".skip").addEventListener("click", (event) => {
   event.preventDefault();
-  (document.getElementById("app").hidden ? document.getElementById("login-token") : page).focus();
+  const target = loginForm.hidden ? loginTitle : loginToken;
+  (app.hidden ? target : page).focus();
 });
 let rendering = 0;
+let expiryTimer;
 let shown = ""; // page name on screen: a new page starts at the top, a re-render keeps its place
 
 function currentRoute() {
@@ -47,6 +61,7 @@ export function go(name, params) {
 }
 
 async function render() {
+  if (app.hidden) return;
   const { name, params } = currentRoute();
   const ticket = ++rendering;
   for (const link of document.querySelectorAll(".rail a[data-page]")) {
@@ -88,19 +103,57 @@ async function render() {
   }
 }
 
-function showApp() {
-  document.getElementById("login").hidden = true;
-  document.getElementById("app").hidden = false;
+const expiredMessage = "登录已失效，请重新输入密钥。";
+
+function showApp(session) {
+  if (session?.authenticated !== true || !Number.isInteger(session.expires_in) || session.expires_in <= 0)
+    throw new Error();
+  loginToken.value = "";
+  login.hidden = true;
+  app.hidden = false;
+  expiryTimer = setTimeout(() => showLogin(expiredMessage), session.expires_in * 1000);
   renderStrip(document.getElementById("strip"));
   render();
+  page.focus();
 }
 
-function showLogin(message = "") {
-  session.token = "";
-  document.getElementById("app").hidden = true;
-  document.getElementById("login").hidden = false;
-  document.getElementById("login-error").textContent = message;
-  document.getElementById("login-token").focus();
+function showLogin(message = "", retry = false) {
+  clearTimeout(expiryTimer);
+  if (!app.hidden) {
+    app.hidden = true;
+    invalidateSession();
+    rendering++;
+    shown = "";
+    page.removeAttribute("aria-busy");
+    page.replaceChildren();
+    stopStrip();
+    document.querySelectorAll("dialog.sheet").forEach((box) => {
+      box.close();
+      box.remove();
+    });
+    document.getElementById("toast").replaceChildren();
+    window.dispatchEvent(new CustomEvent("nodema:nodes-changed"));
+    document.title = "Nodema 节点台";
+  }
+  login.hidden = false;
+  sessionStatus.hidden = true;
+  loginForm.hidden = false;
+  sessionRetry.hidden = !retry;
+  loginError.textContent = message;
+  (retry ? sessionRetry : loginToken).focus();
+}
+
+async function checkSession() {
+  loginForm.hidden = true;
+  sessionStatus.hidden = false;
+  loginError.textContent = "";
+  loginToken.removeAttribute("aria-invalid");
+  try {
+    showApp(await api("/session"));
+  } catch (error) {
+    if (error.status === 401) showLogin();
+    else showLogin("无法检查登录状态。" + errorText(error.code || "OPERATION_FAILED"), true);
+  }
 }
 
 document.getElementById("nav").append(
@@ -108,22 +161,52 @@ document.getElementById("nav").append(
     h("li", { class: key === "ops" ? "nav-ops" : null }, h("a", { href: "#/" + key, dataset: { page: key } }, title)),
   ),
 );
-document.getElementById("login-form").addEventListener("submit", async (event) => {
+loginForm.addEventListener("submit", async (event) => {
   event.preventDefault();
-  const button = event.target.querySelector("button");
-  button.disabled = true;
-  session.token = event.target.elements.token.value;
+  if (loginSubmit.disabled) return;
+  loginForm.setAttribute("aria-busy", "true");
+  loginError.textContent = "";
+  loginToken.removeAttribute("aria-invalid");
+  loginSubmit.disabled = sessionRetry.disabled = true;
+  loginSubmit.textContent = "正在登录…";
   try {
-    await api("/pipeline");
-    event.target.reset();
-    showApp();
+    const request = api("/session", { method: "POST", authorization: loginToken.value });
+    loginToken.value = "";
+    await request;
+    showApp(await api("/session"));
   } catch (error) {
-    showLogin(errorText(error.code));
+    if (error.code === "INVALID_ADMIN_TOKEN") loginToken.setAttribute("aria-invalid", "true");
+    loginError.textContent = error.code === "AUTHENTICATION_REQUIRED"
+      ? "浏览器未保存登录会话，请允许本站 Cookie 后重试。"
+      : errorText(error.code || "OPERATION_FAILED");
+    loginToken.focus();
   } finally {
-    button.disabled = false;
+    loginForm.removeAttribute("aria-busy");
+    loginSubmit.disabled = sessionRetry.disabled = false;
+    loginSubmit.textContent = "登录";
   }
 });
-for (const button of document.querySelectorAll("[data-logout]")) button.addEventListener("click", () => showLogin());
+loginToken.addEventListener("input", () => {
+  if (!loginToken.hasAttribute("aria-invalid")) return;
+  loginToken.removeAttribute("aria-invalid");
+  loginError.textContent = "";
+});
+sessionRetry.addEventListener("click", checkSession);
+for (const button of logoutButtons) button.addEventListener("click", async () => {
+  for (const control of logoutButtons) control.disabled = true;
+  try {
+    await api("/session", { method: "DELETE" });
+    sessions?.postMessage("logout");
+    showLogin();
+  } catch (error) {
+    fail(error);
+  } finally {
+    for (const control of logoutButtons) control.disabled = false;
+  }
+});
+sessions?.addEventListener("message", (event) => {
+  if (event.data === "logout" && !app.hidden) showLogin("已退出，请重新登录。");
+});
 const more = document.querySelector(".nav-more");
 more.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && more.open) {
@@ -131,10 +214,14 @@ more.addEventListener("keydown", (event) => {
     more.querySelector("summary").focus();
   }
 });
-window.addEventListener("nodema:logout", () => showLogin("登录已失效，请重新输入密钥。"));
-window.addEventListener("hashchange", () => {
-  if (!document.getElementById("app").hidden) render();
+window.addEventListener("nodema:session-expired", () => {
+  if (!app.hidden) showLogin(expiredMessage);
 });
+window.addEventListener("hashchange", render);
 
-if (session.token) showApp();
-else showLogin();
+try {
+  sessionStorage.removeItem("nodema.session");
+} catch {
+  // Storage may be disabled.
+}
+checkSession();

@@ -287,6 +287,7 @@ class NodeFacts:
     checked_days: int
     exit_ip_proxy: bool | None = None
     cdn_entry: bool = False  # entry on Cloudflare's anycast edge
+    ambiguous_entry: bool = False
 
 
 @dataclass(frozen=True)
@@ -326,7 +327,9 @@ def grade_node(facts: NodeFacts, vantage: str, access: Access, policy: dict) -> 
         and access.successful_probes >= policy["min_probes"]
         and band is not None
     )
-    if facts.target is None:
+    if facts.ambiguous_entry:
+        reasons.append("DNS 返回多个候选地址，实际代理接入端点待确认，最高 B")
+    elif facts.target is None:
         reasons.append("入口没有 IPv4 地址（仅 IPv6 或未解析），接入未测，最高 B")
     elif facts.cdn_entry and vantage in OVERSEAS:
         reasons.append(

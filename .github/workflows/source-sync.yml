@@ -1,6 +1,5 @@
 name: Sync sources
-# Started only from the dashboard's "Sync now" button: fetch requested/due sources,
-# materialize Sub-Store children and refresh airport usage. Never runs node tests.
+# Dispatched by the dashboard or the API Worker's hourly trigger at 02:30 Beijing.
 on:
   workflow_dispatch:
     inputs:
@@ -49,9 +48,9 @@ jobs:
         run: |
           set +e
           if [ "$PENDING_ONLY" = true ]; then
-            uv run nodema source sync-all --pending-only
+            uv run nodema source sync-all --pending-only --budget-seconds 3600 --summary
           else
-            uv run nodema source sync-all --due-only
+            uv run nodema source sync-all --due-only --budget-seconds 3600 --summary
           fi
           result=$?
           set -e

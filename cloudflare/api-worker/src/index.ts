@@ -1,5 +1,6 @@
 import { Client } from "pg";
 import { SafeError, digest, equal, token } from "./crypto.js";
+import { issueSession, sessionCookie, sessionSeconds } from "./dashboard-session.js";
 import { handleExports } from "./export-api.js";
 import { usageSummary } from "./usage.js";
 import { latestBackup, maintenance, recoveryState } from "./maintenance.js";
@@ -229,13 +230,43 @@ export async function handle(
       return json({ status: "ok" });
     const subscription = /^\/subscriptions\/([^/]+)$/.exec(path);
     if (!subscription) {
-      const provided =
-        request.headers.get("Authorization")?.replace(/^Bearer /i, "") ?? "";
-      if (!env.ADMIN_PASSWORD || env.ADMIN_PASSWORD.length < 24)
+      const authorization = request.headers.get("Authorization");
+      const provided = authorization?.replace(/^Bearer /i, "") ?? "";
+      const password = env.ADMIN_PASSWORD;
+      const sameOrigin = () => {
+        if (request.headers.get("Origin") !== url.origin)
+          throw new SafeError("SESSION_ORIGIN_REQUIRED", 403);
+      };
+      if (path === "/api/session" && method === "DELETE") {
+        sameOrigin();
+        const response = json({ authenticated: false });
+        response.headers.set("Set-Cookie", sessionCookie("", true));
+        return response;
+      }
+      if (!password || password.length < 24)
         throw new SafeError("ADMIN_TOKEN_REQUIRED", 503);
+      if (path === "/api/session") {
+        if (method === "POST") {
+          sameOrigin();
+          if (!(await equal(provided, password)))
+            throw new SafeError("INVALID_ADMIN_TOKEN", 401);
+          const session = issueSession(password, url.origin);
+          const response = json({ authenticated: true, expires_in: session.expiresIn });
+          response.headers.set("Set-Cookie", session.cookie);
+          return response;
+        }
+        if (method === "GET") {
+          const expiresIn = sessionSeconds(request, password, url.origin);
+          if (!expiresIn) throw new SafeError("AUTHENTICATION_REQUIRED", 401);
+          return json({ authenticated: true, expires_in: expiresIn });
+        }
+        return json({ error_code: "METHOD_NOT_ALLOWED" }, 405);
+      }
       const monitor = path === "/api/ops/heartbeat" && method === "GET" &&
         (env.MONITOR_TOKEN?.length ?? 0) >= 24 && await equal(provided, env.MONITOR_TOKEN);
-      if (!monitor && !(await equal(provided, env.ADMIN_PASSWORD)))
+      const browser = authorization === null && sessionSeconds(request, password, url.origin);
+      if (browser && method !== "GET" && method !== "HEAD") sameOrigin();
+      if (!browser && !monitor && !(authorization && await equal(provided, password)))
         throw new SafeError("AUTHENTICATION_REQUIRED", 401);
     }
     if (connect) db = await connect();
@@ -923,17 +954,19 @@ export async function handle(
       }
   }
 }
-// GitHub's own schedule is delayed by hours or dropped, so the hourly entry-probe
-// round and the daily check are started by this Worker's Cron Triggers (wrangler.jsonc)
-// instead. Only the outcome code is logged; the workflows decide what to do.
+// GitHub's own schedule may be late. The hourly trigger also dispatches the
+// independent workflows, without making daily checks wait for them.
 export const DAILY_CRON = "17 20 * * *"; // 04:17 Asia/Shanghai
 
 async function tick(env: Env, workflow: string, inputs: Record<string, string>, fetcher: typeof fetch) {
+  const started = Date.now();
   try {
-    return await dispatch(env, workflow, inputs, fetcher);
+    const result = await dispatch(env, workflow, inputs, fetcher);
+    console.info({ event: "cron_dispatch_queued", workflow, elapsed_ms: Date.now() - started });
+    return result;
   } catch (error) {
     const reason = error instanceof SafeError ? error.code : "DISPATCH_FAILED";
-    console.error(`${workflow} dispatch failed`, reason);
+    console.error({ event: "cron_dispatch_failed", workflow, code: reason, elapsed_ms: Date.now() - started });
     return { status: "FAILED", dispatched: false, reason };
   }
 }
@@ -951,11 +984,23 @@ export function cronTick(cron: string, env: Env, fetcher: typeof fetch = fetch) 
   return cron === DAILY_CRON ? dailyTick(env, fetcher) : probeTick(env, fetcher);
 }
 
+export async function runScheduled(cron: string, scheduledTime: number, env: Env, fetcher: typeof fetch = fetch) {
+  const primary = cronTick(cron, env, fetcher);
+  if (cron === DAILY_CRON) return primary;
+  const hour = new Date(scheduledTime).getUTCHours();
+  await Promise.all([
+    primary,
+    tick(env, "maintenance-watch.yml", { apply: "true" }, fetcher),
+    hour === 18 ? tick(env, "source-sync.yml", {}, fetcher) : undefined,
+    hour === 23 ? tick(env, "archive.yml", {}, fetcher) : undefined,
+  ]);
+}
+
 export default {
   fetch(request: Request, env: Env) {
     return handle(request, env);
   },
   scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext) {
-    ctx.waitUntil(cronTick(controller.cron, env));
+    ctx.waitUntil(runScheduled(controller.cron, controller.scheduledTime, env));
   },
 } satisfies ExportedHandler<Env>;

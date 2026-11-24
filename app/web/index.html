@@ -11,20 +11,23 @@
   </head>
   <body>
     <a class="skip" href="#page">跳到主要内容</a>
-    <section id="login" class="login" hidden>
-      <form id="login-form" class="login-card">
+    <section id="login" class="login" aria-labelledby="login-title">
+      <div class="login-card">
         <p class="brand-mark" aria-hidden="true">N</p>
-        <h1>Nodema 节点台</h1>
-        <p class="muted">管理自建节点、机场订阅和 Sub-Store，按需同步与检测。</p>
-        <input type="text" name="username" value="admin" autocomplete="username" hidden />
-        <label class="field" for="login-token">
-          <span class="field-label">管理员密钥</span>
-          <input id="login-token" name="token" type="password" required minlength="24" autocomplete="current-password" />
-          <span class="hint">只保存在当前浏览器标签页，关闭后需重新输入。</span>
-        </label>
+        <h1 id="login-title" tabindex="-1">Nodema 节点台</h1>
+        <p id="session-status" class="muted" role="status">正在检查登录状态…</p>
         <p id="login-error" class="form-error" role="alert"></p>
-        <button class="primary" type="submit">进入</button>
-      </form>
+        <form id="login-form" class="stack" method="post" action="/api/session" hidden>
+          <input type="text" name="username" value="admin" autocomplete="username" hidden />
+          <div class="field">
+            <label class="field-label" for="login-token">管理员密钥</label>
+            <input id="login-token" type="password" required minlength="24" autocomplete="current-password" aria-describedby="login-hint login-error" />
+            <span id="login-hint" class="hint">登录有效期为 8 小时。</span>
+          </div>
+          <button id="login-submit" class="primary" type="submit">登录</button>
+          <button id="session-retry" type="button" hidden>重新检查登录状态</button>
+        </form>
+      </div>
     </section>
     <div id="app" class="app" hidden>
       <nav class="rail" aria-label="主要导航">

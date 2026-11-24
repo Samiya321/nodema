@@ -123,7 +123,7 @@ def test_sync_all_survives_an_unexpected_error_in_one_source(monkeypatch):
         def fetch_targets(self, ids):
             return []
 
-        def sync_source(self, source_id):
+        def sync_source(self, source_id, *, timings=None):
             self.synced.append(source_id)
             if source_id == "b":
                 raise RuntimeError("secret https://private.example/sub?token=synthetic")
@@ -167,7 +167,7 @@ def test_sync_all_retries_timed_out_sources_once(monkeypatch):
             self.targets.append(sorted(ids))
             return []
 
-        def sync_source(self, source_id):
+        def sync_source(self, source_id, *, timings=None):
             self.synced.append(source_id)
             attempt = self.synced.count(source_id)
             if source_id == "slow" and attempt == 1 or source_id == "stuck":

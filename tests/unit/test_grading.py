@@ -197,6 +197,35 @@ def test_recent_endpoint_failure_ignores_old_success_and_recovers_on_new_success
     assert recent_failure([*failed, new_success], NOW + timedelta(minutes=2)) is None
 
 
+def test_multi_address_nodes_cannot_inherit_either_candidates_endpoint_grade(monkeypatch):
+    from types import SimpleNamespace
+
+    from app.probes import refresh
+
+    monkeypatch.setattr(planner, "ALLOW_NON_GLOBAL", True)
+    first, second = "198.51.100.1", "198.51.100.2"
+    quality = {
+        ("198.51.100", "CN-CT"): samples([0, 0], target=f"{first}:443", received=0)
+        + samples([40, 42], target=f"{second}:443")
+    }
+    node = SimpleNamespace(
+        id=1,
+        protocol="vless",
+        server_port=443,
+        entry_asn=64500,
+        is_proxy=False,
+        server_key="fixture",
+    )
+    for addresses in ([first, second], [second, first], [first, "2001:db8::1"]):
+        assert planner.confirmed_ipv4(addresses) is None
+        node.entry_ips = addresses
+        rows = refresh.compute([node], {1: (7, 7)}, quality, {}, {}, POLICY, now=NOW)
+        row = next(r for r in rows if r["vantage"] == "CN-CT")
+        assert row["grade"] == "B"
+        assert not row["endpoint_verified"] and not row["unreachable"]
+        assert any("多个候选地址" in reason for reason in row["reasons"])
+
+
 def test_generic_mainland_failures_are_reported_without_marking_carriers_down(monkeypatch):
     from types import SimpleNamespace
 

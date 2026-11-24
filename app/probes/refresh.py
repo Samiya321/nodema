@@ -165,11 +165,19 @@ def compute(nodes, stability, quality, reach, traces, policy, *, now=None) -> li
         return replace(estimated, evidence="ICMP" if entry.protocol == "hysteria2" else evidence)
 
     for node in nodes:
-        ip = planner.ipv4(node.entry_ips)
+        ip = planner.confirmed_ipv4(node.entry_ips)
         entry = planner.EntryNode(node.id, node.protocol, ip, node.server_port, node.entry_asn)
         available, checked = stability.get(node.id, (0, 0))
         cdn = entry.prefix == planner.CF_PREFIX
-        facts = NodeFacts(node.protocol, entry.target, available, checked, node.is_proxy, cdn)
+        facts = NodeFacts(
+            node.protocol,
+            entry.target,
+            available,
+            checked,
+            node.is_proxy,
+            cdn,
+            ambiguous_entry=len(node.entry_ips or []) > 1,
+        )
         reach_samples = reach.get(entry.target or "", [])
         reach_failed = node.protocol != "hysteria2" and repeated_failure(reach_samples)
         reach_at = max((s.measured_at for s in reach_samples if s.measured_at), default=None)
@@ -284,14 +292,11 @@ def reach_refresh_due(session, last, moment):
            AND count(DISTINCT date_trunc('hour',measured_at))>=2
            AND count(DISTINCT (probe_asn,probe_city))>=2
       ), down AS (
-        SELECT (a.ip||':'||n.server_port) target,g.vantage
+        SELECT ((t.entry_ips->>0)||':'||n.server_port) target,g.vantage
         FROM node_grades g JOIN nodes n ON n.id=g.node_id
         JOIN node_current_status c ON c.node_id=n.id JOIN test_results t ON t.id=c.last_result_id
-        CROSS JOIN LATERAL (
-          SELECT ip FROM jsonb_array_elements_text(t.entry_ips) ip
-          WHERE ip ~ '^[0-9]{1,3}([.][0-9]{1,3}){3}$' LIMIT 1
-        ) a
         WHERE g.unreachable AND g.vantage<>'CN'
+          AND jsonb_array_length(t.entry_ips)=1
       )
       SELECT EXISTS(SELECT 1 FROM failed)
           OR EXISTS(SELECT 1 FROM node_grades WHERE limiting_vantage IS NULL)

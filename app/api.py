@@ -187,6 +187,7 @@ def create_app(settings=None, *, assets=None):
                 sa.text("""SELECT nodema_probe_status(:v) || (
                   SELECT jsonb_build_object('coverage_total',count(*),
                     'coverage_measured',count(*) FILTER (WHERE g.access_band IS NOT NULL),
+                    'coverage_endpoint_verified',count(*) FILTER (WHERE g.endpoint_verified),
                     'coverage_excluded',count(*) FILTER (WHERE c.last_exit_asn=13335))
                   FROM node_current_status c JOIN nodema_node_scope scope
                     ON scope.node_id=c.node_id AND scope.eligible

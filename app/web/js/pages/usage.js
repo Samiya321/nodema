@@ -9,6 +9,7 @@ const WORKFLOWS = {
   "export-build": "生成订阅",
   backup: "数据库备份",
   "entry-probe": "接入测量",
+  archive: "历史归档",
 };
 const CONCLUSIONS = { success: "SUCCESS", failure: "FAILED", cancelled: "CANCELLED", timed_out: "FAILED" };
 const ROWS = 10; // long tables show their latest rows; the rest on request
@@ -57,7 +58,7 @@ export async function render(root, { params, go }) {
   range.addEventListener("change", () => go("usage", new URLSearchParams({ days: range.value })));
   const stats = [
     ["Actions 分钟", num(Math.round(Number(data.runner_minutes)))],
-    ["节点检测", num(data.health.attempts), "完整检测的次数"],
+    ["节点检测", num(data.health.attempts), "检测尝试次数，包含复测和预检"],
     ["平均每次", data.health.mean_check_ms == null ? "—" : (data.health.mean_check_ms / 1000).toFixed(1) + " 秒"],
     ["超时占比", pct(data.health.timeout_ratio)],
     ["任务失败率", pct(data.executions.failure_ratio)],
@@ -99,6 +100,7 @@ export async function render(root, { params, go }) {
     h("div", { class: "title-row" }, h("h1", { class: "page-title" }, "运行用量"), range),
     selfHosted ? null : transferPanel,
     h("dl", { class: "stats" }, stats.map(([k, v, hint]) => h("div", { title: hint || null }, h("dt", {}, k), h("dd", {}, v)))),
+    h("p", { class: "hint" }, `各阶段超时 · DNS ${num(data.health.dns_timeouts)} · 入口 TCP ${num(data.health.tcp_timeouts)} · 代理 HTTPS ${num(data.health.https_timeouts)} · UDP ${num(data.health.udp_timeouts)}。一次检测可命中多个阶段。`),
     h("p", { class: "hint" }, "按 UTC 日期统计。字节数为应用层载荷，不是运营商流量账单；Actions 分钟来自已完成的 Job 时长，不等同于计费分钟。"),
     h(
       "section",

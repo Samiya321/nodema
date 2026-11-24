@@ -21,6 +21,14 @@ export function renderStrip(element) {
 
 let wasWorking = false;
 
+export function stopStrip() {
+  clearTimeout(timer);
+  root?.replaceChildren();
+  root = last = pipelineRequest = undefined;
+  wakeUntil = 0;
+  wasWorking = false;
+}
+
 function schedule(busyNow) {
   clearTimeout(timer);
   if (!busyNow && Date.now() > wakeUntil) return;
@@ -31,11 +39,16 @@ function schedule(busyNow) {
 }
 
 export function loadPipeline() {
-  pipelineRequest ??= api("/pipeline").finally(() => { pipelineRequest = null; });
-  return pipelineRequest;
+  if (pipelineRequest) return pipelineRequest;
+  const pending = api("/pipeline").finally(() => {
+    if (pipelineRequest === pending) pipelineRequest = undefined;
+  });
+  pipelineRequest = pending;
+  return pending;
 }
 
 export async function refreshStrip() {
+  if (!root) return;
   try {
     last = await loadPipeline();
   } catch {
@@ -77,7 +90,8 @@ async function startSync(button) {
 // Test specific nodes (from the node list) without choosing a scope.
 export async function testNodes(ids) {
   if (!ids.length) return false;
-  if (!(await confirm("检测所选节点", `检测已选的 ${ids.length} 个节点。正在其他未完成批次中的节点会跳过。`, { action: "开始检测" })))
+  const detail = ids.length <= 50 ? "本次做完整复测，跳过失败冷却。" : "本次按常规规则检测。";
+  if (!(await confirm("检测所选节点", `检测已选的 ${ids.length} 个节点。${detail}正在其他未完成批次中的节点会跳过。`, { action: "开始检测" })))
     return false;
   try {
     submitted(await api("/scans", { method: "POST", body: { node_ids: ids } }), "检测");

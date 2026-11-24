@@ -228,8 +228,8 @@ def test_apply_rollback_and_retry(service, fixture_bytes, monkeypatch):
     source = create(service, fixture_bytes("sample_vless.txt"))
     apply = service._apply
 
-    def failing(*args):
-        apply(*args)
+    def failing(*args, **kwargs):
+        apply(*args, **kwargs)
         raise AssetError("SYNTHETIC_INTERRUPTION")
 
     monkeypatch.setattr(service, "_apply", failing)
