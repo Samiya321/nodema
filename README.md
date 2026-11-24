@@ -90,7 +90,7 @@ npm run types
 npm run dev
 ```
 
-打开 Pages 命令显示的本地地址，输入 `.env` 中的 `ADMIN_PASSWORD`。Pages 通过 `API` 服务绑定转发同源请求。保存来源时自动投递“同步 → 入库 → 检测 → 发布”任务，界面每 15 秒刷新状态。Worker 只负责保存和调度，解析与 Mihomo 在 Actions 执行。未配置调度或提交失败时明确提示，已保存来源与待处理请求不会丢失；可点击“同步”重试，也会由下次每日任务处理。
+打开 Pages 命令显示的本地地址，输入 `.env` 中的 `ADMIN_PASSWORD`。Pages 通过 `API` 服务绑定转发同源请求，Worker 在连库前验证登录并签发浏览器会话。保存来源后可手动同步，日常同步和日检也会独立运行。检测读取当前已入库的节点。Worker 负责保存和调度，解析与 Mihomo 在 Actions 执行；调度失败时可重新提交，已保存的请求会留给对应的任务处理。
 
 不配置 GitHub 时仍可使用 Python CLI 同步和运行检测。还保留 `uv run nodema serve --port 8000` 作为本地调试 API/界面入口；它不属于生产部署链路。可选 Docker 镜像同样只用于本地或自有服务器调试。
 

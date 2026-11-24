@@ -67,7 +67,7 @@ function submitted(result, what) {
   wakeUntil = Date.now() + WAKE_MS;
   setTimeout(refreshStrip, 4000);
   if (result?.dispatched === false)
-    toast(`${what}已保存，但提交到 GitHub 失败；下一次同步、检测或定时任务会执行它。`, "bad");
+    toast(`${what}请求已保存，提交到 GitHub 失败。可重新提交，或等待对应的定时任务。`, "bad");
   else toast(`${what}已提交到 GitHub Actions，通常 1 分钟内开始。`, "ok");
 }
 
@@ -126,7 +126,7 @@ export function openTestDialog() {
         ),
       ),
     ),
-    last?.pending_sources ? h("p", { class: "hint" }, `开始前会先同步 ${last.pending_sources} 个待同步来源。`) : null,
+    last?.pending_sources ? h("p", { class: "hint" }, `还有 ${last.pending_sources} 个来源待同步。本次检测使用当前已入库的节点。`) : null,
     h("p", { class: "hint" }, "想只测部分节点：在“节点”页勾选后点“检测所选”。"),
     h("div", { class: "row end" }, h("button", { type: "submit", class: "primary" }, "开始检测")),
   );
