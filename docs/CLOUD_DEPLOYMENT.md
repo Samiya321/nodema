@@ -14,6 +14,12 @@
 
 管理员密钥、数据库连接、HMAC/AES 密钥和 GitHub 调度 token 保存在本地 `private/` 以及对应平台 Secrets 中，不在本页或 Git 仓库公开。
 
+## 2026-11-25 第二十五次发布：Dashboard 交互提速
+
+- 运行提交 `670c1a7`，schema `0027_node_observations`。Worker `d9b61bf4-3dc9-4eb1-85f3-efbcfeb5c974`，Pages `79cfaa12-d755-4a45-a910-6ffe73d22461`。[Pages 部署](https://79cfaa12.nodema-dashboard.pages.dev) · [main CI](https://github.com/Samiya321/nodema/actions/runs/45478708754)
+- 新增精简来源目录和顶部状态视图，传统 API 仍可读取。导航与顶部状态取数解耦，当前会话的列表短时复用。与同一份隔离数据的原响应比，来源体积减少约 59%，服务端处理的中位数由 436 降至 115 毫秒。
+- 本地 42 项 Python 定向用例、40 项 Worker 用例、Worker/Pages 构建通过；合成浏览器确认翻页和返回复用数据、保存后重新读取。生产通过 Worker 健康、匿名 401、认证 readiness、新版来源和顶部接口、节点分页及静态模块散列验证。生产首次读取节点和来源仍有首字节等待波动。复测时间与限制见 [实现状态](STATUS.md#2026-11-25-dashboard-交互提速)。
+
 ## 2026-11-25 第二十四次发布：节点证据、独立日检和登录会话
 
 - 运行提交 `0c60995`，schema `0027_node_observations`。Worker 版本 `37a0300c-1031-4f9e-b0b9-3268f2969666`，Pages 部署 `bf19f7e2-782f-49cb-9802-b07b6a3cbd68`。[Pages 部署](https://bf19f7e2.nodema-dashboard.pages.dev) · [发布分支 CI](https://github.com/Samiya321/nodema/actions/runs/45473947379) · [main CI](https://github.com/Samiya321/nodema/actions/runs/45475269590)
