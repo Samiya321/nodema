@@ -1,22 +1,21 @@
 // The only place that starts GitHub Actions: sync sources, or test nodes.
-import { KIND, ago, api, busy, confirm, date, dialog, h, meter, toast } from "./core.js";
+import { KIND, ago, api, busy, confirm, date, dialog, h, invalidateReads, meter, readAPI, toast } from "./core.js";
 
-// Poll only while work is pending or just requested, so an idle tab lets the free
-// database suspend. Navigation, focus and actions refresh it otherwise.
-let root, timer, last, listening = false, wakeUntil = 0;
+// Poll only while work is pending or just requested. Navigation uses the current display.
+let root, timer, last, listening = false, wakeUntil = 0, lastRead = 0;
 let pipelineRequest;
 const WAKE_MS = 10 * 60 * 1000;
 const RUNNING = ["PENDING", "RUNNING"];
 
 export function renderStrip(element) {
   root = element;
-  refreshStrip();
+  draw();
+  timer = setTimeout(refreshStrip, 750);
   if (listening) return;
   listening = true;
   document.addEventListener("visibilitychange", () => {
-    if (!document.hidden && root?.isConnected) refreshStrip();
+    if (!document.hidden && root?.isConnected && Date.now() - lastRead >= 30000) refreshStrip();
   });
-  window.addEventListener("hashchange", () => refreshStrip());
 }
 
 let wasWorking = false;
@@ -25,7 +24,7 @@ export function stopStrip() {
   clearTimeout(timer);
   root?.replaceChildren();
   root = last = pipelineRequest = undefined;
-  wakeUntil = 0;
+  wakeUntil = lastRead = 0;
   wasWorking = false;
 }
 
@@ -38,9 +37,9 @@ function schedule(busyNow) {
   }, 15000);
 }
 
-export function loadPipeline() {
+function loadPipeline() {
   if (pipelineRequest) return pipelineRequest;
-  const pending = api("/pipeline").finally(() => {
+  const pending = api("/pipeline?view=toolbar").finally(() => {
     if (pipelineRequest === pending) pipelineRequest = undefined;
   });
   pipelineRequest = pending;
@@ -48,17 +47,28 @@ export function loadPipeline() {
 }
 
 export async function refreshStrip() {
-  if (!root) return;
+  const target = root;
+  if (!target) return;
+  lastRead = Date.now();
   try {
-    last = await loadPipeline();
+    const state = await loadPipeline();
+    if (root !== target) return;
+    last = state;
   } catch {
+    if (root === target) {
+      if (!last) draw(null, "运行状态暂时不可用");
+      schedule(wasWorking);
+    }
     return;
   }
   draw(last);
   const running = last.active_scans.some((r) => RUNNING.includes(r.status));
   // A test or sync just finished: cached node lists are stale.
   const work = running || last.pending_sources > 0;
-  if (wasWorking && !work) window.dispatchEvent(new CustomEvent("nodema:nodes-changed"));
+  if (wasWorking && !work) {
+    invalidateReads();
+    window.dispatchEvent(new CustomEvent("nodema:nodes-changed"));
+  }
   wasWorking = work;
   schedule(running || (last.requested_scans || []).length > 0);
 }
@@ -103,12 +113,12 @@ export async function testNodes(ids) {
 }
 
 export function openTestDialog() {
-  const testable = last?.testable || {};
   const options = [
-    ["SELF_HOSTED", "自建节点", testable.SELF_HOSTED || 0, "你自己的服务器节点。"],
-    ["AIRPORT", "机场节点", testable.AIRPORT || 0, "只含未过期、流量未用完、未暂停的机场订阅。"],
-    ["ALL", "全部", (testable.SELF_HOSTED || 0) + (testable.AIRPORT || 0), "自建与机场一起检测。"],
+    ["SELF_HOSTED", "自建节点", "你自己的服务器节点。"],
+    ["AIRPORT", "机场节点", "只含未过期、流量未用完、未暂停的机场订阅。"],
+    ["ALL", "全部", "自建与机场一起检测。"],
   ];
+  const totals = options.map(() => h("span", { class: "muted" }));
   const form = h(
     "form",
     { class: "stack" },
@@ -116,12 +126,12 @@ export function openTestDialog() {
       "fieldset",
       { class: "choices" },
       h("legend", {}, "检测范围"),
-      options.map(([value, title, count, hint], index) =>
+      options.map(([value, title, hint], index) =>
         h(
           "label",
           { class: "choice" },
           h("input", { type: "radio", name: "scope", value, checked: index === 0 }),
-          h("span", { class: "choice-title" }, title, h("span", { class: "muted" }, ` ${count} 个`)),
+          h("span", { class: "choice-title" }, title, totals[index]),
           h("span", { class: "hint" }, hint),
         ),
       ),
@@ -131,6 +141,11 @@ export function openTestDialog() {
     h("div", { class: "row end" }, h("button", { type: "submit", class: "primary" }, "开始检测")),
   );
   const box = dialog("开始检测", form);
+  void readAPI("/pipeline").then(({ testable }) => {
+    if (!box.open) return;
+    const own = testable?.SELF_HOSTED || 0, airport = testable?.AIRPORT || 0;
+    [own, airport, own + airport].forEach((count, i) => { totals[i].textContent = ` ${count} 个`; });
+  }).catch(() => {});
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     const scope = new FormData(form).get("scope");
@@ -168,11 +183,15 @@ function runView(run, testable = {}) {
   );
 }
 
-function draw(state) {
+function draw(state, message = "正在读取运行状态…") {
   const syncButton = h("button", { type: "button" }, "同步来源");
   syncButton.addEventListener("click", () => startSync(syncButton));
   const testButton = h("button", { type: "button", class: "primary" }, "开始检测");
   testButton.addEventListener("click", openTestDialog);
+  if (!state) {
+    root.replaceChildren(syncButton, testButton, h("p", { class: "strip-text muted", role: "status" }, message));
+    return;
+  }
   const requested = state.requested_scans || [];
   const parts = [
     h(

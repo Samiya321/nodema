@@ -1,5 +1,5 @@
-import { KIND, SCAN_KIND, ago, api, badge, bytes, date, daysUntil, errorText, flag, h } from "../core.js";
-import { defaultVantage, distribution, gradeBadge, vantageName, vantageSwitch } from "../grades.js";
+import { KIND, SCAN_KIND, ago, badge, bytes, date, daysUntil, errorText, flag, h, readAPI } from "../core.js";
+import { distribution, gradeBadge, vantageName, vantageSwitch } from "../grades.js";
 import { pageHref, scanHref, sourceHref } from "../lineage.js";
 
 const PROBE_ERRORS = { NETWORK: "无法连接 Globalping", TIMEOUT: "测量超时", INVALID_RESPONSE: "Globalping 返回异常" };
@@ -224,7 +224,7 @@ export function render(root, { params, go, refresh, isCurrent }) {
   const drawAttention = () => {
     if (issues) summary.replaceChildren(attention(issues, ops));
   };
-  const vantage = params.get("vantage") ? Promise.resolve(params.get("vantage")) : defaultVantage();
+  const vantage = params.get("vantage");
   drawTiles();
   root.append(
     h("header", { class: "page-head" }, h("div", {}, h("h1", { class: "page-title" }, "总览"), checked),
@@ -236,7 +236,7 @@ export function render(root, { params, go, refresh, isCurrent }) {
     section("检测动态", "#/ops", "全部检测", scans),
     assets, grade,
   );
-  hydrate(api("/overview/status").catch((error) => {
+  hydrate(readAPI("/overview/status").catch((error) => {
     if (isCurrent()) {
       checked.textContent = "系统状态暂时无法读取";
       scans.replaceChildren(h("p", { class: "muted" }, "检测记录随系统状态更新。"));
@@ -250,16 +250,16 @@ export function render(root, { params, go, refresh, isCurrent }) {
     drawTiles();
     scans.replaceChildren(scanActivity(ops));
   });
-  hydrate(api("/overview/recovery").catch(() => ({})), system, (data) => {
+  hydrate(readAPI("/overview/recovery", 60000).catch(() => ({})), system, (data) => {
     recovery = data;
     drawStatus();
   });
-  hydrate(api("/overview/attention"), summary, (data) => {
+  hydrate(readAPI("/overview/attention"), summary, (data) => {
     issues = data;
     drawAttention();
     drawTiles();
   });
-  hydrate(api("/overview/catalog"), assets, (data) => {
+  hydrate(readAPI("/overview/catalog"), assets, (data) => {
     catalog = data;
     drawTiles();
     const countries = Object.entries(data.countries || {}).filter(([code]) => code !== "UNK").sort((a, b) => b[1] - a[1]).slice(0, 12);
@@ -269,6 +269,6 @@ export function render(root, { params, go, refresh, isCurrent }) {
         h("ul", { class: "country-list" }, countries.map(([code, n]) => h("li", {},
           h("a", { href: pageHref("nodes", { exit_country: code }) }, flag(code), " ", code, h("strong", {}, format(n))))))) : null);
   });
-  hydrate(vantage.then((v) => api("/probe-status?vantage=" + encodeURIComponent(v)).then((value) => [v, value])), grade,
-    ([v, value]) => grade.replaceChildren(qualityPanel(value, v, go)));
+  hydrate(readAPI(vantage ? "/probe-status?vantage=" + encodeURIComponent(vantage) : "/probe-status"), grade,
+    (value) => grade.replaceChildren(qualityPanel(value, value.vantage || vantage || "CN", go)));
 }

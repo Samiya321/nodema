@@ -1,4 +1,4 @@
-import { KIND, SCAN_KIND, api, badge, busy, date, empty, errorText, h, table, toast } from "../core.js";
+import { KIND, SCAN_KIND, api, badge, busy, date, empty, errorText, h, readAPI, table, toast } from "../core.js";
 import { copyPageLink, scanHref } from "../lineage.js";
 
 function duration(run) {
@@ -49,7 +49,7 @@ async function detail(root, id) {
 const PROBE_ERRORS = { NETWORK: "无法连接 Globalping", TIMEOUT: "测量超时", INVALID_RESPONSE: "返回异常" };
 
 async function probeRuns() {
-  const status = await api("/probe-status");
+  const status = await readAPI("/probe-status");
   const daily = status.daily || [];
   return h(
     "div",
@@ -88,7 +88,7 @@ export async function render(root, { params, refresh, refreshStrip }) {
     root.append(h("h1", { class: "page-title" }, "接入测量"), await probeRuns());
     return;
   }
-  const runs = await api("/scans");
+  const runs = await readAPI("/scans");
   const complete = runs.find((r) => r.kind === "DAILY" && r.status === "COMPLETED");
   const retry = (run) => async (e) =>
     busy(e.target, async () => {

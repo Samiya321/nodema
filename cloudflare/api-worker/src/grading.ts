@@ -153,7 +153,7 @@ export async function probeStatus(rows: Rows, vantage: string | null, fresh = 36
     chosen = storedPolicy(row?.policy).default_vantage;
   }
   if (!VANTAGES.includes(chosen)) throw new SafeError("INVALID_NODE_QUERY");
-  return (await rows(`SELECT nodema_probe_status($1) || (
+  return (await rows(`SELECT jsonb_build_object('vantage',$1::text) || nodema_probe_status($1) || (
     SELECT jsonb_build_object('coverage_total',count(*),
       'coverage_measured',count(*) FILTER (WHERE g.access_band IS NOT NULL),
       'coverage_endpoint_verified',count(*) FILTER (WHERE g.endpoint_verified),

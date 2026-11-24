@@ -88,7 +88,7 @@ async function transaction(rows: Rows, work: () => Promise<void>) {
   }
 }
 
-async function pipeline(rows: Rows) {
+async function pipeline(rows: Rows, toolbar = false) {
   const [state] = await rows(
     `SELECT
       (SELECT count(*)::int FROM sources WHERE deleted_at IS NULL AND enabled
@@ -102,24 +102,26 @@ async function pipeline(rows: Rows) {
       (SELECT max(last_checked_at) FROM sources WHERE deleted_at IS NULL) AS last_synced_at,
       (SELECT jsonb_build_object('daily_scan_enabled',daily_scan_enabled,'daily_scan_scope',daily_scan_scope)
         FROM app_settings WHERE id=1) AS settings,
-      (SELECT jsonb_object_agg(node_group,n) FROM (SELECT node_group,count(*) n FROM nodema_node_scope
-        WHERE eligible GROUP BY node_group) g) AS testable,
+      CASE WHEN NOT $1::boolean THEN (
+        SELECT jsonb_object_agg(node_group,n) FROM (SELECT node_group,count(*) n FROM nodema_node_scope
+        WHERE eligible GROUP BY node_group) g
+      ) END AS testable,
       -- Latest Neon transfer reading (needs a Neon API key in the usage job).
       (SELECT jsonb_build_object('used',transfer_bytes,'limit',transfer_limit_bytes,'period_end',transfer_period_end)
-        FROM database_samples WHERE transfer_bytes IS NOT NULL ORDER BY taken_at DESC LIMIT 1) AS neon_transfer`,
-  );
-  const active = await rows(
-    `SELECT r.id,r.scan_date::text AS scan_date,r.kind,r.scope,r.status,r.node_count,r.started_at,
+        FROM database_samples WHERE transfer_bytes IS NOT NULL ORDER BY taken_at DESC LIMIT 1) AS neon_transfer,
+      coalesce((SELECT jsonb_agg(to_jsonb(a) ORDER BY a.started_at DESC) FROM (
+        SELECT r.id,r.scan_date::text AS scan_date,r.kind,r.scope,r.status,r.node_count,r.started_at,
       (SELECT count(*)::int FROM scan_items i WHERE i.scan_run_id=r.id AND i.status='DONE') AS done
      FROM scan_runs r WHERE r.status<>'COMPLETED' AND r.archived_at IS NULL
-     ORDER BY r.started_at DESC LIMIT 10`,
+     ORDER BY r.started_at DESC LIMIT 10) a),'[]') AS active_scans,
+      coalesce((SELECT jsonb_agg(to_jsonb(q) ORDER BY q.scope) FROM (
+        SELECT CASE WHEN node_ids IS NULL THEN scope ELSE 'NODES' END AS scope,min(requested_at) AS requested_at,
+          count(*)::int AS count,sum(coalesce(cardinality(node_ids),0))::int AS nodes
+        FROM scan_requests WHERE consumed_at IS NULL GROUP BY 1
+      ) q),'[]') AS requested_scans`,
+    [toolbar],
   );
-  const requested = await rows(
-    `SELECT CASE WHEN node_ids IS NULL THEN scope ELSE 'NODES' END AS scope,min(requested_at) AS requested_at,
-      count(*)::int AS count,sum(coalesce(cardinality(node_ids),0))::int AS nodes
-     FROM scan_requests WHERE consumed_at IS NULL GROUP BY 1 ORDER BY 1`,
-  );
-  return { ...state, active_scans: active, requested_scans: requested } as Row;
+  return state;
 }
 
 async function airports(rows: Rows, freshness: number) {
@@ -216,7 +218,7 @@ export async function handleManagement(
   if (path === "/api/providers" && method === "GET")
     return json(await rows("SELECT id,name FROM providers ORDER BY name,id"));
   if (path === "/api/pipeline" && method === "GET") {
-    const state = await pipeline(rows);
+    const state = await pipeline(rows, new URL(request.url).searchParams.get("view") === "toolbar");
     if (ctx.databaseProvider === "self_hosted") state.neon_transfer = null;
     return json(state);
   }

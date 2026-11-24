@@ -1,6 +1,6 @@
 // Node quality grades: vantage vocabulary, badges and the shared default vantage.
 // Every grade is shown with its vantage ("A · 电信") so a screenshot can't be misread.
-import { api, h, ms } from "./core.js";
+import { h, ms, readAPI } from "./core.js";
 
 export const VANTAGES = [
   ["CN", "三网"],
@@ -62,15 +62,9 @@ export function accessText(n) {
   return ms(n.peak_rtt_ms) + loss;
 }
 
-let policyPromise = null;
 export function gradingPolicy() {
-  if (!policyPromise) policyPromise = api("/grading-policy").catch((error) => {
-    policyPromise = null;
-    throw error;
-  });
-  return policyPromise;
+  return readAPI("/grading-policy");
 }
-export const forgetGradingPolicy = () => (policyPromise = null);
 
 export async function defaultVantage() {
   try {

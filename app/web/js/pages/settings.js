@@ -1,5 +1,5 @@
-import { api, busy, date, field, h, select, table, toast } from "../core.js";
-import { VANTAGES, forgetGradingPolicy } from "../grades.js";
+import { api, busy, date, field, h, readAPI, select, table, toast } from "../core.js";
+import { VANTAGES } from "../grades.js";
 
 const TOKENS = [
   ["{FLAG}", "落地国旗"],
@@ -209,7 +209,6 @@ function grading(data, refresh) {
     };
     await busy(e.submitter, async () => {
       await api("/grading-policy", { method: "PUT", body: { policy, expected_version: data.version } });
-      forgetGradingPolicy();
       window.dispatchEvent(new CustomEvent("nodema:nodes-changed"));
       toast("分级规则已保存，下一次测量运行时重新定档。", "ok");
       refresh();
@@ -231,10 +230,12 @@ function section(title, hint, content, collapsed = false) {
 }
 
 export async function render(root, { refresh }) {
-  const [pipeline, rules, labels, policy] = await Promise.all([api("/pipeline"), api("/naming-rules"), api("/asn-labels"), api("/grading-policy")]);
+  const [settings, rules, labels, policy] = await Promise.all(
+    ["/settings", "/naming-rules", "/asn-labels", "/grading-policy"].map((path) => readAPI(path))
+  );
   root.append(
     h("h1", { class: "page-title" }, "设置"),
-    schedule(pipeline.settings),
+    schedule(settings),
     naming(rules),
     asnLabels(labels, refresh),
     grading(policy, refresh),

@@ -1,4 +1,4 @@
-import { ago, api, busy, debounce, empty, h, select, toast } from "../core.js";
+import { ago, api, busy, debounce, empty, h, readAPI, select, toast } from "../core.js";
 import { testNodes } from "../strip.js";
 import { BUCKETS, COLUMNS, bucketOf, headRow, nodeRow, setRowVantage, sortNodes } from "./node-rows.js";
 import { countryView, revealCountry } from "./node-countries.js";
@@ -16,7 +16,7 @@ const QUICK = [
 ];
 const FETCH_PAGE = 10000; // compact rows per request; there is no overall cap
 // Reuse the filtered collection across the list, country and ASN views.
-const CACHE_MS = 10 * 60_000;
+const CACHE_MS = 30000;
 const SORT_COLUMNS = {
   name: ["name"], grade: ["quality_grade"], rtt: ["peak_rtt_ms"], udp: ["udp_state", "udp_ms"],
   avail: ["avail_7d", "checked_7d"], route: ["entry_country", "exit_country"],
@@ -28,7 +28,6 @@ const count = (n) => n.toLocaleString("zh-CN");
 const objects = (page) => page.items.map((row) => Object.fromEntries(page.fields.map((name, i) => [name, row[i]])));
 
 let cache = null;
-let pageCache = null;
 let selection = null;
 
 function listFilters(filters) {
@@ -38,13 +37,9 @@ function listFilters(filters) {
 
 async function dashboardPage(filters, sort, page, size) {
   const args = new URLSearchParams({ ...filters, sort, offset: String(page * size), limit: String(size), view: "dashboard" });
-  const key = args.toString();
-  if (pageCache?.key === key && Date.now() - pageCache.data.at < CACHE_MS) return pageCache.data;
-  const result = await api("/nodes?" + key);
+  const result = await readAPI("/nodes?" + args);
   if (page && page * size >= result.total) return dashboardPage(filters, sort, Math.max(0, Math.ceil(result.total / size) - 1), size);
-  const data = { ...result, items: objects(result), page, at: Date.now() };
-  pageCache = { key, data };
-  return data;
+  return { ...result, items: objects(result), page, at: Date.now() };
 }
 
 async function matchingIDs(filters) {
@@ -77,7 +72,7 @@ async function load(filters) {
   cache = { key, at: data.at, data };
   return data;
 }
-export function invalidateNodes() { cache = pageCache = selection = null; }
+export function invalidateNodes() { cache = selection = null; }
 window.addEventListener("nodema:nodes-changed", invalidateNodes);
 
 // Links from older pages still say min_quality_grade=A / quality_grade=PENDING / unreachable.
@@ -114,10 +109,7 @@ export async function render(root, { params, go, isCurrent }) {
   if (chosen.size) query.quality_buckets = [...chosen].join(",");
   const requestedPage = Number(params.get("page") || 0);
   const pageIndex = Number.isSafeInteger(requestedPage) && requestedPage >= 0 && requestedPage * size <= 2147483647 ? requestedPage : 0;
-  const [result, providers] = await Promise.all([
-    view ? load(apiFilters) : dashboardPage(query, sqlSort, pageIndex, size),
-    api("/providers"),
-  ]);
+  const result = await (view ? load(apiFilters) : dashboardPage(query, sqlSort, pageIndex, size));
   const { items: loaded, at: loadedAt, vantage, facets } = result;
   if (!isCurrent()) return;
   setRowVantage(vantage);
@@ -219,7 +211,10 @@ export async function render(root, { params, go, isCurrent }) {
   if (filters.exit_country && !countries.includes(filters.exit_country)) countries.unshift(filters.exit_country);
   const panelButton = h(
     "button",
-    { type: "button", class: "toggle panel-button" + (panelSet ? " set" : ""), onclick: () => openPanel({ filters, providers, countries, onApply: (changes) => update(changes) }) },
+    { type: "button", class: "toggle panel-button" + (panelSet ? " set" : ""), onclick: (event) => busy(event.currentTarget, async () => {
+      const providers = await readAPI("/providers");
+      if (isCurrent()) openPanel({ filters, providers, countries, onApply: (changes) => update(changes) });
+    }) },
     "筛选",
     panelSet ? h("span", { class: "pill-n" }, panelSet) : null,
   );
@@ -229,7 +224,10 @@ export async function render(root, { params, go, isCurrent }) {
   const chips = Object.entries(filters)
     .filter(([key]) => key !== "q")
     .map(([key, value]) => {
-      const shownValue = key === "provider_id" ? providers.find((p) => p.id === value)?.name || "已选" : key === "source_id" ? "已选来源" : display(key, value);
+      const shownValue = key === "provider_id" ? h("span", {}, "已选") : key === "source_id" ? "已选来源" : display(key, value);
+      if (key === "provider_id") void readAPI("/providers").then((providers) => {
+        shownValue.textContent = providers.find((p) => p.id === value)?.name || "已选";
+      }).catch(() => {});
       return h("button", { type: "button", class: "chip-x", title: "移除这个条件", onclick: () => update({ [key]: "" }) }, h("span", { class: "chip-k" }, label(key)), shownValue, h("span", { class: "x", "aria-hidden": "true" }, "×"));
     });
   const chipRow = chips.length ? h("div", { class: "chip-row" }, chips, h("button", { type: "button", class: "quiet", onclick: reset }, "清除全部条件")) : null;
@@ -378,7 +376,7 @@ export async function render(root, { params, go, isCurrent }) {
         "div",
         { class: "page-actions" },
         exportable ? h("a", { class: "button", href: pageHref("exports", exportParams) }, "用当前筛选创建订阅") : null,
-        h("span", { class: "loaded", title: "列表会缓存 10 分钟以节省数据库流量" }, `${ago(new Date(loadedAt).toISOString())}载入`),
+        h("span", { class: "loaded", title: "列表会在当前会话复用 30 秒" }, `${ago(new Date(loadedAt).toISOString())}载入`),
         h("button", { type: "button", onclick: () => { invalidateNodes(); go("nodes", params); } }, "刷新"),
       ),
     ),

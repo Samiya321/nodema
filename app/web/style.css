@@ -163,6 +163,7 @@ legend { font-size: 12px; color: var(--ink-2); padding: 0 4px; }
 .login-card { width: min(400px, 100%); display: grid; gap: 16px; background: var(--surface); padding: 32px; border-radius: var(--radius-l); border: 1px solid var(--line); box-shadow: var(--pop); }
 .login-card h1 { font-size: 22px; font-weight: 650; letter-spacing: -0.01em; }
 .login-card .form-error:empty { min-height: 0; margin-top: -16px; }
+.page-loading { color: var(--muted); font-size: 13px; margin: 8px 0; }
 /* Brand mark: a graphite tile resting on the grade spectrum. */
 .brand-mark { position: relative; display: inline-grid; place-items: center; width: 28px; height: 28px; border-radius: 8px; background: var(--ink); color: var(--surface); font-weight: 700; font-size: 14px; margin: 0; overflow: hidden; }
 .brand-mark::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 4px; background: linear-gradient(90deg, var(--g-S) 0 20%, var(--g-A) 20% 40%, var(--g-B) 40% 60%, var(--g-C) 60% 80%, var(--g-D) 80%); }

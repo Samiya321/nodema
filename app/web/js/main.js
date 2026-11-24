@@ -1,4 +1,4 @@
-import { api, errorText, fail, h, invalidateSession } from "./core.js";
+import { api, errorText, fail, h, invalidateReads, invalidateSession } from "./core.js";
 import { renderStrip, refreshStrip, stopStrip } from "./strip.js";
 import { pageHref } from "./lineage.js";
 
@@ -37,7 +37,7 @@ document.querySelector(".skip").addEventListener("click", (event) => {
 });
 let rendering = 0;
 let expiryTimer;
-let shown = ""; // page name on screen: a new page starts at the top, a re-render keeps its place
+let shown = "";
 
 function currentRoute() {
   const [name, query = ""] = location.hash.replace(/^#\/?/, "").split("?");
@@ -71,22 +71,36 @@ async function render() {
   document.querySelector(".nav-more").dataset.current = String(name === "ops" || name === "settings");
   document.querySelector(".nav-more").open = false;
   const [, title, load] = PAGES.find(([key]) => key === name);
+  const screen = [name, ...["tab", "node", "source", "subscription", "scan"].map((key) => params.get(key))].join("/");
   document.title = title + " · Nodema";
   page.setAttribute("aria-busy", "true");
+  const pending = h("p", { class: "page-loading", role: "status" }, "正在加载…");
+  if (shown !== screen) {
+    page.replaceChildren(h("div", { class: "page" }, h("h1", { class: "page-title" }, title), pending));
+    window.scrollTo(0, 0);
+    page.scrollTop = 0;
+    shown = screen;
+  } else {
+    page.querySelector(".page-loading")?.remove();
+    page.prepend(pending);
+  }
   try {
     const module = await load();
     const root = h("div", { class: "page" });
     // Pages pass lists and optional (null) sections; flatten them like h() does.
     const append = root.append.bind(root);
     root.append = (...items) => append(...items.flat(Infinity).filter((x) => x !== null && x !== undefined && x !== false));
-    await module.render(root, { params, go, refresh: render, refreshStrip, isCurrent: () => ticket === rendering });
+    const work = module.render(root, {
+      params, go, refresh: () => { invalidateReads(); render(); }, refreshStrip,
+      isCurrent: () => ticket === rendering,
+    });
+    if (root.childNodes.length) {
+      root.append(pending);
+      page.replaceChildren(root);
+    }
+    await work;
     if (ticket !== rendering) return;
     page.replaceChildren(root);
-    if (shown !== name) {
-      window.scrollTo(0, 0);
-      page.scrollTop = 0;
-    }
-    shown = name;
   } catch (error) {
     if (ticket !== rendering) return;
     page.replaceChildren(
@@ -95,10 +109,11 @@ async function render() {
         { class: "empty" },
         h("p", { class: "empty-title" }, "页面加载失败"),
         h("p", {}, errorText(error?.code || error?.message)),
-        h("button", { type: "button", onclick: render }, "重新加载"),
+        h("button", { type: "button", onclick: () => { invalidateReads(); render(); } }, "重新加载"),
       ),
     );
   } finally {
+    pending.remove();
     if (ticket === rendering) page.removeAttribute("aria-busy");
   }
 }

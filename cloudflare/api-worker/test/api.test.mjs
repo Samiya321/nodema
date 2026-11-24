@@ -207,11 +207,21 @@ print(json.dumps(s.sync_source(UUID('${sourceId}')),default=str))`),
         ).json();
         assert.equal(updated.pipeline.dispatched, false);
         assert.equal(updated.user_agent, "custom-agent/1");
+        const directory = await (await request("/api/sources")).json();
+        const smallDirectory = await (await request("/api/sources?view=dashboard")).json();
+        assert.deepEqual(smallDirectory.map((item) => item.id), directory.map((item) => item.id));
+        for (const [index, item] of smallDirectory.entries()) {
+          for (const key of ["node_count", "up_count", "stale_up_count", "effective_kind", "user_agent"])
+            assert.equal(item[key], directory[index][key]);
+          assert.equal(Object.hasOwn(item, "last_parse_summary"), false);
+        }
         await request(`/api/sources/${saved.id}`, { method: "DELETE" });
         assert.equal(calls.length, 0);
         const pipeline = await (await request("/api/pipeline")).json();
         assert.ok(pipeline.pending_sources >= 1);
         assert.equal(pipeline.settings.daily_scan_scope, "SELF_HOSTED");
+        const toolbar = await (await request("/api/pipeline?view=toolbar")).json();
+        assert.deepEqual(toolbar, { ...pipeline, testable: null });
         const synced = await request("/api/pipeline/sync", { method: "POST" });
         assert.equal(synced.status, 202);
         // The Pages service binding forwards a body-less POST as an empty stream.

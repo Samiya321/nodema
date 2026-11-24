@@ -1,4 +1,5 @@
 import {
+  readAPI,
   KIND,
   ago,
   api,
@@ -216,7 +217,7 @@ const ORDER = {
 };
 
 export async function render(root, { params, go, refresh, refreshStrip }) {
-  const all = await api("/sources");
+  const all = await readAPI("/sources?view=dashboard");
   const view = params.get("view") || "";
   const status = params.get("status") || "";
   const history = params.get("history") || "";

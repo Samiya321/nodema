@@ -1,4 +1,4 @@
-import { api, badge, busy, bytes, confirm, date, daysUntil, dialog, empty, errorText, field, h, meter, select, toast } from "../core.js";
+import { api, badge, busy, bytes, confirm, date, daysUntil, dialog, empty, errorText, field, h, meter, readAPI, select, toast } from "../core.js";
 import { editSource, showSourceLink } from "./sources.js";
 import { sourceHref } from "../lineage.js";
 
@@ -156,7 +156,7 @@ function row(s, providers, reload) {
 }
 
 export async function render(root, { params, go, refresh, refreshStrip }) {
-  const { providers, sources, provider_counts: providerCounts = [] } = await api("/airports");
+  const { providers, sources, provider_counts: providerCounts = [] } = await readAPI("/airports");
   const reload = () => {
     refresh();
     refreshStrip();

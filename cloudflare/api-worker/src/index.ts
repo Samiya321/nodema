@@ -269,6 +269,8 @@ export async function handle(
       if (!browser && !monitor && !(authorization && await equal(provided, password)))
         throw new SafeError("AUTHENTICATION_REQUIRED", 401);
     }
+    if (path === "/api/overview/recovery" && method === "GET")
+      return json(await recoveryState(env));
     if (connect) db = await connect();
     else {
       db = new Client({
@@ -423,8 +425,6 @@ export async function handle(
       if (!state) throw new SafeError("DATABASE_OR_SCHEMA_UNAVAILABLE", 503);
       return json(state);
     }
-    if (path === "/api/overview/recovery" && method === "GET")
-      return json(await recoveryState(env));
     if (path === "/api/usage" && method === "GET") {
       const [summary, backup] = await Promise.all([
         usageSummary(rows, Number(url.searchParams.get("days") ?? 30)),
@@ -649,6 +649,25 @@ export async function handle(
         });
       }
     }
+    if (path === "/api/sources" && method === "GET" && url.searchParams.get("view") === "dashboard")
+      return json(await rows(
+        `WITH stats AS (
+          SELECT s.id,count(*)::int AS node_count,
+            count(*) FILTER (WHERE r.availability='current')::int AS up_count,
+            count(*) FILTER (WHERE r.availability='stale')::int AS stale_up_count
+          FROM sources s CROSS JOIN LATERAL nodema_source_node_rows(s,$1) r
+          WHERE s.deleted_at IS NULL GROUP BY s.id
+        )
+        SELECT s.id,s.name,s.type,s.enabled,s.sync_requested_at,s.last_sync_status,s.last_error_code,
+          s.kind,s.detected_kind,s.parent_source_id,s.origin_label,s.user_agent,s.last_success_at,
+          substring(convert_from(s.url_data,'UTF8') from '^[A-Za-z]+://([^/:?#]+)') AS url_host,
+          nodema_source_effective_kind(s) AS effective_kind,nodema_source_next_attempt(s) AS next_attempt,
+          coalesce(stats.node_count,0) AS node_count,coalesce(stats.up_count,0) AS up_count,
+          coalesce(stats.stale_up_count,0) AS stale_up_count
+        FROM sources s LEFT JOIN stats ON stats.id=s.id
+        WHERE s.deleted_at IS NULL ORDER BY s.created_at,s.id`,
+        [number(env.FRESHNESS_HOURS, 36)],
+      ));
     if (path === "/api/sources" && method === "GET")
       return json(
         await rows(

@@ -184,7 +184,8 @@ def create_app(settings=None, *, assets=None):
             if chosen not in VANTAGES:
                 raise AssetError("INVALID_NODE_QUERY")
             return session.scalar(
-                sa.text("""SELECT nodema_probe_status(:v) || (
+                sa.text("""SELECT jsonb_build_object('vantage',CAST(:v AS text))
+                  || nodema_probe_status(:v) || (
                   SELECT jsonb_build_object('coverage_total',count(*),
                     'coverage_measured',count(*) FILTER (WHERE g.access_band IS NOT NULL),
                     'coverage_endpoint_verified',count(*) FILTER (WHERE g.endpoint_verified),
@@ -287,8 +288,32 @@ def create_app(settings=None, *, assets=None):
         return readiness(assets, settings)
 
     @app.get("/api/sources", dependencies=auth)
-    def sources():
-        return catalog.source_directory()
+    def sources(view: str = ""):
+        records = catalog.source_directory()
+        if view == "dashboard":
+            fields = (
+                "id",
+                "name",
+                "type",
+                "enabled",
+                "sync_requested_at",
+                "last_sync_status",
+                "last_error_code",
+                "kind",
+                "detected_kind",
+                "parent_source_id",
+                "origin_label",
+                "user_agent",
+                "last_success_at",
+                "url_host",
+                "effective_kind",
+                "next_attempt",
+                "node_count",
+                "up_count",
+                "stale_up_count",
+            )
+            return [{key: row.get(key) for key in fields} for row in records]
+        return records
 
     @app.get("/api/sources/{source_id}/lineage", dependencies=auth)
     def source_lineage(

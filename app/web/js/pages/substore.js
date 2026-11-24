@@ -1,4 +1,4 @@
-import { KIND, ago, api, badge, busy, confirm, debounce, dialog, empty, errorText, field, h, pager, select, table, toast } from "../core.js";
+import { KIND, ago, api, badge, busy, confirm, debounce, dialog, empty, errorText, field, h, pager, readAPI, select, table, toast } from "../core.js";
 import { syncSources } from "../strip.js";
 import { sourceHref } from "../lineage.js";
 
@@ -86,7 +86,7 @@ const ORDER = {
 };
 
 export async function render(root, { params, go, refresh, refreshStrip }) {
-  const all = await api("/substores");
+  const all = await readAPI("/substores");
   const q = (params.get("q") || "").toLowerCase();
   const state = params.get("state") || "";
   const sort = ORDER[params.get("sort")] ? params.get("sort") : "name";

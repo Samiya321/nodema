@@ -1,4 +1,4 @@
-import { api, badge, busy, bytes, confirm, date, dialog, empty, errorText, field, h, select, table, toast } from "../core.js";
+import { api, badge, busy, bytes, confirm, date, dialog, empty, errorText, field, h, readAPI, select, table, toast } from "../core.js";
 import { ADVANCED, PROTOCOLS, SORTS, advancedFields, readFilters } from "../filters.js";
 import { BUCKET_TEXT, GRADE_TEXT, VANTAGES, defaultVantage, vantageName } from "../grades.js";
 import { LINEAGE_PAGE_SIZE, copyPageLink, exportHref, lineagePager, nodeHref, readPage, sourceHref } from "../lineage.js";
@@ -196,10 +196,13 @@ async function exportDetail(root, { params, go }) {
 
 export async function render(root, { params, go, refresh, isCurrent }) {
   if (params.has("subscription")) return exportDetail(root, { params, go });
-  const [profiles, providers, vantage] = await Promise.all([api("/exports"), api("/providers"), defaultVantage()]);
+  const profiles = await readAPI("/exports");
   if (!isCurrent()) return;
   const seed = params.get("new") === "1" ? seedFilters(params) : {};
-  const create = () => profileForm(providers, null, params.has("new") ? () => go("exports") : refresh, vantage, seed);
+  const open = async (profile = null) => {
+    const [providers, vantage, data] = await Promise.all([readAPI("/providers"), defaultVantage(), profile]);
+    if (isCurrent()) profileForm(providers, data, !data && params.has("new") ? () => go("exports") : refresh, vantage, data ? {} : seed);
+  };
   const act = (fn) => async (e) => busy(e.target, fn);
   const actions = (p) => {
     const active = !["REVOKED", "EXPIRED"].includes(p.status);
@@ -207,7 +210,7 @@ export async function render(root, { params, go, refresh, isCurrent }) {
       "div",
       { class: "row tight" },
       active ? h("button", { type: "button", class: "quiet", onclick: act(async () => linkDialog(await api(`/exports/${p.id}/link`))) }, "链接") : null,
-      active ? h("button", { type: "button", class: "quiet", onclick: act(async () => profileForm(providers, await api("/exports/" + p.id), refresh, vantage)) }, "编辑") : null,
+      active ? h("button", { type: "button", class: "quiet", onclick: act(() => open(api("/exports/" + p.id))) }, "编辑") : null,
       active && p.status !== "BUILDING" ? h("button", { type: "button", class: "quiet", onclick: act(async () => { await api(`/exports/${p.id}/retry`, { method: "POST" }); toast("已提交重新生成。", "ok"); refresh(); }) }, "重新生成") : null,
       active
         ? h("button", {
@@ -247,7 +250,7 @@ export async function render(root, { params, go, refresh, isCurrent }) {
     );
   };
   root.append(
-    h("div", { class: "title-row" }, h("h1", { class: "page-title" }, "订阅导出"), h("button", { type: "button", class: "primary", onclick: create }, "新建订阅")),
+    h("div", { class: "title-row" }, h("h1", { class: "page-title" }, "订阅导出"), h("button", { type: "button", class: "primary", onclick: act(() => open()) }, "新建订阅")),
     table(
       [
         { label: "方案", render: (p) => h("div", { class: "name-cell" }, h("a", { class: "node-name", href: exportHref(p.id) }, p.name), h("span", { class: "muted small" }, FORMATS.find(([k]) => k === p.format)?.[1] || p.format)) },
@@ -262,5 +265,5 @@ export async function render(root, { params, go, refresh, isCurrent }) {
       { empty: empty("还没有订阅方案", "新建一个方案，按类别、地区等条件生成固定的私有订阅链接。") },
     ),
   );
-  if (params.get("new") === "1") create();
+  if (params.get("new") === "1") void busy(null, () => open());
 }

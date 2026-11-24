@@ -2,8 +2,36 @@
 // (never innerHTML), so node names and remote metadata can't inject markup.
 
 let sessionVersion = 0;
+const reads = new Map();
+
+export function invalidateReads() {
+  reads.clear();
+}
+
 export function invalidateSession() {
   sessionVersion++;
+  invalidateReads();
+}
+
+// Opt-in for lists and metadata. Private links and credentials use api directly.
+export function readAPI(path, maxAge = 30000) {
+  const existing = reads.get(path);
+  if (existing && (!existing.expires || existing.expires > Date.now())) return existing.request;
+  const entry = { expires: 0 };
+  entry.request = api(path).then(
+    (data) => {
+      entry.expires = Date.now() + maxAge;
+      return data;
+    },
+    (error) => {
+      if (reads.get(path) === entry) reads.delete(path);
+      throw error;
+    },
+  );
+  reads.delete(path);
+  reads.set(path, entry);
+  if (reads.size > 32) reads.delete(reads.keys().next().value);
+  return entry.request;
 }
 
 export function h(tag, attrs = {}, ...children) {
@@ -71,6 +99,8 @@ export async function api(path, { method = "GET", body, authorization } = {}) {
       window.dispatchEvent(new CustomEvent("nodema:session-expired"));
     throw new ApiError(code, response.status);
   }
+  if (!sessionRequest && !["GET", "HEAD"].includes(method) &&
+      !["/exports/preview", "/naming-rules/preview"].includes(path)) invalidateReads();
   return data;
 }
 
