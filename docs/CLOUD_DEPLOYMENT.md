@@ -8,11 +8,18 @@
 | API | https://nodema-api.simb.workers.dev；管理接口需要管理员鉴权 |
 | Echo | https://nodema-echo.simb.workers.dev；仅返回调用者的观测信息 |
 | 源码 | https://github.com/Samiya321/nodema |
-| 数据库 | 自建 PostgreSQL 17.12，用户指定云主机，目录 `/root/nodema-postgres`；当前 schema `0027_node_observations`。旧 Neon 项目已删除 |
+| 数据库 | 自建 PostgreSQL 17.12，用户指定云主机，目录 `/root/nodema-postgres`；当前 schema `0028_node_classification`。旧 Neon 项目已删除 |
 | API 数据库权限 | 独立角色，授予业务 DML；数据库迁移使用单独的 owner 连接 |
 | Hyperdrive | 经 Workers VPC 和 Cloudflare Tunnel 连接本机数据库；禁用查询缓存，源站连接数限制 5 |
 
 管理员密钥、数据库连接、HMAC/AES 密钥和 GitHub 调度 token 保存在本地 `private/` 以及对应平台 Secrets 中，不在本页或 Git 仓库公开。
+
+## 2026-11-25 第二十八次发布：节点归属与机场资格
+
+- 运行提交 `8c49141`，schema `0028_node_classification`，API Worker `97dfbdb7-fa2f-44c7-979e-918a30e31504`，Pages `887043d6-8009-4b26-a5f5-929453513258`。[Pages 部署](https://887043d6.nodema-dashboard.pages.dev) · [main CI](https://github.com/Samiya321/nodema/actions/runs/45601816874)
+- 新鲜[加密备份](https://github.com/Samiya321/nodema/actions/runs/45600255297)恢复至独立 PostgreSQL 17，通过 `0027 → 0028 → 0027 → 0028`。往返时 75,379 个节点、1,514 个来源、84,573 条来源关联和 196,139 条检测结果计数一致。两个任务专用隔离库已移除。
+- 481 项 Python 和 41 项 Worker 检查通过。浏览器验证列表标签、历史机场资格、人工确认、撤销、手机布局和键盘操作。生产静态资源散列、health、匿名 401、认证 readiness、列表与详情已验证。人工写入与已发布订阅失效用合成数据验证。
+- 生产实测机场候选 55,314 → 52,858，自建候选 16,867。上线时人工确认记录 0 条，正在提供下载的订阅 0 个。
 
 ## 2026-11-25 第二十七次发布：节点浏览和扫码
 
