@@ -55,11 +55,16 @@ def test_queue_stable_link_versions_and_recovery(service, monitor_settings, fixt
     )
 
 
-@pytest.mark.parametrize("change", ["node", "source", "membership", "airport", "config"])
+@pytest.mark.parametrize(
+    "change", ["node", "source", "membership", "airport", "airport_membership", "config"]
+)
 def test_selected_node_changes_block_old_file_immediately(
     service, monitor_settings, fixture_bytes, change
 ):
     exports, node_id = setup(service, monitor_settings, fixture_bytes)
+    if change == "airport_membership":
+        with service.sessions.begin() as session:
+            session.execute(sa.text("UPDATE sources SET kind='AIRPORT'"))
     profile = exports.create("uri", build=True)
     identifier = UUID(profile["id"])
     with service.sessions.begin() as session:
@@ -67,7 +72,7 @@ def test_selected_node_changes_block_old_file_immediately(
             session.execute(sa.update(Node).where(Node.id == node_id).values(enabled=False))
         elif change == "source":
             session.execute(sa.text("UPDATE sources SET enabled=false"))
-        elif change == "membership":
+        elif change in {"membership", "airport_membership"}:
             session.execute(sa.text("UPDATE node_sources SET is_present=false"))
         elif change == "airport":
             session.execute(sa.text("UPDATE sources SET kind='AIRPORT', enabled=false"))

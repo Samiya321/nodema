@@ -142,6 +142,10 @@ class Node(Base):
         ),
         sa.CheckConstraint("credential_key ~ '^[0-9a-f]{32}$'", name="credential_key"),
         sa.CheckConstraint(
+            "classification_override IN ('SELF_HOSTED','AIRPORT')", name="classification_override"
+        ),
+        sa.CheckConstraint("char_length(classification_note)<=160", name="classification_note"),
+        sa.CheckConstraint(
             "checked_days>=0 AND available_days>=0 AND available_days<=checked_days",
             name="lifetime_days",
         ),
@@ -160,6 +164,9 @@ class Node(Base):
     credential_key: Mapped[str | None] = mapped_column(sa.Text)
     # Set by nodema_mark_shared_credentials(): >=5 nodes on >=2 servers share the key.
     credential_shared: Mapped[bool] = mapped_column(server_default=sa.false())
+    classification_override: Mapped[str | None] = mapped_column(sa.Text)
+    classification_note: Mapped[str | None] = mapped_column(sa.Text)
+    classification_updated_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
     line_type: Mapped[str] = mapped_column(sa.Text, server_default="UNKNOWN")
     enabled: Mapped[bool] = mapped_column(server_default=sa.true())
     checked_days: Mapped[int] = mapped_column(server_default="0")

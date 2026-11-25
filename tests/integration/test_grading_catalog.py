@@ -126,7 +126,7 @@ def test_grades_are_computed_filtered_sorted_and_explained(
             {"f": '{"vantage":"CN"}'},
         )
         fields = compact["fields"]
-        assert fields[-17:] == [
+        assert fields[-18:] == [
             "quality_grade",
             "quality_score",
             "peak_rtt_ms",
@@ -144,6 +144,7 @@ def test_grades_are_computed_filtered_sorted_and_explained(
             "access_evidence",
             "limiting_vantage",
             "endpoint_verified",
+            "classification_basis",
         ]
         assert compact["items"][0][fields.index("quality_grade")] == "S"
         access = session.scalar(sa.text("SELECT nodema_node_access(:id)"), {"id": node["id"]})

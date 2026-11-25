@@ -148,6 +148,7 @@ export const ERRORS = {
   EMPTY_INPUT: "请至少输入一项内容。",
   INVALID_SOURCE_LABEL: "名称不能为空，也不能包含链接或控制字符。",
   INVALID_SOURCE_KIND: "来源类别无效。",
+  INVALID_NODE_CLASSIFICATION: "请选择有效的归属，依据最多 160 字且不可含链接或控制字符。",
   INVALID_SUBSCRIPTION_USER_AGENT: "User-Agent 只能包含可见 ASCII 字符，最多 512 个。",
   DISPATCH_NOT_CONFIGURED: "还没有配置 GitHub 调度（仓库与令牌）。",
   DISPATCH_FAILED: "提交到 GitHub Actions 失败，请稍后重试；请求已保存。",

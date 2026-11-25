@@ -168,6 +168,29 @@ print(json.dumps(s.sync_source(UUID('${sourceId}')),default=str))`),
     assert.equal(result.status, "SUCCESS");
     nodeId = (await (await request("/api/nodes")).json()).items[0].id;
   });
+  await t.test("manual classification is authenticated, visible and reversible", async () => {
+    const path = `/api/nodes/${nodeId}/classification`;
+    const data = { group: "AIRPORT", note: "Known synthetic subscription" };
+    assert.equal((await request(path, { method: "PATCH", data, authenticated: false })).status, 401);
+    const saved = await request(path, { method: "PATCH", data });
+    assert.equal(saved.status, 200);
+    assert.equal((await saved.json()).status, "UPDATED");
+    const again = await request(path, { method: "PATCH", data });
+    assert.equal((await again.json()).status, "UNCHANGED");
+    const node = await (await request(`/api/nodes/${nodeId}`)).json();
+    assert.equal(node.classification_basis, "MANUAL");
+    assert.equal(node.classification.node_group, "AIRPORT");
+    assert.equal(node.classification.classification_note, data.note);
+    assert.ok(node.classification.classification_updated_at);
+    const compact = await (await request("/api/nodes?view=dashboard&node_group=AIRPORT")).json();
+    assert.equal(compact.items[0][compact.fields.indexOf("classification_basis")], "MANUAL");
+    const invalid = await request(path, { method: "PATCH", data: {group: "AIRPORT", note: "https://fixture.invalid/"} });
+    assert.equal(invalid.status, 400);
+    assert.equal((await invalid.json()).error_code, "INVALID_NODE_CLASSIFICATION");
+    const cleared = await request(path, { method: "PATCH", data: { group: null } });
+    assert.equal(cleared.status, 200);
+    assert.equal((await (await request(`/api/nodes/${nodeId}`)).json()).classification_basis, "UNCONFIRMED");
+  });
   await t.test(
     "imports, edits and per-source sync only record requests; sync and tests start explicitly",
     async () => {
@@ -328,7 +351,7 @@ print(json.dumps(s.sync_source(UUID('${sourceId}')),default=str))`),
         assert.equal(outdated.checks.schema, false);
       } finally {
         await db.query(
-          "UPDATE alembic_version SET version_num='0027_node_observations'",
+          "UPDATE alembic_version SET version_num='0028_node_classification'",
         );
         await db.end();
       }

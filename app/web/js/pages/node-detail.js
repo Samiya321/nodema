@@ -1,8 +1,9 @@
-import { IP_TYPE, KIND, ago, api, badge, busy, date, dialog, empty, errorText, field, h, ms, pct, route, select, table, toast } from "../core.js";
+import { IP_TYPE, ago, api, badge, busy, date, dialog, empty, errorText, field, h, ms, pct, route, select, table, toast } from "../core.js";
 import { testNodes } from "../strip.js";
 import { showShare } from "../share.js";
 import { ACCESS_EVIDENCE, VANTAGES, gradeBadge, vantageName } from "../grades.js";
 import { copyPageLink, exportHref, nodeHref, pageHref, sourcePath } from "../lineage.js";
+import { classificationLabel, classificationSection } from "./node-classification.js";
 
 const MEASURE = { FULL: "完整代理验证", PREFLIGHT: "入口预检", SKIPPED: "本轮跳过" };
 const BAND = { S: "优", A: "良", B: "中", C: "差" };
@@ -87,12 +88,12 @@ export async function render(root, { params, returnTo, refresh, isCurrent }) {
       badge(n.status),
       route(n.entry_country, n.exit_country),
       h("span", { class: "muted" }, [n.short_id, n.protocol].filter(Boolean).join(" · ")),
-      h("span", { class: "tag " + (n.node_group === "AIRPORT" ? "air" : "own") }, KIND[n.node_group]),
+      h("span", { class: "tag " + (n.node_group === "AIRPORT" ? "air" : "own") }, classificationLabel(n)),
       h("span", { class: "muted" }, `最近检测 ${ago(n.last_checked_at)}`),
     ),
     h("div", { class: "row wrap" },
       h("button", { type: "button", class: "primary", onclick: () => showShare(n) }, "二维码 / 分享"),
-      h("button", { type: "button", onclick: () => testNodes([n.id]) }, "检测此节点"),
+      h("button", { type: "button", disabled: n.eligible === false, onclick: () => testNodes([n.id]) }, "检测此节点"),
       h("button", { type: "button", onclick: (e) => toggleEnabled(e.currentTarget, n, refresh) }, n.enabled ? "停用此节点" : "启用此节点"),
       h("button", { type: "button", onclick: () => annotate(n.id, refresh) }, "编辑标签"),
     ),
@@ -107,6 +108,7 @@ export async function render(root, { params, returnTo, refresh, isCurrent }) {
       ),
       weekTimeline(n.observations?.days),
     ),
+    classificationSection(n, refresh),
     lazyDetail("接入测量与分级依据", async () => accessSection(n, await api(path + "/access"), vantage)),
     detailFold("来源与订阅",
       h("h2", {}, "直接来源"),

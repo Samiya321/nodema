@@ -328,7 +328,7 @@ window.addEventListener("nodema:session-expired", () => {
   if (!app.hidden) showLogin(expiredMessage);
 });
 window.addEventListener("hashchange", () => {
-  document.querySelector("dialog.node-share")?.close();
+  document.querySelector("dialog.node-share, dialog.node-classification-dialog")?.close();
   render();
 });
 

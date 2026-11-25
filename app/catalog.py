@@ -294,11 +294,14 @@ class Catalog:
         if node is None:
             raise AssetError("NODE_NOT_FOUND")
         with self.sessions() as session:
-            lineage, observations = session.execute(
-                sa.text("SELECT nodema_node_lineage(:id),nodema_node_observations(:id)"),
+            lineage, observations, classification = session.execute(
+                sa.text("""SELECT nodema_node_lineage(:id),nodema_node_observations(:id),
+                  (SELECT to_jsonb(c)-'node_id'-'provider_id'-'credential_shared'
+                   FROM nodema_node_classification c WHERE c.node_id=:id)"""),
                 {"id": node_id},
             ).one()
             node["observations"] = observations
+            node["classification"] = classification
             for source in lineage["sources"]:
                 source["source_id"] = UUID(source["source_id"])
                 for key in ("first_seen_at", "last_seen_at"):

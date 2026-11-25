@@ -50,7 +50,7 @@ export function display(key, value) {
   return value;
 }
 
-const LABELS = { status: "状态", protocol: "协议", node_group: "类别", provider_id: "机场", exit_country: "落地", source_id: "来源", best_per_server: "去重" };
+const LABELS = { status: "状态", protocol: "协议", node_group: "检测分组", provider_id: "机场", exit_country: "落地", source_id: "来源", best_per_server: "去重" };
 export const label = (key) => LABELS[key] || SPECS.get(key)?.[1].replace(/（.*?）/g, "") || key;
 
 // Opens the panel; onApply receives {key: value|""} for every panel key.
@@ -61,7 +61,7 @@ export function openPanel({ filters, providers, countries, onApply }) {
     { class: "panel-common" },
     field("状态", select("status", STATUS, filters.status || AVAILABLE)),
     field("协议", select("protocol", [["", "全部"], ...PROTOCOLS.map((p) => [p, p])], filters.protocol || "")),
-    field("类别", select("node_group", GROUPS, filters.node_group || "")),
+    field("检测分组", select("node_group", GROUPS, filters.node_group || "")),
     field("机场", select("provider_id", [["", "全部"], ...providers.map((p) => [p.id, p.name])], filters.provider_id || "")),
     field("落地国家", select("exit_country", [["", "全部"], ...countries.map((c) => [c, `${countryName(c)} ${c}`])], filters.exit_country || "")),
     h(

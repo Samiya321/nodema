@@ -45,7 +45,7 @@ const sourceColumns =
   "id,name,type,format_hint,enabled,sync_interval_seconds,content_hash,applied_hash,parser_version,last_checked_at,sync_requested_at,last_synced_at,last_sync_status,last_error_code,last_parse_summary,revision,deleted_at," +
   "kind,detected_kind,parent_source_id,origin_label,user_agent,provider_id,traffic_upload,traffic_download,traffic_total,expires_at,userinfo_at,profile_title,profile_url,last_success_at,created_at," +
   "substring(convert_from(url_data,'UTF8') from '^[A-Za-z]+://([^/:?#]+)') AS url_host";
-const SCHEMA_REVISION = "0027_node_observations";
+const SCHEMA_REVISION = "0028_node_classification";
 // Imports and edits never start Actions; the dashboard asks the user to sync/test.
 const MANUAL_PIPELINE = { dispatched: false, reason: "MANUAL_SYNC" };
 function sourceKind(value: unknown): string {
@@ -564,6 +564,24 @@ export async function handle(
         });
       }
     }
+    const classificationMatch = /^\/api\/nodes\/([^/]+)\/classification$/.exec(path);
+    if (classificationMatch && method === "PATCH") {
+      const id = uuid(classificationMatch[1]);
+      const data = await body(request);
+      if (
+        Object.keys(data).some((key) => key !== "group" && key !== "note") ||
+        (data.group !== null && typeof data.group !== "string") ||
+        (data.note != null && typeof data.note !== "string")
+      ) throw new SafeError("INVALID_REQUEST");
+      const status = (await rows(
+        "SELECT nodema_set_node_classification($1,$2,$3) AS status",
+        [id, data.group, data.note ?? null],
+      ))[0]?.status;
+      if (status === "NODE_NOT_FOUND") throw new SafeError(status, 404);
+      if (status !== "UPDATED" && status !== "UNCHANGED") throw new SafeError("INVALID_NODE_CLASSIFICATION");
+      catalogChanged ||= status === "UPDATED";
+      return json({ status });
+    }
     const shareMatch = /^\/api\/nodes\/([^/]+)\/share$/.exec(path);
     if (shareMatch && method === "GET") {
       // Credentials: fetched only on an explicit click, never cached (no-store).
@@ -626,7 +644,9 @@ export async function handle(
         ).items[0];
         if (!node) throw new SafeError("NODE_NOT_FOUND", 404);
         const detail = (await rows(
-          "SELECT nodema_node_lineage($1) AS lineage,nodema_node_observations($1) AS observations",
+          `SELECT nodema_node_lineage($1) AS lineage,nodema_node_observations($1) AS observations,
+            (SELECT to_jsonb(c)-'node_id'-'provider_id'-'credential_shared'
+             FROM nodema_node_classification c WHERE c.node_id=$1) AS classification`,
           [id],
         ))[0];
         const lineage = detail.lineage as Row;
@@ -635,6 +655,7 @@ export async function handle(
           sources: lineage.sources,
           exports: lineage.exports,
           observations: detail.observations,
+          classification: detail.classification,
           published_observation:
             (
               await rows(

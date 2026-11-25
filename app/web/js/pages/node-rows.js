@@ -1,8 +1,9 @@
 // Node columns and row rendering. Grouped views also use the client-side comparators.
-import { IP_TYPE, KIND, ago, badge, flag, h, ms } from "../core.js";
+import { IP_TYPE, ago, badge, flag, h, ms } from "../core.js";
 import { nodeHref } from "../lineage.js";
 import { ACCESS_EVIDENCE, GRADES, gradeBadge, isCarrier, vantageName } from "../grades.js";
 import { showShare } from "../share.js";
+import { classificationLabel } from "./node-classification.js";
 
 // The vantage the list is showing; rows (and the detail dialog) render grades for it.
 let vantage = "CN";
@@ -148,7 +149,7 @@ function operatorCell(n) {
 export function nodeRow(n, picked, onPick) {
   const ipType = n.exit_ip_type ? IP_TYPE[n.exit_ip_type] + (n.exit_ip_proxy ? "·代理标记" : "") : "";
   const flags = n.identity_flags || 0;
-  const meta = [n.short_id, n.protocol, KIND[n.node_group] || "", ipType, n.server_node_count > 1 ? `同 IP ${n.server_node_count} 个` : "", flags & 6 ? "归属有分歧" : "", flags & 8 ? "历史落地" : "", n.enabled ? "" : "已停用", n.present_source_count ? "" : "上游已移除"].filter(Boolean);
+  const meta = [n.short_id, n.protocol, classificationLabel(n), ipType, n.server_node_count > 1 ? `同 IP ${n.server_node_count} 个` : "", flags & 6 ? "归属有分歧" : "", flags & 8 ? "历史落地" : "", n.enabled ? "" : "已停用", n.present_source_count ? "" : "上游已移除"].filter(Boolean);
   return h(
     "tr",
     { class: (n.enabled ? "" : "dim ") + (picked ? "picked" : "") },

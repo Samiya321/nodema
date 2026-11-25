@@ -6,7 +6,9 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 import sqlalchemy as sa
+from fastapi.testclient import TestClient
 
+from app.api import create_app
 from app.catalog import Catalog
 from app.checker.health import Observation
 from app.database.models import Provider, Source
@@ -204,6 +206,58 @@ def test_airport_headers_classify_group_and_filter_info_nodes(service):
 def test_expired_or_exhausted_airport_is_not_tested(service, headers):
     airport_source(service, headers)
     assert not service.list_nodes()[0]["eligible"]
+
+
+def test_removed_airport_history_and_manual_correction(service, monitor_settings):
+    first, _ = airport_source(service, airport_headers())
+    second = service.create_source(
+        name="Other subscription", source_type=SourceType.RAW_TEXT, payload=URI, kind="AIRPORT"
+    )["id"]
+    normal = service.create_source(
+        name="Ordinary import", source_type=SourceType.RAW_TEXT, payload=URI
+    )
+    sync_all(service)
+    node_id = service.list_nodes()[0]["id"]
+    catalog = Catalog(service, monitor_settings)
+    assert catalog.node(node_id)["classification_basis"] == "AIRPORT_SOURCE"
+
+    service.fetcher.remote = AssetError("SOURCE_FETCH_FAILED")
+    assert service.sync_source(first)["status"] == "FAILED"
+    assert catalog.node(node_id)["eligible"]
+
+    service.fetcher.remote = b"trojan://synthetic-replacement@other.example:443#Replacement"
+    assert service.sync_source(first)["status"] == "SUCCESS"
+    assert catalog.node(node_id)["eligible"]  # The second airport still supplies it.
+    with service.sessions.begin() as session:
+        session.execute(
+            sa.text("UPDATE node_sources SET is_present=false WHERE source_id=:source"),
+            {"source": second},
+        )
+    historical = catalog.node(node_id)
+    assert historical["classification_basis"] == "HISTORICAL_AIRPORT"
+    assert historical["node_group"] == "AIRPORT"
+    assert not historical["eligible"]
+    assert any(s["source_id"] == normal["id"] and s["is_present"] for s in historical["sources"])
+    assert (
+        ScanService(service, monitor_settings).create(
+            scope="AIRPORT", manual=True, node_ids=[node_id]
+        )["node_count"]
+        == 0
+    )
+
+    client = TestClient(create_app(monitor_settings, assets=service))
+    headers = {"Authorization": "Bearer " + monitor_settings.admin_password.get_secret_value()}
+    path = f"/api/nodes/{node_id}/classification"
+    response = client.patch(
+        path, headers=headers, json={"group": "SELF_HOSTED", "note": "Operator verified"}
+    )
+    assert response.json() == {"status": "UPDATED"}
+    detail = client.get(f"/api/nodes/{node_id}", headers=headers).json()
+    assert detail["eligible"] and detail["node_group"] == "SELF_HOSTED"
+    assert detail["classification"]["classification_note"] == "Operator verified"
+    assert detail["classification"]["classification_updated_at"]
+    assert client.patch(path, headers=headers, json={"group": None}).status_code == 200
+    assert not catalog.node(node_id)["eligible"]
 
 
 def test_scan_scope_separates_airport_and_self_hosted(service, monitor_settings):

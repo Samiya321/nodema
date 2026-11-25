@@ -55,6 +55,12 @@ class EnableUpdate(BaseModel):
     enabled: bool
 
 
+class ClassificationUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+    group: str | None
+    note: str | None = None
+
+
 class TemplateUpdate(BaseModel):
     template: str = Field(max_length=200)
 
@@ -402,6 +408,17 @@ def create_app(settings=None, *, assets=None):
     def update_node(node_id: UUID, body: EnableUpdate):
         assets.set_node_enabled(node_id, body.enabled)
         return {"status": "UPDATED"}
+
+    @app.patch("/api/nodes/{node_id}/classification", dependencies=auth)
+    def update_classification(node_id: UUID, body: ClassificationUpdate):
+        with assets.sessions.begin() as session:
+            status = session.scalar(
+                sa.text("SELECT nodema_set_node_classification(:id,:chosen,:note)"),
+                {"id": node_id, "chosen": body.group, "note": body.note},
+            )
+            if status not in {"UPDATED", "UNCHANGED"}:
+                raise AssetError(status)
+        return {"status": status}
 
     @app.get("/api/nodes/{node_id}/aliases", dependencies=auth)
     def aliases(node_id: UUID):
