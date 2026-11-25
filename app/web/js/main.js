@@ -1,4 +1,4 @@
-import { api, errorText, fail, h, invalidateReads, invalidateSession } from "./core.js";
+import { api, errorText, fail, getReadRevision, h, invalidateReads, invalidateSession } from "./core.js";
 import { renderStrip, refreshStrip, stopStrip } from "./strip.js";
 import { pageHref } from "./lineage.js";
 
@@ -35,9 +35,10 @@ document.querySelector(".skip").addEventListener("click", (event) => {
   const target = loginForm.hidden ? loginTitle : loginToken;
   (app.hidden ? target : page).focus();
 });
-let rendering = 0;
 let expiryTimer;
-let shown = "";
+let activeView;
+let nodeList;
+history.scrollRestoration = "manual";
 
 function currentRoute() {
   const [name, query = ""] = location.hash.replace(/^#\/?/, "").split("?");
@@ -60,61 +61,116 @@ export function go(name, params) {
   location.hash = pageHref(route.name, route.params);
 }
 
+function saveNodeList(view) {
+  return {
+    view,
+    focus: view.root?.contains(document.activeElement) ? document.activeElement : null,
+    x: window.scrollX,
+    y: window.scrollY,
+    tables: Array.from(view.root?.querySelectorAll(".table-wrap") || [],
+      (table) => [table, table.scrollLeft]),
+  };
+}
+
+function restoreNodeList(saved) {
+  for (const [table, x] of saved.tables) table.scrollLeft = x;
+  window.scrollTo(saved.x, saved.y);
+  saved.focus?.focus({ preventScroll: true });
+}
+
 async function render() {
   if (app.hidden) return;
   const { name, params } = currentRoute();
-  const ticket = ++rendering;
+  const href = pageHref(name, params);
+  const isDetail = name === "nodes" && params.has("node");
+  const isNodeList = name === "nodes" && !isDetail;
+  const previous = activeView;
+  let returnTo = isDetail ? history.state?.nodemaNodeList : null;
+  if (isDetail && previous?.isNodeList) {
+    nodeList = saveNodeList(previous);
+    returnTo ||= { href: previous.href, direct: true };
+  } else if (isDetail && !returnTo && previous?.returnTo) {
+    returnTo = { href: previous.returnTo.href, direct: false };
+  }
+  if (returnTo && !history.state?.nodemaNodeList) {
+    history.replaceState({ ...history.state, nodemaNodeList: returnTo }, "");
+  }
+  const saved = isNodeList && previous?.returnTo?.href === href && nodeList?.view.href === href ? nodeList : null;
+  if (isNodeList) nodeList = null;
   for (const link of document.querySelectorAll(".rail a[data-page]")) {
     if (link.dataset.page === name) link.setAttribute("aria-current", "page");
     else link.removeAttribute("aria-current");
   }
   document.querySelector(".nav-more").dataset.current = String(name === "ops" || name === "settings");
   document.querySelector(".nav-more").open = false;
-  const [, title, load] = PAGES.find(([key]) => key === name);
+  const [, title, loadPage] = PAGES.find(([key]) => key === name);
+  const load = isDetail ? () => import("./pages/node-detail.js") : loadPage;
   const screen = [name, ...["tab", "node", "source", "subscription", "scan"].map((key) => params.get(key))].join("/");
   document.title = title + " · Nodema";
+  if (saved?.view.ready && saved.view.revision === getReadRevision()) {
+    activeView = saved.view;
+    page.replaceChildren(activeView.root);
+    page.removeAttribute("aria-busy");
+    restoreNodeList(saved);
+    return;
+  }
+  const view = { href, screen, isNodeList, returnTo, revision: getReadRevision() };
+  activeView = view;
+  const isCurrent = () => activeView === view;
+  const refresh = () => {
+    if (!isCurrent()) return;
+    invalidateReads();
+    return render();
+  };
   page.setAttribute("aria-busy", "true");
-  const pending = h("p", { class: "page-loading", role: "status" }, "正在加载…");
-  if (shown !== screen) {
+  const sameScreen = previous?.screen === screen;
+  const pending = h("p", { class: "page-loading", role: "status" }, h("span", {}, sameScreen ? "正在更新…" : "正在加载…"));
+  if (!sameScreen) {
     page.replaceChildren(h("div", { class: "page" }, h("h1", { class: "page-title" }, title), pending));
     window.scrollTo(0, 0);
     page.scrollTop = 0;
-    shown = screen;
   } else {
     page.querySelector(".page-loading")?.remove();
     page.prepend(pending);
   }
+  const root = h("div", { class: "page" });
   try {
     const module = await load();
-    const root = h("div", { class: "page" });
+    if (!isCurrent()) return;
     // Pages pass lists and optional (null) sections; flatten them like h() does.
     const append = root.append.bind(root);
     root.append = (...items) => append(...items.flat(Infinity).filter((x) => x !== null && x !== undefined && x !== false));
     const work = module.render(root, {
-      params, go, refresh: () => { invalidateReads(); render(); }, refreshStrip,
-      isCurrent: () => ticket === rendering,
+      params, go, refresh, refreshStrip, isCurrent, returnTo,
     });
-    if (root.childNodes.length) {
+    if (!sameScreen && root.childNodes.length) {
       root.append(pending);
       page.replaceChildren(root);
     }
     await work;
-    if (ticket !== rendering) return;
-    page.replaceChildren(root);
+    if (!isCurrent()) return;
+    view.root = root;
+    view.ready = true;
+    if (root.parentNode !== page) page.replaceChildren(root);
+    if (saved) restoreNodeList(saved);
   } catch (error) {
-    if (ticket !== rendering) return;
-    page.replaceChildren(
-      h(
-        "div",
-        { class: "empty" },
-        h("p", { class: "empty-title" }, "页面加载失败"),
-        h("p", {}, errorText(error?.code || error?.message)),
-        h("button", { type: "button", onclick: () => { invalidateReads(); render(); } }, "重新加载"),
-      ),
+    if (!isCurrent()) return;
+    if (previous?.href === href && previous.ready) {
+      activeView = previous;
+      page.removeAttribute("aria-busy");
+      fail(error);
+      return;
+    }
+    const failure = h("div", { class: "empty", role: "alert" },
+      h("p", { class: "empty-title" }, "页面加载失败"),
+      h("p", {}, errorText(error?.code || error?.message)),
+      h("button", { type: "button", onclick: refresh }, "重新加载"),
     );
+    if (root.parentNode === page && pending.parentNode === root) pending.replaceWith(failure);
+    else page.replaceChildren(failure);
   } finally {
     pending.remove();
-    if (ticket === rendering) page.removeAttribute("aria-busy");
+    if (isCurrent()) page.removeAttribute("aria-busy");
   }
 }
 
@@ -137,8 +193,7 @@ function showLogin(message = "", retry = false) {
   if (!app.hidden) {
     app.hidden = true;
     invalidateSession();
-    rendering++;
-    shown = "";
+    activeView = nodeList = undefined;
     page.removeAttribute("aria-busy");
     page.replaceChildren();
     stopStrip();
@@ -272,7 +327,10 @@ more.addEventListener("keydown", (event) => {
 window.addEventListener("nodema:session-expired", () => {
   if (!app.hidden) showLogin(expiredMessage);
 });
-window.addEventListener("hashchange", render);
+window.addEventListener("hashchange", () => {
+  document.querySelector("dialog.node-share")?.close();
+  render();
+});
 
 try {
   sessionStorage.removeItem("nodema.session");

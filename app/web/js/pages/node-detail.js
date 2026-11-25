@@ -2,7 +2,7 @@ import { IP_TYPE, KIND, ago, api, badge, busy, date, dialog, empty, errorText, f
 import { testNodes } from "../strip.js";
 import { showShare } from "../share.js";
 import { ACCESS_EVIDENCE, VANTAGES, gradeBadge, vantageName } from "../grades.js";
-import { copyPageLink, exportHref, nodeHref, sourcePath } from "../lineage.js";
+import { copyPageLink, exportHref, nodeHref, pageHref, sourcePath } from "../lineage.js";
 
 const MEASURE = { FULL: "完整代理验证", PREFLIGHT: "入口预检", SKIPPED: "本轮跳过" };
 const BAND = { S: "优", A: "良", B: "中", C: "差" };
@@ -31,21 +31,52 @@ function pairs(entries) {
   return h("dl", { class: "pairs" }, entries.flatMap(([k, v]) => [h("dt", {}, k), h("dd", {}, v ?? "—")]));
 }
 
-export async function nodeDetail(root, id, requestedVantage, refresh, isCurrent) {
+function detailFold(title, ...children) {
+  return h("details", { class: "panel node-fold" }, h("summary", {}, title), h("div", { class: "stack" }, children));
+}
+
+function lazyDetail(title, read) {
+  const content = h("div", { class: "stack" });
+  const section = detailFold(title, content);
+  async function load() {
+    content.replaceChildren(h("p", { class: "muted", role: "status" }, "正在加载…"));
+    try {
+      content.replaceChildren(await read());
+    } catch (error) {
+      content.replaceChildren(
+        h("p", { class: "form-error", role: "alert" }, errorText(error.code)),
+        h("button", { type: "button", onclick: load }, "重试"),
+      );
+    }
+  }
+  section.addEventListener("toggle", () => {
+    if (section.open && !content.hasChildNodes()) void load();
+  });
+  return section;
+}
+
+export async function render(root, { params, returnTo, refresh, isCurrent }) {
+  const id = params.get("node");
+  const requestedVantage = params.get("vantage");
+  const heading = h("h1", { class: "page-title" }, "节点详情");
+  const header = h("header", { class: "title-row" }, heading);
+  root.append(h("a", {
+    class: "return-link", href: returnTo?.href || pageHref("nodes", requestedVantage ? { vantage: requestedVantage } : {}),
+    onclick: (event) => {
+      if (!returnTo?.direct || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      event.preventDefault();
+      history.back();
+    },
+  }, "返回节点列表"), header);
   const path = `/nodes/${encodeURIComponent(id)}`;
-  const [n, access] = await Promise.all([
-    api(path + (requestedVantage ? `?vantage=${encodeURIComponent(requestedVantage)}` : "")),
-    api(path + "/access").catch(() => null),
-  ]);
+  const n = await api(path + (requestedVantage ? `?vantage=${encodeURIComponent(requestedVantage)}` : ""));
   if (!isCurrent()) return;
   const vantage = n.vantage || "CN";
   const obs = n.published_observation;
   const body = h("div", { class: "sheet-body lineage-body stack" });
-  root.replaceChildren(
-    h("a", { class: "return-link", href: "#/nodes" }, "返回节点列表"),
-    h("header", { class: "title-row" }, h("h1", { class: "page-title" }, n.name), copyPageLink(nodeHref(n.id, vantage))),
-    body,
-  );
+  heading.textContent = n.name;
+  header.append(copyPageLink(nodeHref(n.id, vantage)));
+  root.append(body);
   const aliases = h("div");
   // Native append() would print "null" for skipped sections; drop them first.
   const add = (...items) => body.append(...items.filter((x) => x !== null && x !== undefined && x !== false));
@@ -55,10 +86,30 @@ export async function nodeDetail(root, id, requestedVantage, refresh, isCurrent)
       { class: "detail-head" },
       badge(n.status),
       route(n.entry_country, n.exit_country),
+      h("span", { class: "muted" }, [n.short_id, n.protocol].filter(Boolean).join(" · ")),
       h("span", { class: "tag " + (n.node_group === "AIRPORT" ? "air" : "own") }, KIND[n.node_group]),
       h("span", { class: "muted" }, `最近检测 ${ago(n.last_checked_at)}`),
     ),
-    h("section", { class: "panel stack" }, h("h2", {}, "直接来源"),
+    h("div", { class: "row wrap" },
+      h("button", { type: "button", class: "primary", onclick: () => showShare(n) }, "二维码 / 分享"),
+      h("button", { type: "button", onclick: () => testNodes([n.id]) }, "检测此节点"),
+      h("button", { type: "button", onclick: (e) => toggleEnabled(e.currentTarget, n, refresh) }, n.enabled ? "停用此节点" : "启用此节点"),
+      h("button", { type: "button", onclick: () => annotate(n.id, refresh) }, "编辑标签"),
+    ),
+    h("section", { class: "panel stack" },
+      h("h2", {}, "质量概览"),
+      h("div", { class: "row wrap" },
+        gradeBadge(n.quality_grade, vantage) || h("span", { class: "muted" }, n.exit_asn === 13335 ? "CF 落地 · 不分级" : "当前暂无等级"),
+        n.quality_grade && n.limiting_vantage && vantage === "CN" ? h("span", { class: "muted" }, `${vantageName(n.limiting_vantage)}短板`) : null,
+        n.quality_grade ? h("span", { class: "muted" }, n.unreachable ? "入口重复失败" : n.endpoint_verified ? "端点已确认"
+          : n.access_evidence === "ENDPOINT" ? "端点待补测" : ACCESS_EVIDENCE[n.access_evidence] || "接入待测") : null,
+        n.checked_7d > 0 ? h("span", { class: "muted" }, `近 7 天可用 ${n.avail_7d}/${n.checked_7d} 个受检日`) : null,
+      ),
+      weekTimeline(n.observations?.days),
+    ),
+    lazyDetail("接入测量与分级依据", async () => accessSection(n, await api(path + "/access"), vantage)),
+    detailFold("来源与订阅",
+      h("h2", {}, "直接来源"),
       table([
         { label: "来源路径", render: (s) => sourcePath(s.chain) },
         { label: "关联", render: (s) => s.is_present ? "上游仍包含" : "上游已移除" },
@@ -66,22 +117,30 @@ export async function nodeDetail(root, id, requestedVantage, refresh, isCurrent)
         { label: "首次收录", render: (s) => date(s.first_seen_at) },
         { label: "最近出现", render: (s) => date(s.last_seen_at) },
       ], n.sources, { empty: empty("没有保留来源记录") }),
-    ),
-    n.exports?.length ? h("section", { class: "panel stack" }, h("h2", {}, "包含此节点的导出订阅"),
-      h("ul", { class: "notes" }, n.exports.map((item) => h("li", {},
+      h("h2", {}, "包含此节点的订阅"),
+      n.exports?.length ? h("ul", { class: "notes" }, n.exports.map((item) => h("li", {},
         h("a", { href: exportHref(item.id) }, item.name),
         h("span", { class: "muted small" }, `v${item.version}${item.serving ? "" : " · 当前未提供下载"}`),
-      ))),
-    ) : null,
-    accessSection(n, access, vantage),
-    weekTimeline(n.observations?.days),
+      ))) : h("p", { class: "muted" }, "当前没有包含此节点的订阅"),
+      h("div", {}, h("button", { type: "button", onclick: (e) =>
+        busy(e.currentTarget, async () => {
+          const rows = await api(path + "/aliases");
+          aliases.replaceChildren(table([
+            { label: "来源", render: (r) => r.source_name },
+            { label: "原始名称", render: (r) => r.aliases.join("、") },
+            { label: "上游仍包含", render: (r) => (r.is_present ? "是" : "否") },
+          ], rows));
+        }),
+      }, "查看原始名称")),
+      aliases,
+    ),
     obs?.echo_source === "fallback"
       ? h("p", { class: "callout" }, "备用地址已确认代理连通，本轮未观测到出口 IP。已有落地资料来自历史检测，不能用本次检测时间判断其新鲜度。")
       : null,
     obs?.precheck_metadata?.direct_exit_match === true
       ? h("p", { class: "callout" }, "本轮代理出口与同地址族的 Runner 直连出口一致，建议复核代理链路。")
       : null,
-    h(
+    detailFold("入口、落地与检测参数", h(
       "div",
       { class: "grid-2" },
       pairs([
@@ -112,42 +171,9 @@ export async function nodeDetail(root, id, requestedVantage, refresh, isCurrent)
           : obs?.precheck_metadata?.direct_exit_match === false ? "出口不同" : "无可比观测"],
         ["下次完整复查", n.next_full_check_at ? date(n.next_full_check_at) : "按计划"],
       ]),
-    ),
-    identitySection(n),
-    h(
-      "div",
-      { class: "row" },
-      h("button", { type: "button", class: "primary", onclick: () => testNodes([n.id]) }, "检测此节点"),
-      h("button", { type: "button", onclick: (e) => showShare(n, e.target) }, "二维码 / 分享"),
-      h("button", { type: "button", onclick: (e) => toggleEnabled(e.target, n, refresh) }, n.enabled ? "停用此节点" : "启用此节点"),
-      h("button", { type: "button", onclick: () => annotate(n.id, refresh) }, "编辑标签"),
-      h(
-        "button",
-        {
-          type: "button",
-          class: "quiet",
-          onclick: (e) =>
-            busy(e.target, async () => {
-              const rows = await api(`/nodes/${n.id}/aliases`);
-              aliases.replaceChildren(
-                table(
-                  [
-                    { label: "来源", render: (r) => r.source_name },
-                    { label: "原始名称", render: (r) => r.aliases.join("、") },
-                    { label: "上游仍包含", render: (r) => (r.is_present ? "是" : "否") },
-                  ],
-                  rows,
-                ),
-              );
-            }),
-        },
-        "显示原始名称",
-      ),
-    ),
-    aliases,
-    n.server_node_count > 1 ? siblings(n, vantage) : null,
-    h("h3", {}, "检测历史"),
-    table(
+    ), identitySection(n)),
+    n.exit_ip && n.server_node_count > 1 ? lazyDetail(`相同落地 IP（${n.server_node_count} 个节点）`, () => siblings(n, vantage)) : null,
+    detailFold("检测历史", table(
       [
         { label: "时间", render: (r) => date(r.checked_at) },
         { label: "结果", render: (r) => badge(r.status) },
@@ -157,7 +183,7 @@ export async function nodeDetail(root, id, requestedVantage, refresh, isCurrent)
         { label: "原因", render: (r) => (r.error_code ? errorText(r.error_code) : "—") },
       ],
       n.history,
-    ),
+    )),
   );
 }
 
@@ -185,25 +211,19 @@ function identitySection(n) {
 }
 
 // Other nodes landing on the same server (same exit IP), usually other protocols.
-function siblings(n, vantage) {
-  const box = h("div", {}, h("p", { class: "muted small" }, "加载中…"));
-  api(`/nodes?exit_ip=${encodeURIComponent(n.exit_ip)}&vantage=${encodeURIComponent(vantage)}&sort=quality_grade:asc&limit=50`)
-    .then((page) =>
-      box.replaceChildren(
-        table(
-          [
-            { label: "节点", render: (s) => (s.id === n.id ? h("strong", {}, s.name) : h("a", { href: nodeHref(s.id, vantage) }, s.name)) },
-            { label: "协议", render: (s) => `${s.protocol} / ${s.transport || "—"} / ${s.security || "—"}` },
-            { label: "入口", render: (s) => h("code", {}, `${s.server_host}:${s.server_port}`) },
-            { label: "状态", render: (s) => badge(s.status) },
-            { label: "等级 · " + vantageName(vantage), render: (s) => gradeBadge(s.quality_grade, vantage, { withVantage: false }) || "—" },
-          ],
-          page.items,
-        ),
-      ),
-    )
-    .catch(() => box.replaceChildren(h("p", { class: "muted small" }, "无法加载同服务器节点。")));
-  return h("section", {}, h("h3", {}, `相同落地 IP（${n.server_node_count} 个节点）`), h("p", { class: "hint" }, "这些节点观测到的落地 IP 相同，共用一个序号；同 IP 也可能来自共享出口或任播，不证明同一台服务器。"), box);
+async function siblings(n, vantage) {
+  const query = new URLSearchParams({ exit_ip: n.exit_ip, vantage, sort: "quality_grade:asc", limit: "50" });
+  const page = await api("/nodes?" + query);
+  return h("div", { class: "stack" },
+    h("p", { class: "hint" }, "这些节点观测到的落地 IP 相同，共用一个序号；同 IP 也可能来自共享出口或任播，不证明同一台服务器。"),
+    table([
+      { label: "节点", render: (s) => s.id === n.id ? h("strong", {}, s.name) : h("a", { href: nodeHref(s.id, vantage) }, s.name) },
+      { label: "协议", render: (s) => `${s.protocol} / ${s.transport || "—"} / ${s.security || "—"}` },
+      { label: "入口", render: (s) => h("code", {}, `${s.server_host}:${s.server_port}`) },
+      { label: "状态", render: (s) => badge(s.status) },
+      { label: "等级 · " + vantageName(vantage), render: (s) => gradeBadge(s.quality_grade, vantage, { withVantage: false }) || "—" },
+    ], page.items),
+  );
 }
 
 async function toggleEnabled(button, node, refresh) {

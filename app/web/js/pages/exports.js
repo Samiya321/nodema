@@ -11,11 +11,16 @@ const BASIC = ["node_group", "provider_id", "exit_country", "protocol", "vantage
 function summary(spec = {}) {
   const parts = [];
   if (spec.min_quality_grade) parts.push(`${vantageName(spec.vantage || "CN")} ≥ ${GRADE_TEXT[spec.min_quality_grade]}`);
-  else if (spec.vantage) parts.push(`视角 ${vantageName(spec.vantage)}`);
+  if (spec.quality_buckets?.length) {
+    const grades = spec.quality_buckets.map((grade) => BUCKET_TEXT[grade] || grade).join("、");
+    parts.push(`${vantageName(spec.vantage || "CN")} ${grades}`);
+  } else if (!spec.min_quality_grade && spec.vantage) parts.push(`视角 ${vantageName(spec.vantage)}`);
   if (spec.node_group) parts.push(spec.node_group === "AIRPORT" ? "仅机场" : "仅自建");
   if (spec.exit_country) parts.push(spec.exit_country);
   if (spec.protocol) parts.push(spec.protocol);
   if (spec.best_per_server) parts.push("每服务器 1 个");
+  if (spec.udp === true) parts.push("UDP 有回包");
+  if (spec.exit_ip_type === "RESIDENTIAL") parts.push("家宽 IP");
   if (spec.endpoint_verified === true) parts.push("端点实测已确认");
   if (spec.stable_exit === true) parts.push("近 7 天出口稳定");
   if (spec.limit && spec.limit < 100000) parts.push(`前 ${spec.limit} 个`);

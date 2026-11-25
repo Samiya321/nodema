@@ -2,6 +2,7 @@
 import { IP_TYPE, KIND, ago, badge, flag, h, ms } from "../core.js";
 import { nodeHref } from "../lineage.js";
 import { ACCESS_EVIDENCE, GRADES, gradeBadge, isCarrier, vantageName } from "../grades.js";
+import { showShare } from "../share.js";
 
 // The vantage the list is showing; rows (and the detail dialog) render grades for it.
 let vantage = "CN";
@@ -155,7 +156,9 @@ export function nodeRow(n, picked, onPick) {
     h(
       "td",
       { "data-label": "节点", class: "name-td" },
-      h("a", { class: "link name-cell", href: nodeHref(n.id, vantage) }, h("span", { class: "node-name" }, n.name), h("span", { class: "node-meta" }, meta.map((m) => h("span", {}, m)))),
+      h("div", { class: "node-row-head" },
+        h("a", { class: "link name-cell", href: nodeHref(n.id, vantage) }, h("span", { class: "node-name", title: n.name }, n.name), h("span", { class: "node-meta" }, meta.map((m) => h("span", {}, m)))),
+        h("button", { type: "button", class: "node-qr quiet", "aria-label": `二维码 · ${n.name}`, onclick: () => showShare(n) }, "二维码")),
     ),
     h("td", { "data-label": "等级" }, gradeCell(n)),
     h("td", { "data-label": vantage === "CN" ? "短板入口 RTT" : isCarrier(vantage) ? "晚高峰" : "延迟", class: "num" }, latency(n)),

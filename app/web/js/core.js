@@ -2,9 +2,13 @@
 // (never innerHTML), so node names and remote metadata can't inject markup.
 
 let sessionVersion = 0;
+let readRevision = 0;
 const reads = new Map();
 
+export const getReadRevision = () => readRevision;
+
 export function invalidateReads() {
+  readRevision++;
   reads.clear();
 }
 

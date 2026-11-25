@@ -1,8 +1,6 @@
-import { ago, api, busy, debounce, empty, h, readAPI, select, toast } from "../core.js";
+import { api, busy, debounce, empty, getReadRevision, h, readAPI, select, toast } from "../core.js";
 import { testNodes } from "../strip.js";
 import { BUCKETS, COLUMNS, bucketOf, headRow, nodeRow, setRowVantage, sortNodes } from "./node-rows.js";
-import { countryView, revealCountry } from "./node-countries.js";
-import { asnView } from "./node-asn.js";
 import { ALL, API_KEYS, AVAILABLE, PERCENT, display, label, openPanel } from "./node-filters.js";
 import { BUCKET_HINT, BUCKET_TEXT, VANTAGES } from "../grades.js";
 import { pageHref } from "../lineage.js";
@@ -66,10 +64,11 @@ async function fetchAll(filters) {
 
 async function load(filters) {
   const key = JSON.stringify(filters);
-  if (cache && cache.key === key && Date.now() - cache.at < CACHE_MS) return cache.data;
+  const revision = getReadRevision();
+  if (cache?.key === key && cache.revision === revision && Date.now() - cache.at < CACHE_MS) return cache.data;
   const result = await fetchAll(listFilters(filters));
   const data = { ...result, at: Date.now() };
-  cache = { key, at: data.at, data };
+  if (revision === getReadRevision()) cache = { key, revision, at: data.at, data };
   return data;
 }
 export function invalidateNodes() { cache = selection = null; }
@@ -84,12 +83,7 @@ function legacyBuckets(params) {
   return [];
 }
 
-export async function render(root, { params, go, isCurrent }) {
-  if (params.has("node")) {
-    const { nodeDetail } = await import("./node-detail.js");
-    await nodeDetail(root, params.get("node"), params.get("vantage"), () => render(root, { params, go, isCurrent }), isCurrent);
-    return;
-  }
+export async function render(root, { params, go, isCurrent, refresh }) {
   const view = VIEWS.some(([v]) => v === params.get("by")) ? params.get("by") || "" : "";
   const chosen = new Set((params.get("g") ? params.get("g").split(",") : legacyBuckets(params)).filter((b) => BUCKETS.includes(b)));
   const quick = new Set(QUICK.filter(([key]) => params.get(key) === "1").map(([key]) => key));
@@ -109,7 +103,10 @@ export async function render(root, { params, go, isCurrent }) {
   if (chosen.size) query.quality_buckets = [...chosen].join(",");
   const requestedPage = Number(params.get("page") || 0);
   const pageIndex = Number.isSafeInteger(requestedPage) && requestedPage >= 0 && requestedPage * size <= 2147483647 ? requestedPage : 0;
-  const result = await (view ? load(apiFilters) : dashboardPage(query, sqlSort, pageIndex, size));
+  const [result, grouping] = await Promise.all([
+    view ? load(apiFilters) : dashboardPage(query, sqlSort, pageIndex, size),
+    view === "country" ? import("./node-countries.js") : view === "asn" ? import("./node-asn.js") : null,
+  ]);
   const { items: loaded, at: loadedAt, vantage, facets } = result;
   if (!isCurrent()) return;
   setRowVantage(vantage);
@@ -191,7 +188,9 @@ export async function render(root, { params, go, isCurrent }) {
     placeholder: "搜索名称、编号或主机",
     value: filters.q || "",
     "aria-label": "搜索节点",
-    oninput: debounce((e) => update({ q: e.target.value.trim() }), 400),
+    oninput: debounce((e) => {
+      if (isCurrent()) update({ q: e.target.value.trim() });
+    }, 400),
   });
   const viewSwitch = h(
     "div",
@@ -272,7 +271,7 @@ export async function render(root, { params, go, isCurrent }) {
       for (let i = 0; i < ids.length; i += 1000) changed += (await api("/nodes/batch", { method: "POST", body: { ids: ids.slice(i, i + 1000), enabled } })).changed;
       toast(`${enabled ? "已启用" : "已停用"} ${changed} 个节点。`, "ok");
       invalidateNodes();
-      go("nodes", params);
+      await refresh();
     });
   bar.append(
     barCount,
@@ -302,7 +301,7 @@ export async function render(root, { params, go, isCurrent }) {
       ),
     );
   } else if (view === "country") {
-    const result = countryView(sorted, {
+    const result = grouping.countryView(sorted, {
       country: params.get("c"),
       onCountry: (code) => update({ c: code }),
       sortKey: COLUMNS[sortKey] ? sortKey : "grade",
@@ -314,7 +313,7 @@ export async function render(root, { params, go, isCurrent }) {
     rowsRoot.append(result.element);
     body = rowsRoot;
   } else if (view === "asn") {
-    body = asnView(sorted, {
+    body = grouping.asnView(sorted, {
       sort: params.get("asort"),
       onSort: (value) => update({ asort: value }),
       onOpen: (asn) => update({ by: "", exit_asn: asn ? String(asn) : "", asort: "" }),
@@ -376,8 +375,8 @@ export async function render(root, { params, go, isCurrent }) {
         "div",
         { class: "page-actions" },
         exportable ? h("a", { class: "button", href: pageHref("exports", exportParams) }, "用当前筛选创建订阅") : null,
-        h("span", { class: "loaded", title: "列表会在当前会话复用 30 秒" }, `${ago(new Date(loadedAt).toISOString())}载入`),
-        h("button", { type: "button", onclick: () => { invalidateNodes(); go("nodes", params); } }, "刷新"),
+        h("time", { class: "loaded", datetime: new Date(loadedAt).toISOString(), title: new Date(loadedAt).toLocaleString("zh-CN") }, "列表载入于 " + new Date(loadedAt).toLocaleTimeString("zh-CN", { hour12: false })),
+        h("button", { type: "button", onclick: refresh }, "刷新"),
       ),
     ),
     hero,
@@ -387,7 +386,9 @@ export async function render(root, { params, go, isCurrent }) {
     bar,
   );
   refreshPicks();
-  if (view === "country") requestAnimationFrame(() => revealCountry(root)); // after the router mounts the page
+  if (view === "country") requestAnimationFrame(() => {
+    if (isCurrent()) grouping.revealCountry(root);
+  });
 }
 
 // « 1 … 4 5 6 … 20 »
