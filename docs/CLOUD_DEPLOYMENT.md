@@ -14,6 +14,11 @@
 
 管理员密钥、数据库连接、HMAC/AES 密钥和 GitHub 调度 token 保存在本地 `private/` 以及对应平台 Secrets 中，不在本页或 Git 仓库公开。
 
+## 2026-11-25 第二十六次发布：Dashboard 侧栏
+
+- Pages `2b2c62fe-8036-4fe7-85b2-3adfb632e470`，源码 `8472f72`。本次只发布 Pages。API Worker 仍为 `d9b61bf4-3dc9-4eb1-85f3-efbcfeb5c974`，schema `0027_node_observations`。[Pages 部署](https://2b2c62fe.nodema-dashboard.pages.dev) · [main CI](https://github.com/Samiya321/nodema/actions/runs/45589047320)
+- JavaScript 语法、Pages 和 Functions 构建通过。Playwright 使用合成数据验证桌面收起和恢复、刷新记忆、键盘焦点、320 / 390 px 手机导航和「导出」标题。生产入口和三个变更静态资源的 SHA-256 与本地构建一致，health 200、匿名会话 401、认证 readiness 为 true。
+
 ## 2026-11-25 第二十五次发布：Dashboard 交互提速
 
 - 运行提交 `670c1a7`，schema `0027_node_observations`。Worker `d9b61bf4-3dc9-4eb1-85f3-efbcfeb5c974`，Pages `79cfaa12-d755-4a45-a910-6ffe73d22461`。[Pages 部署](https://79cfaa12.nodema-dashboard.pages.dev) · [main CI](https://github.com/Samiya321/nodema/actions/runs/45478708754)
