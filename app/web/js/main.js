@@ -6,7 +6,7 @@ const PAGES = [
   ["overview", "总览", () => import("./pages/overview.js")],
   ["nodes", "节点", () => import("./pages/nodes.js")],
   ["sources", "来源", () => import("./pages/source-hub.js")],
-  ["exports", "订阅导出", () => import("./pages/exports.js")],
+  ["exports", "导出", () => import("./pages/exports.js")],
   ["ops", "运维", () => import("./pages/operations.js")],
   ["settings", "设置", () => import("./pages/settings.js")],
 ];
@@ -171,11 +171,51 @@ async function checkSession() {
   }
 }
 
+function railIcon(key) {
+  const ns = "http://www.w3.org/2000/svg";
+  const icon = document.createElementNS(ns, "svg");
+  icon.setAttribute("class", "rail-icon");
+  icon.setAttribute("aria-hidden", "true");
+  icon.setAttribute("focusable", "false");
+  const use = document.createElementNS(ns, "use");
+  use.setAttribute("href", "#rail-" + key);
+  icon.append(use);
+  return icon;
+}
+
 document.getElementById("nav").append(
   ...PAGES.filter(([key]) => key !== "settings").map(([key, title]) =>
-    h("li", { class: key === "ops" ? "nav-ops" : null }, h("a", { href: "#/" + key, dataset: { page: key } }, title)),
+    h("li", { class: key === "ops" ? "nav-ops" : null },
+      h("a", { class: "rail-item", href: "#/" + key, dataset: { page: key }, title },
+        railIcon(key), h("span", { class: "rail-label" }, title))),
   ),
 );
+const railToggle = document.querySelector(".rail-toggle");
+const railPreference = "nodema.sidebarCollapsed";
+
+function setRailCollapsed(collapsed) {
+  app.classList.toggle("rail-collapsed", collapsed);
+  const label = collapsed ? "展开侧栏" : "收起侧栏";
+  railToggle.setAttribute("aria-expanded", String(!collapsed));
+  railToggle.setAttribute("aria-label", label);
+  railToggle.title = label;
+}
+
+try {
+  setRailCollapsed(localStorage.getItem(railPreference) === "true");
+} catch {
+  // The sidebar still works when storage is unavailable.
+}
+railToggle.addEventListener("click", () => {
+  const collapsed = !app.classList.contains("rail-collapsed");
+  setRailCollapsed(collapsed);
+  try {
+    localStorage.setItem(railPreference, String(collapsed));
+  } catch {
+    // The current tab already reflects the new preference.
+  }
+});
+
 loginForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   if (loginSubmit.disabled) return;

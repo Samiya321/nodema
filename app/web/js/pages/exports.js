@@ -176,7 +176,7 @@ async function exportDetail(root, { params, go }) {
     go("exports", next);
   };
   root.append(
-    h("a", { href: "#/exports", class: "return-link" }, "返回订阅导出"),
+    h("a", { href: "#/exports", class: "return-link" }, "返回导出"),
     h("header", { class: "title-row" }, h("h1", { class: "page-title" }, profile.name), copyPageLink(exportHref(id))),
     h("section", { class: "panel stack" },
       h("h2", {}, "最近一次生成"),
@@ -250,7 +250,7 @@ export async function render(root, { params, go, refresh, isCurrent }) {
     );
   };
   root.append(
-    h("div", { class: "title-row" }, h("h1", { class: "page-title" }, "订阅导出"), h("button", { type: "button", class: "primary", onclick: act(() => open()) }, "新建订阅")),
+    h("div", { class: "title-row" }, h("h1", { class: "page-title" }, "导出"), h("button", { type: "button", class: "primary", onclick: act(() => open()) }, "新建订阅")),
     table(
       [
         { label: "方案", render: (p) => h("div", { class: "name-cell" }, h("a", { class: "node-name", href: exportHref(p.id) }, p.name), h("span", { class: "muted small" }, FORMATS.find(([k]) => k === p.format)?.[1] || p.format)) },
