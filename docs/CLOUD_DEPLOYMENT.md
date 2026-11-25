@@ -14,6 +14,12 @@
 
 管理员密钥、数据库连接、HMAC/AES 密钥和 GitHub 调度 token 保存在本地 `private/` 以及对应平台 Secrets 中，不在本页或 Git 仓库公开。
 
+## 2026-11-25 第二十七次发布：节点浏览和扫码
+
+- Pages `df5caeaf-c6bb-456c-b607-5b22a9887503`，源码 `ca677b4`。本次发布 Pages，API Worker 版本 `d9b61bf4-3dc9-4eb1-85f3-efbcfeb5c974`，schema `0027_node_observations`。[Pages 部署](https://df5caeaf.nodema-dashboard.pages.dev) · [main CI](https://github.com/Samiya321/nodema/actions/runs/45596197810)
+- 本地通过 Dashboard 类型检查、静态构建、JavaScript 语法、Pages Functions 构建和桌面 / 手机合成浏览器验证。带筛选和分页的普通列表、已展开的国家分组在详情返回后都直接恢复，额外节点列表请求为 0。显式刷新与节点写入失效路径已验证。二维码使用合成凭据验证生成、关闭、重试及键盘焦点。
+- 生产 8 个修改资源的 SHA-256 与构建一致，health 200，匿名会话和分享端点 401，认证 readiness 为 true，认证精简列表返回 200。单次 1 行列表的首字节约 13.85 秒，首次查询仍有上游等待。真实节点分享 URI 未用于验收。
+
 ## 2026-11-25 第二十六次发布：Dashboard 侧栏
 
 - Pages `2b2c62fe-8036-4fe7-85b2-3adfb632e470`，源码 `8472f72`。本次只发布 Pages。API Worker 仍为 `d9b61bf4-3dc9-4eb1-85f3-efbcfeb5c974`，schema `0027_node_observations`。[Pages 部署](https://2b2c62fe.nodema-dashboard.pages.dev) · [main CI](https://github.com/Samiya321/nodema/actions/runs/45589047320)
