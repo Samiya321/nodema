@@ -14,6 +14,12 @@
 
 管理员密钥、数据库连接、HMAC/AES 密钥和 GitHub 调度 token 保存在本地 `private/` 以及对应平台 Secrets 中，不在本页或 Git 仓库公开。
 
+## 2026-11-28 第二十九次发布：Dashboard 前端重构
+
+- 本次仅发布 Pages，部署 ID `e6d85d6f-80ee-49d3-83b0-2fd07350cd48`，源码 `41c443c`（测试日期锚定修复 `d0b0b40`）。API Worker 仍为 `97dfbdb7-fa2f-44c7-979e-918a30e31504`，schema 仍为 `0028_node_classification`。[Pages 部署](https://e6d85d6f.nodema-dashboard.pages.dev) · [main CI](https://github.com/Samiya321/nodema/actions/runs/46070362655)
+- 将原 `app/web/` 原生 DOM 前端完整重构为 `web/dashboard/src/`（React 19 + TypeScript + Vite + 模块化 CSS 设计系统），保留严格 CSP、无内联样式/脚本、Pages Functions 服务绑定和全部既有 API 路由契约。
+- `main` CI（46070362655）全绿：481 项 Python、Worker/Echo 测试、10 项前端 Vitest、真实回环握手、100 节点合成流水线及 Pages/Functions 构建通过。生产 `https://nodema-dashboard.pages.dev` 全部 5 个静态资源（`/`, `favicon.svg`, CSS, 主 JS, 按需拆分 `qrcode` JS）返回 200 且 SHA-256 与构建产物逐字节一致；严格 CSP 与 `Cache-Control: no-store` 生效；`/api/health` 200，匿名 `/api/session` 与 `/api/readiness` 401，认证 `/api/readiness` 返回 `ready=true`（database/schema/dispatch 全真）；真实 Chrome 加载线上首页零 CSP/脚本报错。
+
 ## 2026-11-25 第二十八次发布：节点归属与机场资格
 
 - 运行提交 `8c49141`，schema `0028_node_classification`，API Worker `97dfbdb7-fa2f-44c7-979e-918a30e31504`，Pages `887043d6-8009-4b26-a5f5-929453513258`。[Pages 部署](https://887043d6.nodema-dashboard.pages.dev) · [main CI](https://github.com/Samiya321/nodema/actions/runs/45601816874)

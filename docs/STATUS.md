@@ -2,11 +2,13 @@
 
 新会话/其他 agent 先读 [接管指南](HANDOFF.md)；生产操作和凭据读取边界见 [生产操作手册](PRODUCTION_OPERATIONS.md)。
 
-## 2026-11-28 Dashboard 前端完全重构（未部署）
+## 2026-11-28 Dashboard 前端完全重构
 
+- 已发布 Pages `e6d85d6f-80ee-49d3-83b0-2fd07350cd48`，源码 `41c443c`（CI 修复 `d0b0b40`），生产 schema 保持 `0028_node_classification`，API Worker 与 Echo 未变更。[发布记录](CLOUD_DEPLOYMENT.md#2026-11-28-第二十九次发布dashboard-前端重构) · [main CI](https://github.com/Samiya321/nodema/actions/runs/46070362655)
 - 将原 `app/web/` 的命令式原生 DOM 代码完全重构迁移至 `web/dashboard/src/`（React 19 + TypeScript 严格模式 + Vite + Lucide 图标 + 模块化 CSS 设计系统），移除旧版 `app/web/` 和 `web/dashboard/build.mjs`，保留原 Pages Functions 与全部既有 API 契约及严格 CSP（`dist/_headers` 由 `web/dashboard/public/_headers` 生成，零内联脚本与内联 `style` 属性）。
 - 架构与逻辑收拢：统一类型定义（`src/types/api.ts`）、集中式 API 缓存与自动失效（`src/api/client.ts`）、集中式路由与旧书签别名兼容（`src/lib/router.ts`）、全局会话/Toast/确认弹窗/同步检测控制条与轮询（`src/state/AppContext.tsx`）、节点列表进度与缓存恢复（`src/state/nodeListStore.ts`）。导出表单改为防抖自动实时估算节点数并支持一次提交；设置页按定时检测/节点命名/ASN 简称/分级规则分区展示；新增浅色/深色/跟随系统主题切换。
-- 验证：本机通过 `tsc --noEmit`（Functions 与前端双 tsconfig）、Vitest 单元测试与组件测试（10 项全通）、Vite 生产构建、`wrangler pages functions build`，以及基于合成数据的真浏览器（Chrome DevTools）验证——覆盖全部 14 个路由、浅色与深色模式、1440 / 390 / 320 px 无横向溢出、严格 CSP 零报错、二维码生成与关闭、筛选抽屉、节点列表→详情→返回原筛选零额外列表请求，以及登录/退出流程。仅本地改动，未部署生产。
+- 顺手修复 `tests/integration/test_grading_catalog.py` 中硬编码 2026-11-13 日期导致满 14 天后 `runner.cleanup(..., days=14)` 断言失败的时间漂移问题（改为相对当前 UTC 日期）。
+- 验证：本机与 GitHub Actions `main` CI（[46070362655](https://github.com/Samiya321/nodema/actions/runs/46070362655)）全量通过，含 481 项 Python、Worker/Echo 回归、10 项 Vitest 前端测试与 Pages/Functions 构建；本地合成预览 + 真 Chrome 覆盖全部 14 路由、浅色/深色、1440 / 390 / 320 px 无溢出；生产 5 个静态资源 SHA-256、严格 CSP、`no-store`、`/api/health` 200、匿名 401 及认证 readiness（`ready=true`）已复核。
 
 ## 2026-11-25 节点归属与机场资格
 
