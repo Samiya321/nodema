@@ -339,4 +339,45 @@ describe("Nodema Dashboard App", () => {
     const backLink = await screen.findByRole("link", { name: "返回节点列表" });
     expect(backLink).toHaveAttribute("href", "#/nodes?g=S&udp=1");
   });
+
+  it("supports '/' shortcut, Enter commit, clear button, and modal scroll lock", async () => {
+    createMockApi({ authenticated: true });
+    window.location.hash = "#/nodes";
+    render(<App />);
+
+    const searchInput = await screen.findByLabelText("搜索节点");
+    fireEvent.keyDown(window, { key: "/" });
+    expect(document.activeElement).toBe(searchInput);
+
+    fireEvent.change(searchInput, { target: { value: "xTom" } });
+    fireEvent.keyDown(searchInput, { key: "Enter" });
+    await waitFor(() => {
+      expect(window.location.hash).toContain("q=xTom");
+    });
+
+    const clearBtn = screen.getByRole("button", { name: "清空搜索" });
+    fireEvent.click(clearBtn);
+    await waitFor(() => {
+      expect(window.location.hash).not.toContain("q=xTom");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /二维码 ·/ }));
+    expect(await screen.findByRole("dialog", { name: "节点二维码" })).toBeInTheDocument();
+    expect(document.body.classList.contains("modal-open")).toBe(true);
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "节点二维码" })).not.toBeInTheDocument();
+    });
+    expect(document.body.classList.contains("modal-open")).toBe(false);
+  });
+
+  it("renders probe daily bar chart on operations probes tab", async () => {
+    createMockApi({ authenticated: true });
+    window.location.hash = "#/ops?tab=probes";
+    render(<App />);
+
+    expect(await screen.findByText("每日测试量")).toBeInTheDocument();
+    expect(screen.getByRole("list", { name: "每日测试量" })).toBeInTheDocument();
+  });
 });

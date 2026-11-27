@@ -13,11 +13,16 @@
   min-width: 0;
 }
 
+.card > * {
+  min-width: 0;
+}
+
 .card-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  min-width: 0;
 }
 
 .card-head-wrap {
@@ -485,6 +490,73 @@
 
 .grade-count-link:hover {
   color: var(--accent);
+}
+
+/* Unified Control Panel (Search + Filters + Active Chips) */
+.control-panel {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  padding: 12px 14px;
+  box-shadow: var(--shadow-xs);
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.control-panel > * {
+  min-width: 0;
+}
+
+.control-panel .chip-bar {
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+/* Mini Vertical Bar Chart (CSP-safe CSSOM --bar-h) */
+.mini-bar-chart {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(46px, 1fr));
+  gap: 8px;
+  align-items: end;
+}
+
+.mini-bar-item {
+  display: grid;
+  justify-items: center;
+  gap: 5px;
+}
+
+.mini-bar-value {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+.mini-bar-track {
+  width: 100%;
+  max-width: 34px;
+  height: 76px;
+  border-radius: 6px;
+  background: var(--bg-muted);
+  display: flex;
+  align-items: flex-end;
+  overflow: hidden;
+  padding: 2px;
+}
+
+.mini-bar-col {
+  display: block;
+  width: 100%;
+  height: var(--bar-h, 8%);
+  border-radius: 4px;
+  background: linear-gradient(180deg, var(--accent) 0%, color-mix(in srgb, var(--accent) 72%, var(--info)) 100%);
+  transition: height 0.3s ease;
+}
+
+.mini-bar-date {
+  font-size: 11px;
+  color: var(--ink-3);
 }
 
 /* Meter Bar */

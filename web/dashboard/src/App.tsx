@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, api, invalidateSession } from "./api/client";
 import { AppShell } from "./components/AppShell";
+import { ErrorState } from "./components/ui";
 import { errorText } from "./lib/errors";
 import { PAGE_TITLES, useRouter } from "./lib/router";
 import { ExportsPage } from "./pages/ExportsPage";
@@ -16,6 +17,39 @@ import { invalidateNodeCaches } from "./state/nodeListStore";
 import type { SessionInfo } from "./types/api";
 
 const EXPIRED_MSG = "登录已失效，请重新输入密钥。";
+
+class PageErrorBoundary extends React.Component<
+  { resetKey: string; children: React.ReactNode },
+  { hasError: boolean }
+> {
+  state = { hasError: false };
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidUpdate(prevProps: { resetKey: string }) {
+    if (prevProps.resetKey !== this.props.resetKey && this.state.hasError) {
+      this.setState({ hasError: false });
+    }
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="page">
+          <section className="card">
+            <ErrorState
+              message="页面渲染发生意外错误，请尝试重试或切换其他页面。"
+              onRetry={() => this.setState({ hasError: false })}
+            />
+          </section>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 export function App() {
   const { route, go } = useRouter();
@@ -166,7 +200,7 @@ export function App() {
     <AppProvider authenticated={authState.status === "authenticated"}>
       {authState.status === "authenticated" ? (
         <AppShell currentPage={route.name} onLogout={() => void handleLogout()} loggingOut={loggingOut}>
-          {renderPage()}
+          <PageErrorBoundary resetKey={route.href}>{renderPage()}</PageErrorBoundary>
         </AppShell>
       ) : (
         <LoginPage

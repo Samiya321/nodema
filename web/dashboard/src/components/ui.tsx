@@ -1,10 +1,137 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Check, Copy, Link2, RefreshCw, X, AlertTriangle, Inbox } from "lucide-react";
+import { Check, Copy, Link2, RefreshCw, Search, X, AlertTriangle, Inbox } from "lucide-react";
 import { STATUS_META, countryFlag, type Tone } from "../lib/format";
 import { GRADES, GRADE_HINT, GRADE_TEXT, vantageName } from "../lib/grades";
 import { sourceHref } from "../lib/router";
 import type { QualityGrade, SourceChainItem } from "../types/api";
 import { useApp } from "../state/AppContext";
+
+// ---- Body scroll lock helper (CSP-safe class toggle) ----
+let openModalCount = 0;
+export function useBodyScrollLock(active: boolean) {
+  useEffect(() => {
+    if (!active) return;
+    openModalCount += 1;
+    document.body.classList.add("modal-open");
+    return () => {
+      openModalCount = Math.max(0, openModalCount - 1);
+      if (openModalCount === 0) document.body.classList.remove("modal-open");
+    };
+  }, [active]);
+}
+
+// ---- SearchField (debounced change + instant Enter & clear + optional '/' shortcut) ----
+export function SearchField({
+  value,
+  onCommit,
+  placeholder,
+  ariaLabel,
+  name,
+  delay = 300,
+  hotkey = false,
+}: {
+  value: string;
+  onCommit: (next: string) => void;
+  placeholder: string;
+  ariaLabel: string;
+  name?: string;
+  delay?: number;
+  hotkey?: boolean;
+}) {
+  const [draft, setDraft] = useState(value);
+  const timerRef = useRef<number | undefined>(undefined);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    setDraft(value);
+  }, [value]);
+
+  useEffect(() => {
+    return () => window.clearTimeout(timerRef.current);
+  }, []);
+
+  useEffect(() => {
+    if (!hotkey) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "/" || e.metaKey || e.ctrlKey || e.altKey) return;
+      const tag = (document.activeElement?.tagName || "").toLowerCase();
+      if (tag === "input" || tag === "textarea" || tag === "select") return;
+      if (document.body.classList.contains("modal-open")) return;
+      e.preventDefault();
+      inputRef.current?.focus();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [hotkey]);
+
+  const flush = (next: string) => {
+    window.clearTimeout(timerRef.current);
+    onCommit(next.trim());
+  };
+
+  return (
+    <div className="search-wrap">
+      <Search size={15} className="search-icon" aria-hidden="true" />
+      <input
+        ref={inputRef}
+        type="search"
+        name={name}
+        className="input search-input"
+        placeholder={placeholder}
+        aria-label={ariaLabel}
+        value={draft}
+        onChange={(e) => {
+          const next = e.target.value;
+          setDraft(next);
+          window.clearTimeout(timerRef.current);
+          if (next === "") {
+            onCommit("");
+          } else {
+            timerRef.current = window.setTimeout(() => onCommit(next.trim()), delay);
+          }
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            flush(draft);
+          } else if (e.key === "Escape" && draft) {
+            e.preventDefault();
+            setDraft("");
+            flush("");
+          }
+        }}
+      />
+      {draft ? (
+        <button
+          type="button"
+          className="search-clear"
+          aria-label="清空搜索"
+          onClick={() => {
+            setDraft("");
+            flush("");
+            inputRef.current?.focus();
+          }}
+        >
+          <X size={13} />
+        </button>
+      ) : hotkey ? (
+        <kbd className="search-kbd" aria-hidden="true">
+          /
+        </kbd>
+      ) : null}
+    </div>
+  );
+}
+
+// ---- Vertical Bar Column (CSP-safe via CSSOM height) ----
+export function BarColumn({ ratio, title }: { ratio: number; title?: string }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  const clamped = Math.max(6, Math.min(100, Math.round(ratio * 100)));
+  useEffect(() => {
+    ref.current?.style.setProperty("--bar-h", clamped + "%");
+  }, [clamped]);
+  return <span ref={ref} className="mini-bar-col" title={title} />;
+}
 
 // ---- StatusBadge ----
 export function StatusBadge({
@@ -231,6 +358,8 @@ export function Modal({
   children: React.ReactNode;
   footer?: React.ReactNode;
 }) {
+  useBodyScrollLock(true);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -278,6 +407,8 @@ export function Drawer({
   children: React.ReactNode;
   footer?: React.ReactNode;
 }) {
+  useBodyScrollLock(true);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();

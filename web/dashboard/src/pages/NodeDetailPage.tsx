@@ -145,11 +145,13 @@ function WeekTimeline({ days }: { days?: ObservationDay[] }) {
 
 function FoldSection({
   title,
+  summary,
   defaultOpen = false,
   onOpen,
   children,
 }: {
   title: string;
+  summary?: string | null;
   defaultOpen?: boolean;
   onOpen?: () => void;
   children: React.ReactNode;
@@ -170,7 +172,10 @@ function FoldSection({
         aria-expanded={open}
         onClick={toggle}
       >
-        <h2>{title}</h2>
+        <div className="fold-title-group">
+          <h2>{title}</h2>
+          {summary && <span className="meta-pill">{summary}</span>}
+        </div>
         <ChevronDown
           size={16}
           className={`fold-chevron${open ? " is-open" : ""}`}
@@ -262,8 +267,10 @@ function AccessContent({
               const g = grades[v];
               const trace = v.startsWith("CN-") ? access.traces?.[v] : undefined;
               return (
-                <tr key={v}>
-                  <td data-label="视角">{name}</td>
+                <tr key={v} className={v === vantage ? "is-picked" : undefined}>
+                  <td data-label="视角">
+                    {v === vantage ? <strong>{name}</strong> : name}
+                  </td>
                   <td data-label="等级">
                     {g ? <GradeBadge grade={g.grade} vantage={v} withVantage={false} /> : "—"}
                   </td>
@@ -651,6 +658,41 @@ export function NodeDetailPage({ params }: { params: URLSearchParams }) {
           <CopyPageLinkButton href={nodeHref(node.id, vantage)} />
         </div>
 
+        <div className="detail-hero-metrics">
+          <div className="detail-metric">
+            <span className="detail-metric-label">当前等级 · {vantageName(vantage)}</span>
+            <div className="detail-metric-val">
+              {node.quality_grade ? (
+                <GradeBadge grade={node.quality_grade} vantage={vantage} withVantage={false} />
+              ) : (
+                <span className="muted">{node.exit_asn === 13335 ? "CF 不分级" : "暂无"}</span>
+              )}
+            </div>
+          </div>
+          <div className="detail-metric">
+            <span className="detail-metric-label">近 7 天可用</span>
+            <div className="detail-metric-val">
+              {node.checked_7d ? `${node.avail_7d ?? 0}/${node.checked_7d} 天` : "—"}
+            </div>
+          </div>
+          <div className="detail-metric">
+            <span className="detail-metric-label">Runner 代理延迟</span>
+            <div className="detail-metric-val">{formatMs(node.http_duration_ms)}</div>
+          </div>
+          <div className="detail-metric">
+            <span className="detail-metric-label">UDP 转发</span>
+            <div className="detail-metric-val">
+              {node.udp_state === "SUCCESS"
+                ? `通 · ${formatMs(node.udp_ms)}`
+                : node.udp_state === "FAILED"
+                  ? "不通"
+                  : node.udp_state === "NOT_SUPPORTED"
+                    ? "仅 TCP"
+                    : "未测"}
+            </div>
+          </div>
+        </div>
+
         <div className="row-wrap">
           <button
             type="button"
@@ -768,6 +810,7 @@ export function NodeDetailPage({ params }: { params: URLSearchParams }) {
       {/* Lazy: Access Measurements */}
       <FoldSection
         title="接入测量与分级依据"
+        summary={node.quality_grade ? `${vantageName(vantage)} ${node.quality_grade} 档 · 7 视角明细` : "7 视角明细"}
         onOpen={() => {
           if (!accessState.loaded) void loadAccess();
         }}
@@ -787,7 +830,10 @@ export function NodeDetailPage({ params }: { params: URLSearchParams }) {
       </FoldSection>
 
       {/* Sources & Subscriptions */}
-      <FoldSection title="来源与订阅">
+      <FoldSection
+        title="来源与订阅"
+        summary={`${node.sources.length} 个来源 · ${node.exports?.length || 0} 个订阅`}
+      >
         <div className="stack">
           <h3>直接来源</h3>
           {node.sources.length === 0 ? (
@@ -877,7 +923,10 @@ export function NodeDetailPage({ params }: { params: URLSearchParams }) {
       </FoldSection>
 
       {/* Entry, Exit & Check Details */}
-      <FoldSection title="入口、落地与检测参数">
+      <FoldSection
+        title="入口、落地与检测参数"
+        summary={[node.exit_asn ? `AS${node.exit_asn}` : null, node.exit_ip].filter(Boolean).join(" · ") || null}
+      >
         <div className="grid-2">
           <dl className="kv-list">
             <dt>编号</dt>
@@ -1103,7 +1152,10 @@ export function NodeDetailPage({ params }: { params: URLSearchParams }) {
       )}
 
       {/* Check History */}
-      <FoldSection title="检测历史">
+      <FoldSection
+        title="检测历史"
+        summary={node.history.length ? `${node.history.length} 条记录` : "暂无记录"}
+      >
         {node.history.length === 0 ? (
           <EmptyState title="暂无检测历史" />
         ) : (

@@ -5,42 +5,42 @@
 
 :root {
   /* Surfaces */
-  --bg-canvas: #f4f6fa;
+  --bg-canvas: #f3f5f9;
   --bg-surface: #ffffff;
-  --bg-subtle: #f8f9fc;
-  --bg-muted: #eef1f6;
-  --bg-hover: #f1f4f9;
-  --bg-active: #e7ecf5;
-  --bg-pick: #eff3ff;
+  --bg-subtle: #f7f9fc;
+  --bg-muted: #ecf0f6;
+  --bg-hover: #f0f4fa;
+  --bg-active: #e4ebf5;
+  --bg-pick: #edf2ff;
 
   /* Borders */
-  --border: #e5e8f0;
-  --border-strong: #d3d9e6;
+  --border: #e3e8f1;
+  --border-strong: #cdd5e4;
   --border-focus: #3b5bfd;
 
   /* Ink */
-  --ink-1: #111625;
-  --ink-2: #4b5568;
-  --ink-3: #7c869a;
+  --ink-1: #0f1626;
+  --ink-2: #465066;
+  --ink-3: #768198;
   --ink-inverse: #ffffff;
 
   /* Brand / Primary Accent */
   --accent: #3b5bfd;
-  --accent-hover: #2d4be8;
+  --accent-hover: #2c49e6;
   --accent-soft: rgb(59 91 253 / 0.1);
   --accent-ring: rgb(59 91 253 / 0.22);
 
   /* Semantic measurement tones */
-  --ok: #0e9468;
-  --ok-soft: rgb(14 148 104 / 0.11);
-  --warn: #c47a0a;
-  --warn-soft: rgb(196 122 10 / 0.12);
-  --bad: #d63b38;
-  --bad-soft: rgb(214 59 56 / 0.11);
-  --info: #2568dc;
-  --info-soft: rgb(37 104 220 / 0.11);
-  --mute: #8892a6;
-  --mute-soft: rgb(136 146 166 / 0.13);
+  --ok: #0d9266;
+  --ok-soft: rgb(13 146 102 / 0.11);
+  --warn: #bf7608;
+  --warn-soft: rgb(191 118 8 / 0.12);
+  --bad: #d43835;
+  --bad-soft: rgb(212 56 53 / 0.11);
+  --info: #2466da;
+  --info-soft: rgb(36 102 218 / 0.11);
+  --mute: #8590a6;
+  --mute-soft: rgb(133 144 166 / 0.13);
 
   /* Grade spectrum */
   --g-S: #6d4aff;
@@ -61,10 +61,10 @@
   --r-pill: 999px;
 
   /* Shadows */
-  --shadow-xs: 0 1px 2px rgb(15 23 42 / 0.04);
-  --shadow-sm: 0 1px 3px rgb(15 23 42 / 0.06), 0 1px 2px rgb(15 23 42 / 0.03);
-  --shadow-md: 0 8px 24px rgb(15 23 42 / 0.09), 0 2px 6px rgb(15 23 42 / 0.04);
-  --shadow-lg: 0 20px 48px rgb(15 23 42 / 0.18), 0 4px 12px rgb(15 23 42 / 0.08);
+  --shadow-xs: 0 1px 2px rgb(15 23 42 / 0.045);
+  --shadow-sm: 0 2px 6px rgb(15 23 42 / 0.06), 0 1px 2px rgb(15 23 42 / 0.03);
+  --shadow-md: 0 10px 26px rgb(15 23 42 / 0.09), 0 2px 6px rgb(15 23 42 / 0.04);
+  --shadow-lg: 0 22px 50px rgb(15 23 42 / 0.18), 0 4px 12px rgb(15 23 42 / 0.08);
 
   /* Typography */
   --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC",
@@ -72,9 +72,9 @@
   --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
 
   /* Layout */
-  --sidebar-w: 216px;
+  --sidebar-w: 220px;
   --sidebar-collapsed-w: 64px;
-  --topbar-h: 58px;
+  --topbar-h: 56px;
 
   color-scheme: light;
 }

@@ -1,11 +1,12 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, ExternalLink, Search } from "lucide-react";
+import React, { useMemo, useState } from "react";
+import { ChevronDown, ExternalLink } from "lucide-react";
 import { api, useApiQuery } from "../../api/client";
 import {
   EmptyState,
   ErrorState,
   MeterBar,
   Modal,
+  SearchField,
   SkeletonBlock,
   StatusBadge,
 } from "../../components/ui";
@@ -94,8 +95,6 @@ export function AirportsTab({
   const sort = params.get("sort") || "up:desc";
   const q = (params.get("q") || "").toLowerCase();
 
-  const [searchInput, setSearchInput] = useState(params.get("q") || "");
-  const searchTimerRef = useRef<number | undefined>(undefined);
   const [linkTarget, setLinkTarget] = useState<AirportSource | null>(null);
   const [editTarget, setEditTarget] = useState<AirportSource | null>(null);
   const [moveTarget, setMoveTarget] = useState<AirportSource | null>(null);
@@ -105,10 +104,6 @@ export function AirportsTab({
   const [providerName, setProviderName] = useState("");
   const [providerWebsite, setProviderWebsite] = useState("");
   const [saving, setSaving] = useState(false);
-
-  useEffect(() => {
-    setSearchInput(params.get("q") || "");
-  }, [params]);
 
   const setParam = (k: string, v: string) => {
     const next = new URLSearchParams(params);
@@ -300,66 +295,59 @@ export function AirportsTab({
       </dl>
 
       {/* Filters */}
-      <div className="toolbar">
-        <div className="search-wrap">
-          <Search size={15} className="search-icon" aria-hidden="true" />
-          <input
-            type="search"
-            className="input search-input"
+      <div className="control-panel">
+        <div className="toolbar">
+          <SearchField
+            value={params.get("q") || ""}
+            onCommit={(v) => setParam("q", v)}
             placeholder="搜索订阅或机场…"
-            aria-label="搜索机场订阅"
-            value={searchInput}
-            onChange={(e) => {
-              const v = e.target.value;
-              setSearchInput(v);
-              window.clearTimeout(searchTimerRef.current);
-              searchTimerRef.current = window.setTimeout(() => setParam("q", v.trim()), 300);
-            }}
+            ariaLabel="搜索机场订阅"
+            hotkey
           />
+
+          <select
+            className="select"
+            aria-label="机场订阅状态"
+            value={stateFilter}
+            onChange={(e) => setParam("state", e.target.value)}
+          >
+            <option value="">全部状态</option>
+            <option value="usable">仍可使用</option>
+            {Object.entries(AIRPORT_STATES).map(([k, [label]]) => (
+              <option key={k} value={k}>
+                {label}
+              </option>
+            ))}
+          </select>
+
+          <select
+            className="select"
+            aria-label="机场分组"
+            value={providerFilter}
+            onChange={(e) => setParam("provider", e.target.value)}
+          >
+            <option value="">全部机场</option>
+            {data.providers.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+            <option value="none">未分组</option>
+          </select>
+
+          <select
+            className="select"
+            aria-label="机场排序"
+            value={sort}
+            onChange={(e) => setParam("sort", e.target.value)}
+          >
+            {AIRPORT_SORTS.map(([k, label]) => (
+              <option key={k} value={k}>
+                {label}
+              </option>
+            ))}
+          </select>
         </div>
-
-        <select
-          className="select"
-          aria-label="机场订阅状态"
-          value={stateFilter}
-          onChange={(e) => setParam("state", e.target.value)}
-        >
-          <option value="">全部状态</option>
-          <option value="usable">仍可使用</option>
-          {Object.entries(AIRPORT_STATES).map(([k, [label]]) => (
-            <option key={k} value={k}>
-              {label}
-            </option>
-          ))}
-        </select>
-
-        <select
-          className="select"
-          aria-label="机场分组"
-          value={providerFilter}
-          onChange={(e) => setParam("provider", e.target.value)}
-        >
-          <option value="">全部机场</option>
-          {data.providers.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
-            </option>
-          ))}
-          <option value="none">未分组</option>
-        </select>
-
-        <select
-          className="select"
-          aria-label="机场排序"
-          value={sort}
-          onChange={(e) => setParam("sort", e.target.value)}
-        >
-          {AIRPORT_SORTS.map(([k, label]) => (
-            <option key={k} value={k}>
-              {label}
-            </option>
-          ))}
-        </select>
       </div>
 
       <p className="hint">

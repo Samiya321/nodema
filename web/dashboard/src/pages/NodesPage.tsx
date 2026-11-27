@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Download,
   RefreshCw,
-  Search,
   SlidersHorizontal,
   X,
 } from "lucide-react";
@@ -12,6 +11,7 @@ import {
   ErrorState,
   FlexSegment,
   Pagination,
+  SearchField,
   SkeletonBlock,
 } from "../components/ui";
 import { errorText } from "../lib/errors";
@@ -179,18 +179,6 @@ export function NodesPage({
   const [error, setError] = useState<string | null>(null);
   const [revision, setRevision] = useState(getReadRevision);
   const reqIdRef = useRef(0);
-
-  // Search box synced with URL (debounced)
-  const [searchInput, setSearchInput] = useState(filters.q || "");
-  const searchTimerRef = useRef<number | undefined>(undefined);
-
-  useEffect(() => {
-    setSearchInput(filters.q || "");
-  }, [filters.q]);
-
-  useEffect(() => {
-    return () => window.clearTimeout(searchTimerRef.current);
-  }, []);
 
   // Providers (loaded on demand for filter drawer or provider_id chip)
   const [providers, setProviders] = useState<ProviderItem[]>([]);
@@ -531,6 +519,7 @@ export function NodesPage({
   }
 
   const spectrumSegments = BUCKETS.filter((b) => b !== "OFF" && bucketCounts[b] > 0);
+  const bucketTotal = shownBuckets.reduce((sum, b) => sum + bucketCounts[b], 0);
 
   return (
     <div className="page">
@@ -616,6 +605,7 @@ export function NodesPage({
             const active = chosenBuckets.has(b);
             const dimmed = chosenBuckets.size > 0 && !active;
             const disabled = bucketCounts[b] === 0 && !active;
+            const share = bucketTotal > 0 ? Math.round((bucketCounts[b] / bucketTotal) * 100) : 0;
             return (
               <button
                 key={b}
@@ -626,7 +616,12 @@ export function NodesPage({
                 title={BUCKET_HINT[b]}
                 onClick={() => toggleBucket(b)}
               >
-                <span className="tile-count">{formatNumber(bucketCounts[b])}</span>
+                <div className="tile-top">
+                  <span className="tile-count">{formatNumber(bucketCounts[b])}</span>
+                  {bucketTotal > 0 && bucketCounts[b] > 0 && (
+                    <span className="tile-share">{share}%</span>
+                  )}
+                </div>
                 <span className="tile-label">
                   <span className={`swatch seg-${b}`} aria-hidden="true" />
                   <span>{BUCKET_TEXT[b]}</span>
@@ -649,103 +644,95 @@ export function NodesPage({
         )}
       </section>
 
-      {/* Single Control Row */}
-      <div className="nodes-controls" role="search">
-        <div className="search-wrap">
-          <Search size={15} className="search-icon" aria-hidden="true" />
-          <input
-            type="search"
+      {/* Unified Control Panel */}
+      <div className="control-panel">
+        <div className="nodes-controls" role="search">
+          <SearchField
             name="q"
-            className="input search-input"
+            value={filters.q || ""}
+            onCommit={(val) => updateParams({ q: val })}
             placeholder="搜索名称、编号或主机…"
-            aria-label="搜索节点"
-            value={searchInput}
-            onChange={(e) => {
-              const val = e.target.value;
-              setSearchInput(val);
-              window.clearTimeout(searchTimerRef.current);
-              searchTimerRef.current = window.setTimeout(() => {
-                updateParams({ q: val.trim() });
-              }, 350);
-            }}
+            ariaLabel="搜索节点"
+            delay={350}
+            hotkey
           />
-        </div>
 
-        <div className="segmented" role="group" aria-label="显示方式">
-          {VIEWS.map(([val, text]) => (
+          <div className="segmented" role="group" aria-label="显示方式">
+            {VIEWS.map(([val, text]) => (
+              <button
+                key={val || "list"}
+                type="button"
+                className={`seg-btn${view === val ? " is-active" : ""}`}
+                aria-pressed={view === val}
+                onClick={() => updateParams({ by: val, c: "", page: "", asort: "" })}
+              >
+                {text}
+              </button>
+            ))}
+          </div>
+
+          <div className="quick-controls">
+            {QUICK_TOGGLES.map((q) => {
+              const active = quickSet.has(q.key);
+              const cnt = facets ? facets[q.key] : loadedItems.filter(q.test).length;
+              return (
+                <button
+                  key={q.key}
+                  type="button"
+                  className={`pill-toggle${active ? " is-active" : ""}`}
+                  aria-pressed={active}
+                  title={q.hint}
+                  onClick={() => updateParams({ [q.key]: active ? "" : "1" })}
+                >
+                  <span>{q.label}</span>
+                  <span className="pill-toggle-count">{formatNumber(cnt)}</span>
+                </button>
+              );
+            })}
+
             <button
-              key={val || "list"}
               type="button"
-              className={`seg-btn${view === val ? " is-active" : ""}`}
-              aria-pressed={view === val}
-              onClick={() => updateParams({ by: val, c: "", page: "", asort: "" })}
+              className={`pill-toggle${panelActiveCount > 0 ? " has-filters" : ""}`}
+              disabled={drawerLoading}
+              onClick={() => void openFilterDrawer()}
             >
-              {text}
+              <SlidersHorizontal size={14} />
+              <span>筛选</span>
+              {panelActiveCount > 0 && <span className="count-pill">{panelActiveCount}</span>}
             </button>
-          ))}
+          </div>
         </div>
 
-        <div className="quick-controls">
-          {QUICK_TOGGLES.map((q) => {
-            const active = quickSet.has(q.key);
-            const cnt = facets ? facets[q.key] : loadedItems.filter(q.test).length;
-            return (
-              <button
-                key={q.key}
-                type="button"
-                className={`pill-toggle${active ? " is-active" : ""}`}
-                aria-pressed={active}
-                title={q.hint}
-                onClick={() => updateParams({ [q.key]: active ? "" : "1" })}
-              >
-                <span>{q.label}</span>
-                <span className="pill-toggle-count">{formatNumber(cnt)}</span>
-              </button>
-            );
-          })}
-
-          <button
-            type="button"
-            className={`pill-toggle${panelActiveCount > 0 ? " has-filters" : ""}`}
-            disabled={drawerLoading}
-            onClick={() => void openFilterDrawer()}
-          >
-            <SlidersHorizontal size={14} />
-            <span>筛选</span>
-            {panelActiveCount > 0 && <span className="count-pill">{panelActiveCount}</span>}
-          </button>
-        </div>
+        {/* Active Filter Chips */}
+        {filterChips.length > 0 && (
+          <div className="chip-bar">
+            {filterChips.map(([key, value]) => {
+              const shown =
+                key === "provider_id"
+                  ? providers.find((p) => p.id === value)?.name || "已选"
+                  : key === "source_id"
+                    ? "已选来源"
+                    : displayFilterValue(key, value);
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  className="filter-chip"
+                  title="移除此条件"
+                  onClick={() => updateParams({ [key]: "" })}
+                >
+                  <span className="chip-key">{filterLabel(key)}</span>
+                  <span className="chip-val">{shown}</span>
+                  <X size={12} className="chip-x" aria-hidden="true" />
+                </button>
+              );
+            })}
+            <button type="button" className="btn btn-quiet btn-sm" onClick={resetAll}>
+              清除全部条件
+            </button>
+          </div>
+        )}
       </div>
-
-      {/* Active Filter Chips */}
-      {filterChips.length > 0 && (
-        <div className="chip-bar">
-          {filterChips.map(([key, value]) => {
-            const shown =
-              key === "provider_id"
-                ? providers.find((p) => p.id === value)?.name || "已选"
-                : key === "source_id"
-                  ? "已选来源"
-                  : displayFilterValue(key, value);
-            return (
-              <button
-                key={key}
-                type="button"
-                className="filter-chip"
-                title="移除此条件"
-                onClick={() => updateParams({ [key]: "" })}
-              >
-                <span className="chip-key">{filterLabel(key)}</span>
-                <span className="chip-val">{shown}</span>
-                <X size={12} className="chip-x" aria-hidden="true" />
-              </button>
-            );
-          })}
-          <button type="button" className="btn btn-quiet btn-sm" onClick={resetAll}>
-            清除全部条件
-          </button>
-        </div>
-      )}
 
       {/* Main Content Body */}
       <div className={refreshing ? "content-refreshing" : undefined}>

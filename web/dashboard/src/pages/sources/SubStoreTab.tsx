@@ -1,11 +1,12 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Plus, RefreshCw, Search, Trash2 } from "lucide-react";
+import React, { useEffect, useMemo, useState } from "react";
+import { Plus, RefreshCw, Trash2 } from "lucide-react";
 import { ApiError, api, useApiQuery } from "../../api/client";
 import {
   EmptyState,
   ErrorState,
   Modal,
   Pagination,
+  SearchField,
   SkeletonBlock,
   StatusBadge,
 } from "../../components/ui";
@@ -122,20 +123,16 @@ function ChildrenModal({ store, onClose }: { store: SubStoreItem; onClose: () =>
         </p>
 
         <div className="toolbar">
-          <div className="search-wrap">
-            <Search size={15} className="search-icon" aria-hidden="true" />
-            <input
-              type="search"
-              className="input search-input"
-              placeholder="搜索子来源…"
-              aria-label="搜索子来源"
-              value={q}
-              onChange={(e) => {
-                setQ(e.target.value);
-                setPage(0);
-              }}
-            />
-          </div>
+          <SearchField
+            value={q}
+            onCommit={(val) => {
+              setQ(val);
+              setPage(0);
+            }}
+            placeholder="搜索子来源…"
+            ariaLabel="搜索子来源"
+            delay={120}
+          />
           <label className="check-label">
             <input
               type="checkbox"
@@ -251,17 +248,11 @@ export function SubStoreTab({
     ? (params.get("sort") as string)
     : "name";
 
-  const [searchInput, setSearchInput] = useState(params.get("q") || "");
-  const searchTimerRef = useRef<number | undefined>(undefined);
   const [name, setName] = useState("Sub-Store");
   const [payload, setPayload] = useState("");
   const [adding, setAdding] = useState(false);
   const [duplicate, setDuplicate] = useState<{ id: string; name: string } | null>(null);
   const [inspectStore, setInspectStore] = useState<SubStoreItem | null>(null);
-
-  useEffect(() => {
-    setSearchInput(params.get("q") || "");
-  }, [params]);
 
   const setParam = (key: string, value: string) => {
     const next = new URLSearchParams(params);
@@ -413,47 +404,40 @@ export function SubStoreTab({
       </dl>
 
       {/* Toolbar */}
-      <div className="toolbar">
-        <div className="search-wrap">
-          <Search size={15} className="search-icon" aria-hidden="true" />
-          <input
-            type="search"
-            className="input search-input"
+      <div className="control-panel">
+        <div className="toolbar">
+          <SearchField
+            value={params.get("q") || ""}
+            onCommit={(v) => setParam("q", v)}
             placeholder="搜索名称或域名…"
-            aria-label="搜索 Sub-Store"
-            value={searchInput}
-            onChange={(e) => {
-              const v = e.target.value;
-              setSearchInput(v);
-              window.clearTimeout(searchTimerRef.current);
-              searchTimerRef.current = window.setTimeout(() => setParam("q", v.trim()), 300);
-            }}
+            ariaLabel="搜索 Sub-Store"
+            hotkey
           />
+          <select
+            className="select"
+            aria-label="Sub-Store 状态"
+            value={state}
+            onChange={(e) => setParam("state", e.target.value)}
+          >
+            {STATES.map(([k, label]) => (
+              <option key={k} value={k}>
+                {label}
+              </option>
+            ))}
+          </select>
+          <select
+            className="select"
+            aria-label="Sub-Store 排序"
+            value={sort}
+            onChange={(e) => setParam("sort", e.target.value === "name" ? "" : e.target.value)}
+          >
+            {SORTS.map(([k, label]) => (
+              <option key={k} value={k}>
+                {label}
+              </option>
+            ))}
+          </select>
         </div>
-        <select
-          className="select"
-          aria-label="Sub-Store 状态"
-          value={state}
-          onChange={(e) => setParam("state", e.target.value)}
-        >
-          {STATES.map(([k, label]) => (
-            <option key={k} value={k}>
-              {label}
-            </option>
-          ))}
-        </select>
-        <select
-          className="select"
-          aria-label="Sub-Store 排序"
-          value={sort}
-          onChange={(e) => setParam("sort", e.target.value === "name" ? "" : e.target.value)}
-        >
-          {SORTS.map(([k, label]) => (
-            <option key={k} value={k}>
-              {label}
-            </option>
-          ))}
-        </select>
       </div>
 
       {/* Table */}

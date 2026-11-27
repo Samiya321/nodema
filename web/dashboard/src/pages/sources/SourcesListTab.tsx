@@ -1,11 +1,10 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   ChevronDown,
   ChevronRight,
   Link2,
   Pencil,
   Plus,
-  Search,
   Trash2,
   X,
 } from "lucide-react";
@@ -14,6 +13,7 @@ import {
   EmptyState,
   ErrorState,
   Pagination,
+  SearchField,
   SkeletonBlock,
   StatusBadge,
 } from "../../components/ui";
@@ -332,18 +332,12 @@ export function SourcesListTab({
   const q = (params.get("q") || "").toLowerCase();
   const rootId = params.get("root") || "";
 
-  const [searchInput, setSearchInput] = useState(params.get("q") || "");
-  const searchTimerRef = useRef<number | undefined>(undefined);
   const [importOpen, setImportOpen] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
   const [linkSource, setLinkSource] = useState<SourceItem | null>(null);
   const [editTarget, setEditTarget] = useState<SourceItem | null>(null);
-
-  useEffect(() => {
-    setSearchInput(params.get("q") || "");
-  }, [params]);
 
   useEffect(() => {
     if (all && all.length === 0) setImportOpen(true);
@@ -562,74 +556,67 @@ export function SourcesListTab({
       {importOpen && <ImportSection onImported={reload} />}
 
       {/* Filter Toolbar */}
-      <div className="toolbar">
-        <div className="search-wrap">
-          <Search size={15} className="search-icon" aria-hidden="true" />
-          <input
-            type="search"
-            className="input search-input"
+      <div className="control-panel">
+        <div className="toolbar">
+          <SearchField
+            value={params.get("q") || ""}
+            onCommit={(v) => setParam("q", v)}
             placeholder="搜索名称或域名…"
-            aria-label="搜索来源"
-            value={searchInput}
-            onChange={(e) => {
-              const v = e.target.value;
-              setSearchInput(v);
-              window.clearTimeout(searchTimerRef.current);
-              searchTimerRef.current = window.setTimeout(() => setParam("q", v.trim()), 300);
-            }}
+            ariaLabel="搜索来源"
+            hotkey
           />
+
+          <div className="segmented" role="group" aria-label="来源类别">
+            {CATEGORY_TABS.map(([key, text]) => (
+              <button
+                key={key || "all"}
+                type="button"
+                className={`seg-btn${view === key ? " is-active" : ""}`}
+                aria-pressed={view === key}
+                onClick={() => setParam("view", key)}
+              >
+                {text}
+              </button>
+            ))}
+          </div>
+
+          <select
+            className="select"
+            aria-label="同步状态"
+            value={status}
+            onChange={(e) => setParam("status", e.target.value)}
+          >
+            <option value="">全部状态</option>
+            <option value="SUCCESS">成功</option>
+            <option value="PARTIAL">部分成功</option>
+            <option value="FAILED">失败</option>
+            <option value="NEVER">未同步</option>
+          </select>
+
+          <select
+            className="select"
+            aria-label="成功历史"
+            value={history}
+            onChange={(e) => setParam("history", e.target.value)}
+          >
+            <option value="">全部成功历史</option>
+            <option value="worked">曾同步成功</option>
+            <option value="never">从未同步成功</option>
+          </select>
+
+          <select
+            className="select"
+            aria-label="来源排序"
+            value={sort}
+            onChange={(e) => setParam("sort", e.target.value === "name" ? "" : e.target.value)}
+          >
+            {SORT_OPTIONS.map(([k, text]) => (
+              <option key={k} value={k}>
+                {text}
+              </option>
+            ))}
+          </select>
         </div>
-
-        <div className="segmented" role="group" aria-label="来源类别">
-          {CATEGORY_TABS.map(([key, text]) => (
-            <button
-              key={key || "all"}
-              type="button"
-              className={`seg-btn${view === key ? " is-active" : ""}`}
-              aria-pressed={view === key}
-              onClick={() => setParam("view", key)}
-            >
-              {text}
-            </button>
-          ))}
-        </div>
-
-        <select
-          className="select"
-          aria-label="同步状态"
-          value={status}
-          onChange={(e) => setParam("status", e.target.value)}
-        >
-          <option value="">全部状态</option>
-          <option value="SUCCESS">成功</option>
-          <option value="PARTIAL">部分成功</option>
-          <option value="FAILED">失败</option>
-          <option value="NEVER">未同步</option>
-        </select>
-
-        <select
-          className="select"
-          aria-label="成功历史"
-          value={history}
-          onChange={(e) => setParam("history", e.target.value)}
-        >
-          <option value="">全部成功历史</option>
-          <option value="worked">曾同步成功</option>
-          <option value="never">从未同步成功</option>
-        </select>
-
-        <select
-          className="select"
-          aria-label="来源排序"
-          value={sort}
-          onChange={(e) => setParam("sort", e.target.value === "name" ? "" : e.target.value)}
-        >
-          {SORT_OPTIONS.map(([k, text]) => (
-            <option key={k} value={k}>
-              {text}
-            </option>
-          ))}
-        </select>
       </div>
 
       {/* Inline Bulk Action Strip */}

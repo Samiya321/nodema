@@ -83,6 +83,8 @@ function PipelineBar() {
   const requested = pipeline?.requested_scans || [];
   const activeScans = pipeline?.active_scans || [];
   const deadLinks = pipeline ? Math.max(0, pipeline.failed_sources - (pipeline.broken_sources || 0)) : 0;
+  const hasActiveRun =
+    requested.length > 0 || activeScans.some((r) => RUNNING.has(r.status));
 
   const transfer = pipeline?.neon_transfer;
   const transferRatio = transfer && transfer.limit ? transfer.used / transfer.limit : null;
@@ -92,12 +94,18 @@ function PipelineBar() {
       <div className="topbar-status">
         {!pipeline ? (
           <span className="topbar-chip muted" role="status">
-            {pipelineError || "正在读取运行状态…"}
+            <span className="pulse-dot is-mute" aria-hidden="true" />
+            <span>{pipelineError || "正在读取运行状态…"}</span>
           </span>
         ) : (
           <>
             <div className="topbar-sync-meta">
-              <span className="muted">上次同步 {formatAgo(pipeline.last_synced_at)}</span>
+              <span
+                className={`pulse-dot ${hasActiveRun ? "is-live" : "is-ok"}`}
+                aria-hidden="true"
+                title={hasActiveRun ? "有检测任务进行中" : "运行状态正常"}
+              />
+              <span className="topbar-sync-time">上次同步 {formatAgo(pipeline.last_synced_at)}</span>
               {pipeline.pending_sources > 0 && (
                 <a
                   href="#/sources?status=NEVER"
@@ -137,6 +145,10 @@ function PipelineBar() {
               </a>
             )}
 
+            {(requested.length > 0 || activeScans.length > 0) && (
+              <span className="topbar-sep" aria-hidden="true" />
+            )}
+
             <div className="topbar-runs" aria-live="polite">
               {requested.map((r, i) => (
                 <span key={i} className="status-pill pill-info" title="等待 GitHub Actions 开始">
@@ -163,7 +175,10 @@ function PipelineBar() {
                       title="查看检测进度"
                     >
                       <span className="run-pill-label">
-                        检测中 · {label} {done}/{total}
+                        <span>检测中 · {label}</span>
+                        <strong className="mono">
+                          {done}/{total}
+                        </strong>
                       </span>
                       <MeterBar ratio={total ? done / total : 0} tone="info" label="检测进度" />
                     </a>
@@ -218,7 +233,7 @@ export function AppShell({
   loggingOut: boolean;
   children: React.ReactNode;
 }) {
-  const { theme, cycleTheme, shareNode, closeShareNode } = useApp();
+  const { theme, cycleTheme, pipeline, shareNode, closeShareNode } = useApp();
   const [collapsed, setCollapsed] = useState<boolean>(() => {
     try {
       return localStorage.getItem(RAIL_STORAGE_KEY) === "true";
@@ -265,6 +280,19 @@ export function AppShell({
   }, [moreOpen]);
 
   const moreActive = currentPage === "ops" || currentPage === "settings";
+  const opsRunning = Boolean(
+    pipeline &&
+      ((pipeline.requested_scans?.length ?? 0) > 0 ||
+        pipeline.active_scans.some((r) => RUNNING.has(r.status))),
+  );
+  const sourcesAlertCount = pipeline
+    ? pipeline.broken_sources > 0
+      ? pipeline.broken_sources
+      : pipeline.pending_sources > 0
+        ? pipeline.pending_sources
+        : 0
+    : 0;
+  const sourcesAlertTone = pipeline && pipeline.broken_sources > 0 ? "bad" : "info";
 
   return (
     <div className={`shell${collapsed ? " is-collapsed" : ""}`}>
@@ -362,6 +390,7 @@ export function AppShell({
         </div>
 
         <nav className="sidebar-nav" aria-label="页面导航">
+          <div className="nav-section-label">工作区</div>
           <ul>
             {NAV_ITEMS.map(({ key, label, icon: Icon, mobilePrimary }) => {
               const active = currentPage === key;
@@ -375,6 +404,17 @@ export function AppShell({
                   >
                     <Icon size={18} className="nav-icon" />
                     <span className="nav-label">{label}</span>
+                    {key === "sources" && sourcesAlertCount > 0 && (
+                      <span
+                        className={`nav-badge nav-badge-${sourcesAlertTone}`}
+                        aria-hidden="true"
+                      >
+                        {sourcesAlertCount > 99 ? "99+" : sourcesAlertCount}
+                      </span>
+                    )}
+                    {key === "ops" && opsRunning && (
+                      <span className="nav-live-dot" aria-hidden="true" title="检测进行中" />
+                    )}
                   </a>
                 </li>
               );

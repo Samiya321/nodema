@@ -927,143 +927,178 @@ function ExportsListView({
           />
         </section>
       ) : (
-        <div className="table-card">
-          <div className="table-wrap table-wrap-flush">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th scope="col">方案</th>
-                  <th scope="col">条件</th>
-                  <th scope="col">状态</th>
-                  <th scope="col" className="num">
-                    节点
-                  </th>
-                  <th scope="col">最近生成</th>
-                  <th scope="col">有效期</th>
-                  <th scope="col" className="num">
-                    操作
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {profiles.map((p) => {
-                  const active = p.status !== "REVOKED" && p.status !== "EXPIRED";
-                  const [stLabel, stTone] = EXPORT_STATES[p.status] || [p.status, "mute"];
-                  const parts = exportSummaryParts(p.filter_spec);
-                  const isBusy = busyId === p.id;
-                  return (
-                    <tr key={p.id} className={!active ? "is-dim" : undefined}>
-                      <td className="export-name-cell" data-label="方案">
-                        <div className="cell-stack">
-                          <a href={exportHref(p.id)} className="row-title">
-                            {p.name}
-                          </a>
-                          <span className="muted tiny">
-                            {FORMATS.find(([k]) => k === p.format)?.[1] || p.format}
-                          </span>
-                        </div>
-                      </td>
-                      <td data-label="条件">
-                        <div className="summary-pills">
-                          {parts.length > 0 ? (
-                            parts.map((part, i) => (
-                              <span key={i} className="meta-pill">
-                                {part}
-                              </span>
-                            ))
-                          ) : (
-                            <span className="muted small">全部可用节点</span>
-                          )}
-                        </div>
-                      </td>
-                      <td data-label="状态">
-                        <div className="cell-stack">
-                          <StatusBadge label={stLabel} tone={stTone} />
-                          {p.error_code && (
-                            <span className="tiny bad-text">{errorText(p.error_code)}</span>
-                          )}
-                        </div>
-                      </td>
-                      <td className="num" data-label="节点">
-                        {p.serving
-                          ? `${formatNumber(p.node_count)}（${formatBytes(p.payload_bytes)}）`
-                          : "—"}
-                      </td>
-                      <td className="muted small" data-label="最近生成">
-                        {p.current_version ? `v${p.current_version} · ${formatDate(p.built_at)}` : "尚未生成"}
-                      </td>
-                      <td className="muted small" data-label="有效期">
-                        {p.expires_at ? formatDate(p.expires_at) : "长期"}
-                      </td>
-                      <td className="num" data-label="操作">
-                        <div className="row-actions">
-                          {active && (
-                            <>
-                              <button
-                                type="button"
-                                className="btn btn-quiet btn-sm"
-                                disabled={isBusy}
-                                onClick={() => void showLink(p.id)}
-                              >
-                                <Link2 size={13} /> 链接
-                              </button>
-                              <button
-                                type="button"
-                                className="btn btn-quiet btn-sm"
-                                disabled={isBusy}
-                                onClick={() => void openEditor(p.id)}
-                              >
-                                <Pencil size={13} /> 编辑
-                              </button>
-                              {p.status !== "BUILDING" && (
+        <>
+          <dl className="stat-strip">
+            <div>
+              <dt>活跃方案</dt>
+              <dd>
+                {formatNumber(
+                  profiles.filter((p) => p.status !== "REVOKED" && p.status !== "EXPIRED").length,
+                )}
+              </dd>
+            </div>
+            <div>
+              <dt>可提供下载</dt>
+              <dd>{formatNumber(profiles.filter((p) => p.serving).length)}</dd>
+            </div>
+            <div>
+              <dt>覆盖节点总数</dt>
+              <dd>
+                {formatNumber(
+                  profiles.reduce((sum, p) => sum + (p.serving ? p.node_count || 0 : 0), 0),
+                )}
+              </dd>
+            </div>
+            <div>
+              <dt>待生成或异常</dt>
+              <dd>
+                {formatNumber(
+                  profiles.filter((p) =>
+                    ["PENDING", "BUILDING", "UPDATING", "FAILED"].includes(p.status),
+                  ).length,
+                )}
+              </dd>
+            </div>
+          </dl>
+
+          <div className="table-card">
+            <div className="table-wrap table-wrap-flush">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th scope="col">方案</th>
+                    <th scope="col">条件</th>
+                    <th scope="col">状态</th>
+                    <th scope="col" className="num">
+                      节点
+                    </th>
+                    <th scope="col">最近生成</th>
+                    <th scope="col">有效期</th>
+                    <th scope="col" className="num">
+                      操作
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {profiles.map((p) => {
+                    const active = p.status !== "REVOKED" && p.status !== "EXPIRED";
+                    const [stLabel, stTone] = EXPORT_STATES[p.status] || [p.status, "mute"];
+                    const parts = exportSummaryParts(p.filter_spec);
+                    const isBusy = busyId === p.id;
+                    return (
+                      <tr key={p.id} className={!active ? "is-dim" : undefined}>
+                        <td className="export-name-cell" data-label="方案">
+                          <div className="cell-stack">
+                            <a href={exportHref(p.id)} className="row-title">
+                              {p.name}
+                            </a>
+                            <span className="muted tiny">
+                              {FORMATS.find(([k]) => k === p.format)?.[1] || p.format}
+                            </span>
+                          </div>
+                        </td>
+                        <td data-label="条件">
+                          <div className="summary-pills">
+                            {parts.length > 0 ? (
+                              parts.map((part, i) => (
+                                <span key={i} className="meta-pill">
+                                  {part}
+                                </span>
+                              ))
+                            ) : (
+                              <span className="muted small">全部可用节点</span>
+                            )}
+                          </div>
+                        </td>
+                        <td data-label="状态">
+                          <div className="cell-stack">
+                            <StatusBadge label={stLabel} tone={stTone} />
+                            {p.error_code && (
+                              <span className="tiny bad-text">{errorText(p.error_code)}</span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="num" data-label="节点">
+                          {p.serving
+                            ? `${formatNumber(p.node_count)}（${formatBytes(p.payload_bytes)}）`
+                            : "—"}
+                        </td>
+                        <td className="muted small" data-label="最近生成">
+                          {p.current_version ? `v${p.current_version} · ${formatDate(p.built_at)}` : "尚未生成"}
+                        </td>
+                        <td className="muted small" data-label="有效期">
+                          {p.expires_at ? formatDate(p.expires_at) : "长期"}
+                        </td>
+                        <td className="num" data-label="操作">
+                          <div className="row-actions">
+                            {active && (
+                              <>
+                                <button
+                                  type="button"
+                                  className="btn btn-sm"
+                                  disabled={isBusy}
+                                  onClick={() => void showLink(p.id)}
+                                >
+                                  <Link2 size={13} /> 链接
+                                </button>
                                 <button
                                   type="button"
                                   className="btn btn-quiet btn-sm"
                                   disabled={isBusy}
-                                  onClick={() => void rebuild(p.id)}
+                                  onClick={() => void openEditor(p.id)}
                                 >
-                                  <RefreshCw size={13} /> 重建
+                                  <Pencil size={13} /> 编辑
                                 </button>
-                              )}
+                                {p.status !== "BUILDING" && (
+                                  <button
+                                    type="button"
+                                    className="btn btn-quiet btn-sm"
+                                    disabled={isBusy}
+                                    onClick={() => void rebuild(p.id)}
+                                  >
+                                    <RefreshCw size={13} /> 重建
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  className="btn btn-quiet btn-sm"
+                                  disabled={isBusy}
+                                  onClick={() => void rotateToken(p)}
+                                >
+                                  <KeyRound size={13} /> 换密钥
+                                </button>
+                              </>
+                            )}
+                            {p.current_version > 0 && (
                               <button
                                 type="button"
                                 className="btn btn-quiet btn-sm"
                                 disabled={isBusy}
-                                onClick={() => void rotateToken(p)}
+                                onClick={() => void showVersions(p)}
                               >
-                                <KeyRound size={13} /> 换密钥
+                                <History size={13} /> 版本
                               </button>
-                            </>
-                          )}
-                          {p.current_version > 0 && (
-                            <button
-                              type="button"
-                              className="btn btn-quiet btn-sm"
-                              disabled={isBusy}
-                              onClick={() => void showVersions(p)}
-                            >
-                              <History size={13} /> 版本
-                            </button>
-                          )}
-                          {active && (
-                            <button
-                              type="button"
-                              className="btn btn-quiet btn-sm bad-text"
-                              disabled={isBusy}
-                              onClick={() => void revoke(p)}
-                            >
-                              <Trash2 size={13} /> 撤销
-                            </button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                            )}
+                            {active && (
+                              <button
+                                type="button"
+                                className="btn btn-quiet btn-sm bad-text"
+                                disabled={isBusy}
+                                onClick={() => void revoke(p)}
+                              >
+                                <Trash2 size={13} /> 撤销
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           </div>
-        </div>
+        </>
       )}
 
       {formState && (

@@ -22,6 +22,7 @@ import {
   KIND_LABEL,
   SCAN_KIND_LABEL,
   countryFlag,
+  countryName,
   daysUntil,
   formatAgo,
   formatBytes,
@@ -57,6 +58,7 @@ const olderThan = (value: string | null | undefined, hours: number, observed: nu
 function KpiCard({
   label,
   value,
+  badgeText,
   sub,
   href,
   icon: Icon,
@@ -64,6 +66,7 @@ function KpiCard({
 }: {
   label: string;
   value: number | null | undefined;
+  badgeText?: string | null;
   sub: string;
   href: string;
   icon: React.ComponentType<{ size?: number }>;
@@ -77,7 +80,10 @@ function KpiCard({
           <Icon size={16} />
         </span>
       </div>
-      <div className="kpi-value">{value == null ? "—" : formatNumber(value)}</div>
+      <div className="kpi-metric-row">
+        <div className="kpi-value">{value == null ? "—" : formatNumber(value)}</div>
+        {badgeText && <span className="kpi-pill">{badgeText}</span>}
+      </div>
       <div className="kpi-sub">
         <span>{sub}</span>
         <ArrowUpRight size={13} className="kpi-arrow" aria-hidden="true" />
@@ -333,25 +339,29 @@ function GroupAssetCard({ groupKey, data }: { groupKey: "SELF_HOSTED" | "AIRPORT
   const statuses = data?.statuses || {};
   const up = (statuses.UP || 0) + (statuses.DEGRADED || 0);
   const total = data?.total || 0;
+  const pctAvailable = total > 0 ? ((up / total) * 100).toFixed(1) + "%" : null;
   const rows: Array<[string, number, Tone, string]> = [
     ["可用", up, "ok", "AVAILABLE"],
     ["不可用", statuses.DOWN || 0, "bad", "DOWN"],
     ["未检测", statuses.UNKNOWN || 0, "mute", "UNKNOWN"],
-    ["结果过期", statuses.STALE || 0, "mute", "STALE"],
+    ["已过期", statuses.STALE || 0, "mute", "STALE"],
     ["不支持", statuses.UNSUPPORTED || 0, "mute", "UNSUPPORTED"],
   ];
 
   return (
     <section className="card">
       <div className="card-head">
-        <h2>{KIND_LABEL[groupKey]}节点</h2>
+        <div className="row-inline">
+          <h2>{KIND_LABEL[groupKey]}节点</h2>
+          {pctAvailable && <span className="meta-pill">可用率 {pctAvailable}</span>}
+        </div>
         <a href={`#/nodes?node_group=${groupKey}&status=ALL`} className="card-action">
           查看全部
         </a>
       </div>
       <div className="big-stat">
         <span className="big-stat-num">{formatNumber(up)}</span>
-        <span className="big-stat-of">/ {formatNumber(total)} 可用</span>
+        <span className="big-stat-of">/ {formatNumber(total)} 可用 · 检测资格 {formatNumber(data?.eligible || 0)}</span>
       </div>
       {total > 0 && (
         <div className="mini-stack-bar" aria-hidden="true">
@@ -362,18 +372,19 @@ function GroupAssetCard({ groupKey, data }: { groupKey: "SELF_HOSTED" | "AIRPORT
           )}
         </div>
       )}
-      <ul className="tally-list">
+      <ul className="asset-mini-grid">
         {rows.map(([label, n, tone, status]) => (
           <li key={status}>
-            <a href={`#/nodes?node_group=${groupKey}&status=${status}`}>
-              <span className={`dot dot-${tone}`} aria-hidden="true" />
-              <span>{label}</span>
+            <a href={`#/nodes?node_group=${groupKey}&status=${status}`} className="asset-mini-cell">
+              <span className="asset-mini-label">
+                <span className={`dot dot-${tone}`} aria-hidden="true" />
+                <span>{label}</span>
+              </span>
+              <strong>{formatNumber(n)}</strong>
             </a>
-            <strong>{formatNumber(n)}</strong>
           </li>
         ))}
       </ul>
-      <p className="hint">具备检测资格 {formatNumber(data?.eligible || 0)} 个</p>
     </section>
   );
 }
@@ -449,6 +460,11 @@ export function OverviewPage({
         <KpiCard
           label="当前可用节点"
           value={availableNodes}
+          badgeText={
+            catalog && catalog.total > 0 && availableNodes !== null
+              ? ((availableNodes / catalog.total) * 100).toFixed(1) + "%"
+              : null
+          }
           sub={catalog ? `共 ${formatNumber(catalog.total)} 个入库节点` : "查看节点目录"}
           href="#/nodes"
           icon={Server}
@@ -457,6 +473,9 @@ export function OverviewPage({
         <KpiCard
           label="已登记来源"
           value={ops?.sources.total}
+          badgeText={
+            ops && ops.sources.pending > 0 ? `${formatNumber(ops.sources.pending)} 待同步` : null
+          }
           sub={
             ops
               ? `${formatNumber(ops.sources.roots)} 根来源 · ${formatNumber(ops.sources.children)} 子来源`
@@ -468,6 +487,9 @@ export function OverviewPage({
         <KpiCard
           label="待检查来源"
           value={issues?.broken}
+          badgeText={
+            issues && issues.broken === 0 ? "全部正常" : null
+          }
           sub={
             issues
               ? `${formatNumber(issues.never_worked)} 个从未成功`
@@ -480,6 +502,11 @@ export function OverviewPage({
         <KpiCard
           label="成品订阅"
           value={ops?.exports.active}
+          badgeText={
+            ops && ops.exports.active > 0
+              ? `${formatNumber(ops.exports.serving)}/${formatNumber(ops.exports.active)} 可用`
+              : null
+          }
           sub={ops ? `${formatNumber(ops.exports.serving)} 个可下载` : "管理订阅方案"}
           href="#/exports"
           icon={Download}
@@ -609,28 +636,43 @@ export function OverviewPage({
                   counts={gradeCounts}
                   link={(g: QualityGrade) => `#/nodes?vantage=${activeVantage}&g=${g}`}
                   fullWidth
+                  compact
                 />
-                <ul className="tally-list">
-                  {GRADES.map((g) => (
-                    <li key={g}>
-                      <a href={`#/nodes?vantage=${activeVantage}&g=${g}`}>
-                        <GradeBadge grade={g} vantage={activeVantage} withVantage={false} />
-                      </a>
-                      <strong>{formatNumber(gradeCounts[g] || 0)}</strong>
-                    </li>
-                  ))}
+                <ul className="overview-grade-grid">
+                  {GRADES.map((g) => {
+                    const count = gradeCounts[g] || 0;
+                    const share = gradeTotal > 0 ? Math.round((count / gradeTotal) * 100) : 0;
+                    return (
+                      <li key={g}>
+                        <a
+                          href={`#/nodes?vantage=${activeVantage}&g=${g}`}
+                          className={`overview-grade-tile${count === 0 ? " is-zero" : ""}`}
+                        >
+                          <GradeBadge grade={g} vantage={activeVantage} withVantage={false} />
+                          <strong className="overview-grade-num">{formatNumber(count)}</strong>
+                          <span className="overview-grade-pct">{share}%</span>
+                        </a>
+                      </li>
+                    );
+                  })}
                 </ul>
-                <div className="stack-xs">
-                  <p className="hint">
-                    只统计当前可用的节点；定档于 {formatAgo(probe.graded_at)}。
-                  </p>
+                <div className="overview-coverage-bar">
+                  <span className="hint">定档于 {formatAgo(probe.graded_at)}</span>
                   {probe.coverage_total != null && (
-                    <p className="hint">
-                      当前可用 {formatNumber(probe.coverage_total)} · 有接入样本{" "}
-                      {formatNumber(probe.coverage_measured)} · 端点已确认{" "}
-                      {formatNumber(probe.coverage_endpoint_verified)} · CF 落地排除{" "}
-                      {formatNumber(probe.coverage_excluded)}
-                    </p>
+                    <div className="row-inline">
+                      <span className="meta-pill">
+                        可用 {formatNumber(probe.coverage_total)}
+                      </span>
+                      <span className="meta-pill">
+                        有样本 {formatNumber(probe.coverage_measured)}
+                      </span>
+                      <span className="meta-pill">
+                        端点确认 {formatNumber(probe.coverage_endpoint_verified)}
+                      </span>
+                      <span className="meta-pill">
+                        CF 排除 {formatNumber(probe.coverage_excluded)}
+                      </span>
+                    </div>
                   )}
                 </div>
               </div>
@@ -670,7 +712,8 @@ export function OverviewPage({
                   <li key={code}>
                     <a href={pageHref("nodes", { exit_country: code })} className="country-pill">
                       <span aria-hidden="true">{countryFlag(code)}</span>
-                      <span>{code}</span>
+                      <span className="country-pill-name">{countryName(code)}</span>
+                      <span className="country-pill-code mono">{code}</span>
                       <strong>{formatNumber(n)}</strong>
                     </a>
                   </li>

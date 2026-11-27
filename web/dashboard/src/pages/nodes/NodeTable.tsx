@@ -226,19 +226,27 @@ export function NodeTable({
             const ipType = n.exit_ip_type
               ? IP_TYPE_LABEL[n.exit_ip_type] + (n.exit_ip_proxy ? "·代理标记" : "")
               : "";
-            const meta = [
-              n.short_id,
-              n.protocol,
-              classificationLabel(n),
-              ipType,
-              (n.server_node_count || 0) > 1 ? `同 IP ${n.server_node_count}` : "",
-              flags & 6 ? "归属有分歧" : "",
-              flags & 8 ? "历史落地" : "",
-              n.enabled ? "" : "已停用",
-              n.present_source_count ? "" : "上游已移除",
-            ].filter(Boolean);
+            const baseMeta = [n.short_id, n.protocol, classificationLabel(n), ipType].filter(Boolean);
+            const flagBadges: Array<{ text: string; tone: "info" | "warn" | "mute" }> = [];
+            if ((n.server_node_count || 0) > 1) {
+              flagBadges.push({ text: `同 IP ×${n.server_node_count}`, tone: "info" });
+            }
+            if (flags & 6) flagBadges.push({ text: "归属有分歧", tone: "warn" });
+            if (flags & 8) flagBadges.push({ text: "历史落地", tone: "warn" });
+            if (!n.enabled) flagBadges.push({ text: "已停用", tone: "mute" });
+            if (!n.present_source_count) flagBadges.push({ text: "上游已移除", tone: "mute" });
+
             const asn = n.exit_asn ? `AS${n.exit_asn}` : "";
             const opName = operatorOf(n);
+            const availRatio = n.checked_7d ? (n.avail_7d || 0) / n.checked_7d : null;
+            const availClass =
+              availRatio == null
+                ? ""
+                : availRatio >= 1
+                  ? " is-full"
+                  : availRatio < 0.7
+                    ? " is-low"
+                    : "";
 
             return (
               <tr
@@ -264,9 +272,10 @@ export function NodeTable({
                         {n.name}
                       </span>
                       <span className="node-meta">
-                        {meta.map((m, idx) => (
-                          <span key={idx} className="meta-pill">
-                            {m}
+                        <span className="node-meta-inline">{baseMeta.join(" · ")}</span>
+                        {flagBadges.map((b, idx) => (
+                          <span key={idx} className={`flag-chip flag-${b.tone}`}>
+                            {b.text}
                           </span>
                         ))}
                       </span>
@@ -299,7 +308,7 @@ export function NodeTable({
                 <td data-label="7 天可用">
                   {n.checked_7d ? (
                     <span
-                      className="avail-pill"
+                      className={`avail-pill${availClass}`}
                       title={`7 天内检测 ${n.checked_7d} 天，${n.avail_7d} 天可用`}
                     >
                       {n.avail_7d}/{n.checked_7d} 天

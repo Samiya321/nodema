@@ -393,6 +393,23 @@ export function AppProvider({
     }
   };
 
+  // Escape key & scroll lock for global Confirm / Start Scan modals
+  useEffect(() => {
+    const active = Boolean(pendingConfirm || testModalOpen);
+    if (!active) return;
+    document.body.classList.add("modal-open");
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (pendingConfirm) resolveConfirm(false);
+      else if (testModalOpen && !testSubmitting) setTestModalOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => {
+      document.body.classList.remove("modal-open");
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [pendingConfirm, testModalOpen, testSubmitting, resolveConfirm]);
+
   return (
     <AppContext.Provider
       value={{

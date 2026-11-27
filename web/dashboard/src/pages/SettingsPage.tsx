@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { RotateCcw, Save, Search, Sparkles } from "lucide-react";
+import { RotateCcw, Save, Sparkles } from "lucide-react";
 import { api, invalidateReads, useApiQuery } from "../api/client";
-import { ErrorState, SkeletonBlock } from "../components/ui";
+import { ErrorState, SearchField, SkeletonBlock } from "../components/ui";
 import { errorText } from "../lib/errors";
 import { formatDate, formatNumber } from "../lib/format";
 import { VANTAGES } from "../lib/grades";
@@ -297,17 +297,13 @@ function AsnLabelsSection({
         自动从运营商名称提取简称（如 WEBBING HONG KONG LIMITED → Webbing）。不满意可以在这里改，留空恢复自动。按节点数排列。
       </p>
 
-      <div className="search-wrap">
-        <Search size={15} className="search-icon" aria-hidden="true" />
-        <input
-          type="search"
-          className="input search-input"
-          placeholder="搜索 ASN、运营商或简称…"
-          aria-label="搜索 ASN"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
-      </div>
+      <SearchField
+        value={search}
+        onCommit={(v) => setSearch(v)}
+        placeholder="搜索 ASN、运营商或简称…"
+        ariaLabel="搜索 ASN"
+        delay={120}
+      />
 
       {filtered.length === 0 ? (
         <p className="muted small">没有匹配的 ASN</p>

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { ArrowLeft, Play } from "lucide-react";
 import { api, useApiQuery } from "../api/client";
 import {
+  BarColumn,
   CopyPageLinkButton,
   EmptyState,
   ErrorState,
@@ -346,6 +347,7 @@ function ProbesTab() {
 
   const daily = status.daily || [];
   const runs = status.runs || [];
+  const maxDailyTests = daily.reduce((m, d) => Math.max(m, d.tests || 0), 0);
 
   return (
     <div className="stack">
@@ -373,9 +375,26 @@ function ProbesTab() {
       </dl>
 
       {daily.length > 0 && (
-        <p className="muted small">
-          每日测试数：{daily.map((d) => `${d.date.slice(5)} ${formatNumber(d.tests)}`).join(" · ")}
-        </p>
+        <section className="card">
+          <div className="card-head">
+            <h2>每日测试量</h2>
+            <span className="muted small">近 {daily.length} 天</span>
+          </div>
+          <div className="mini-bar-chart" role="list" aria-label="每日测试量">
+            {daily.map((d) => (
+              <div key={d.date} className="mini-bar-item" role="listitem">
+                <span className="mini-bar-value">{formatNumber(d.tests)}</span>
+                <div className="mini-bar-track">
+                  <BarColumn
+                    ratio={maxDailyTests > 0 ? d.tests / maxDailyTests : 0}
+                    title={`${d.date} · ${formatNumber(d.tests)} 次测试`}
+                  />
+                </div>
+                <span className="mini-bar-date">{d.date.slice(5)}</span>
+              </div>
+            ))}
+          </div>
+        </section>
       )}
 
       {runs.length === 0 ? (
@@ -480,17 +499,21 @@ function UsageTab({
   const data = usageQ.data;
   const probe = probeQ.data;
   const ops = opsQ.data;
-  const latest = data.database_samples[0];
+  const dbSamples = data.database_samples || [];
+  const actionRuns = data.action_runs || [];
+  const recentRuns = data.recent || [];
+  const dailyRows = data.daily || [];
+  const latest = dbSamples[0];
   const transfer = data.neon_transfer;
   const selfHosted = data.database_provider === "self_hosted";
   const ratio =
     transfer && transfer.transfer_limit_bytes
       ? transfer.transfer_bytes / transfer.transfer_limit_bytes
       : null;
-  const pace = selfHosted ? null : usageProjection(data.database_samples, transfer);
+  const pace = selfHosted ? null : usageProjection(dbSamples, transfer);
 
-  const visibleActions = showAllActions ? data.action_runs : data.action_runs.slice(0, 10);
-  const visibleRecent = showAllRecent ? data.recent : data.recent.slice(0, 10);
+  const visibleActions = showAllActions ? actionRuns : actionRuns.slice(0, 10);
+  const visibleRecent = showAllRecent ? recentRuns : recentRuns.slice(0, 10);
 
   return (
     <div className="stack">
@@ -608,57 +631,75 @@ function UsageTab({
       <section className="card">
         <div className="card-head">
           <h2>数据库与备份</h2>
+          {latest && <span className="muted tiny">采样于 {formatDate(latest.taken_at)}</span>}
         </div>
-        <div className="stack-sm">
-          {latest ? (
-            <p>
-              项目数据 <strong>{formatBytes(latest.table_bytes)}</strong>，数据库共{" "}
-              <strong>{formatBytes(latest.database_bytes)}</strong>，窗口内增长{" "}
-              {formatBytes(data.database_growth_bytes)}（{formatDate(latest.taken_at)} 采样）。
-            </p>
-          ) : (
-            <p className="muted">还没有容量采样。</p>
-          )}
+        <dl className="kv-list">
+          <dt>数据库体积</dt>
+          <dd>
+            {latest ? (
+              <>
+                项目数据 <strong>{formatBytes(latest.table_bytes)}</strong> · 数据库共{" "}
+                <strong>{formatBytes(latest.database_bytes)}</strong> · 窗口内增长{" "}
+                {formatBytes(data.database_growth_bytes)}
+              </>
+            ) : (
+              <span className="muted">还没有容量采样。</span>
+            )}
+          </dd>
           {ops?.host && (
-            <p className="small">
-              剩余磁盘 {formatBytes(ops.host.disk_free)} / {formatBytes(ops.host.disk_total)} ·
-              可用内存 {formatBytes(ops.host.mem_available)} · 证书有效至{" "}
-              {formatDate(ops.host.tls_expires_at)}
-            </p>
+            <>
+              <dt>主机资源</dt>
+              <dd>
+                剩余磁盘 {formatBytes(ops.host.disk_free)} / {formatBytes(ops.host.disk_total)} ·
+                可用内存 {formatBytes(ops.host.mem_available)} · 证书有效至{" "}
+                {formatDate(ops.host.tls_expires_at)}
+              </dd>
+            </>
           )}
           {ops?.capacity_24h?.samples ? (
-            <p className="muted small">
-              过去 24 小时 · {ops.capacity_24h.samples} 次采样 · 连接峰值{" "}
-              {ops.capacity_24h.connections_peak} · 数据库峰值{" "}
-              {formatBytes(ops.capacity_24h.db_peak_bytes)}
-            </p>
+            <>
+              <dt>过去 24 小时</dt>
+              <dd>
+                {ops.capacity_24h.samples} 次采样 · 连接峰值 {ops.capacity_24h.connections_peak} ·
+                数据库峰值 {formatBytes(ops.capacity_24h.db_peak_bytes)}
+              </dd>
+            </>
           ) : null}
           {ops?.last_daily_capacity?.samples ? (
-            <p className="muted small">
-              {ops.last_daily_capacity.scan_date} 日检期间 · {ops.last_daily_capacity.samples}{" "}
-              次采样 · 连接峰值 {ops.last_daily_capacity.connections_peak} · 最低可用内存{" "}
-              {formatBytes(ops.last_daily_capacity.mem_min_bytes)}
-            </p>
+            <>
+              <dt>{ops.last_daily_capacity.scan_date} 日检</dt>
+              <dd>
+                {ops.last_daily_capacity.samples} 次采样 · 连接峰值{" "}
+                {ops.last_daily_capacity.connections_peak} · 最低可用内存{" "}
+                {formatBytes(ops.last_daily_capacity.mem_min_bytes)}
+              </dd>
+            </>
           ) : selfHosted ? (
-            <p className="muted small">等待采集下一次完整日检期间的容量。</p>
+            <>
+              <dt>日检容量</dt>
+              <dd className="muted">等待采集下一次完整日检期间的容量。</dd>
+            </>
           ) : null}
-          {data.latest_backup ? (
-            <p className={data.latest_backup.expired ? "bad-text small" : "muted small"}>
-              最近加密备份 {formatDate(data.latest_backup.created_at)} ·{" "}
-              {data.latest_backup.expired
-                ? "已过期"
-                : `有效至 ${formatDate(data.latest_backup.expires_at)}`}
-            </p>
-          ) : (
-            <p className="muted small">暂时无法确认加密备份产物。</p>
-          )}
-        </div>
+          <dt>加密备份</dt>
+          <dd className={data.latest_backup?.expired ? "bad-text" : undefined}>
+            {data.latest_backup ? (
+              <>
+                最近 {formatDate(data.latest_backup.created_at)} ·{" "}
+                {data.latest_backup.expired
+                  ? "已过期"
+                  : `有效至 ${formatDate(data.latest_backup.expires_at)}`}
+              </>
+            ) : (
+              <span className="muted">暂时无法确认加密备份产物。</span>
+            )}
+          </dd>
+        </dl>
       </section>
 
       {/* Actions Runs */}
       <section className="stack-sm">
         <h2>Actions 执行</h2>
-        {data.action_runs.length === 0 ? (
+        {actionRuns.length === 0 ? (
           <div className="card">
             <EmptyState title="还没有 Actions 记录" />
           </div>
@@ -700,13 +741,13 @@ function UsageTab({
                 </tbody>
               </table>
             </div>
-            {!showAllActions && data.action_runs.length > 10 && (
+            {!showAllActions && actionRuns.length > 10 && (
               <button
                 type="button"
                 className="btn-more-rows"
                 onClick={() => setShowAllActions(true)}
               >
-                显示全部 {data.action_runs.length} 条
+                显示全部 {actionRuns.length} 条
               </button>
             )}
           </div>
@@ -716,7 +757,7 @@ function UsageTab({
       {/* Recent Executions */}
       <section className="stack-sm">
         <h2>最近执行</h2>
-        {data.recent.length === 0 ? (
+        {recentRuns.length === 0 ? (
           <div className="card">
             <EmptyState title="暂无记录" />
           </div>
@@ -752,13 +793,13 @@ function UsageTab({
                 </tbody>
               </table>
             </div>
-            {!showAllRecent && data.recent.length > 10 && (
+            {!showAllRecent && recentRuns.length > 10 && (
               <button
                 type="button"
                 className="btn-more-rows"
                 onClick={() => setShowAllRecent(true)}
               >
-                显示全部 {data.recent.length} 条
+                显示全部 {recentRuns.length} 条
               </button>
             )}
           </div>
@@ -768,7 +809,7 @@ function UsageTab({
       {/* Daily Summary */}
       <section className="stack-sm">
         <h2>每日明细</h2>
-        {data.daily.length === 0 ? (
+        {dailyRows.length === 0 ? (
           <div className="card">
             <EmptyState title="暂无每日明细" />
           </div>
@@ -794,7 +835,7 @@ function UsageTab({
                   </tr>
                 </thead>
                 <tbody>
-                  {data.daily.map((d) => (
+                  {dailyRows.map((d) => (
                     <tr key={d.day}>
                       <td className="mono" data-label="日期">
                         {d.day}
