@@ -14,6 +14,12 @@
 
 管理员密钥、数据库连接、HMAC/AES 密钥和 GitHub 调度 token 保存在本地 `private/` 以及对应平台 Secrets 中，不在本页或 Git 仓库公开。
 
+## 2026-11-28 第三十次发布：Dashboard 界面与交互优化
+
+- 本次仅发布 Pages，部署 ID `ddb0d42f-fd42-4790-8f6a-f7e135cecaf3`，源码 `c120925`。API Worker 仍为 `97dfbdb7-fa2f-44c7-979e-918a30e31504`，schema 仍为 `0028_node_classification`。[Pages 部署](https://ddb0d42f.nodema-dashboard.pages.dev) · [main CI](https://github.com/Samiya321/nodema/actions/runs/46081562340)
+- 在不新增依赖、保留既有 API 契约与严格 CSP 的前提下，重构总览（KPI 胶囊、6 格质量网格、5 格资产卡、中文落地标签）、节点列表（占比磁贴、统一控制条、单行元数据 + 语义异常标记、7 天可用率着色）、节点详情（4 指标 Hero 条与折叠摘要）、运维接入测量（CSSOM 每日柱状图）及导出页统计条，统一 `SearchField`（`/` 聚焦、回车提交、一键清空）与弹窗滚动锁，新增路由级 `PageErrorBoundary`，并修复 390/320 px 横向溢出与 7 日徽标裁切。
+- `main` CI（46081562340）全绿：Python/Worker/Echo 回归、12 项前端 Vitest、真实回环握手、100 节点合成流水线及 Pages/Functions 构建全部通过。生产 `https://nodema-dashboard.pages.dev` 全部 5 个静态资源（`/`, `assets/favicon.svg`, `assets/index-DGH_bX9u.css`, `assets/index-CpEcCgSO.js`, `assets/qrcode-B5qZJ9Yy.js`）返回 200 且 SHA-256 与构建产物逐字节一致；严格 CSP 与 `Cache-Control: no-store` 生效；`/api/health` 200，匿名 `/api/session` 与 `/api/readiness` 401，认证 `/api/readiness` 返回 `ready=true`（database/schema/dispatch 全真）；真实 Chrome 加载线上首页零 CSP/脚本报错。
+
 ## 2026-11-28 第二十九次发布：Dashboard 前端重构
 
 - 本次仅发布 Pages，部署 ID `e6d85d6f-80ee-49d3-83b0-2fd07350cd48`，源码 `41c443c`（测试日期锚定修复 `d0b0b40`）。API Worker 仍为 `97dfbdb7-fa2f-44c7-979e-918a30e31504`，schema 仍为 `0028_node_classification`。[Pages 部署](https://e6d85d6f.nodema-dashboard.pages.dev) · [main CI](https://github.com/Samiya321/nodema/actions/runs/46070362655)

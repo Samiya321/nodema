@@ -2,6 +2,14 @@
 
 新会话/其他 agent 先读 [接管指南](HANDOFF.md)；生产操作和凭据读取边界见 [生产操作手册](PRODUCTION_OPERATIONS.md)。
 
+## 2026-11-28 Dashboard 页面布局、交互与视觉优化
+
+- 已发布 Pages `ddb0d42f-fd42-4790-8f6a-f7e135cecaf3`，源码 `c120925`，生产 schema 保持 `0028_node_classification`，API Worker 与 Echo 未变更。[发布记录](CLOUD_DEPLOYMENT.md#2026-11-28-第三十次发布dashboard-界面与交互优化) · [main CI](https://github.com/Samiya321/nodema/actions/runs/46081562340)
+- 在保留现有 React 19 + TypeScript + Vite 技术栈与零新增依赖的前提下，统一搜索交互（`SearchField` 防抖 / 回车立即触发 / `Escape` 与按钮清空 / `/` 快捷键聚焦）与统一 `.control-panel` 控制条；集中化 `useBodyScrollLock`（`body.modal-open` 类切换，符合严格 CSP）和 `PageErrorBoundary` 路由容错边界。
+- 布局与信息层次升级：侧栏增加分组、左侧激活条、来源异常徽章和实时检测脉冲点；总览升级为 KPI 占比胶囊、6 格可点击质量分布网格、5 格资产紧凑网格与中文国名落地胶囊；节点列表去噪为单行元数据 + 语义化异常 `.flag-chip` + 7 天可用率语义着色；节点详情新增 4 指标 Hero 概览条与折叠区摘要胶囊；接入测量新增 CSP 安全的每日柱状图卡片（`BarColumn`），用量页改为结构化键值列表并补充空值防御；导出页增加顶部 4 项统计条。
+- 响应式修复：为 `.card` / `.control-panel` 直接子元素补充 `min-width: 0` 修复移动端来源页和总览页在 390 / 320 px 下的横向溢出，修复总览 7 日批次卡 4 字徽标裁切问题。
+- 验证：本机与 GitHub Actions `main` CI（[46081562340](https://github.com/Samiya321/nodema/actions/runs/46081562340)）全量通过，含 Python/Worker/Echo 回归、12 项 Vitest 前端测试与 Pages/Functions 构建；合成预览 + 真 Chrome 覆盖 8 页面 × 1440（浅/深色）/ 390 / 320 px 均 0 横向溢出与 0 报错；生产 5 个静态资源 SHA-256、严格 CSP、`no-store`、`/api/health` 200、匿名 401、认证 readiness（`ready=true`）及线上首页加载零 CSP/JS 报错已复核。
+
 ## 2026-11-28 Dashboard 前端完全重构
 
 - 已发布 Pages `e6d85d6f-80ee-49d3-83b0-2fd07350cd48`，源码 `41c443c`（CI 修复 `d0b0b40`），生产 schema 保持 `0028_node_classification`，API Worker 与 Echo 未变更。[发布记录](CLOUD_DEPLOYMENT.md#2026-11-28-第二十九次发布dashboard-前端重构) · [main CI](https://github.com/Samiya321/nodema/actions/runs/46070362655)
