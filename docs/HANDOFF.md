@@ -93,8 +93,8 @@
 | cloudflare/api-worker/src/catalog.ts、quality.ts、export-api.ts | 生产查询、规则、导出控制及成品读取；与 Python 语义保持一致 |
 | cloudflare/api-worker/src/grading.ts | 分级规则校验（与 app/grading.py 一致）、`/api/grading-policy`、`/api/probe-status`、`/api/nodes/:id/access` |
 | cloudflare/api-worker/src/formats.ts | 转换兼容性测试参照；生产下载入口不应调用它做即时转换 |
-| app/web/ | 中文界面 JS/HTML/CSS 的源文件；不要只修改生成 dist |
-| web/dashboard/ | Pages 构建、Functions 代理与 API 服务绑定 |
+| web/dashboard/src/ | 中文 Dashboard 前端源码（React 19 + TypeScript + Vite，严格 CSP 外部 CSS 设计系统）；不要只修改生成 dist |
+| web/dashboard/functions/ | Pages 构建、Functions 代理与 API 服务绑定 |
 | cloudflare/echo-worker/ | 轻量回显调用者 IP/国家/ASN，不是转发代理 |
 | .github/workflows/ | tests、source-sync、daily-check、export-build、usage、backup |
 | tests/unit、tests/integration、tests/fixtures | 单元/真实 PG 测试、合成 fixtures；Worker 的测试在自己的 test 目录 |
@@ -128,7 +128,7 @@
 uv sync --frozen
 uv run ruff check .
 uv run ruff format --check .
-node --check app/web/app.js
+(cd web/dashboard && npm run check && npm test && npm run build)
 ```
 
 全量测试用新建、仅本任务拥有的容器。若名称或端口已占用，换名字/端口，不停止他人的容器。以下口令均为合成本地测试值：
@@ -143,7 +143,7 @@ export TEST_PG_CONTAINER=nodema-handoff-test
 uv run pytest -q
 (cd cloudflare/api-worker && npm ci && npm run check && npm test)
 (cd cloudflare/echo-worker && npm ci && npm run check && npm test)
-(cd web/dashboard && npm ci && npm run check && npm run build && npx wrangler pages functions build --outdir dist/functions)
+(cd web/dashboard && npm ci && npm run check && npm test && npm run build && npx wrangler pages functions build --outdir dist/functions)
 # 完成后仅停止本任务容器；--rm 会删除该测试实例，不保留测试数据
 docker stop nodema-handoff-test
 ```

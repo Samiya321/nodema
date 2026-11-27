@@ -1,1 +1,7 @@
-{"compilerOptions":{"target":"ES2022","module":"ES2022","moduleResolution":"Bundler","strict":true,"skipLibCheck":true,"types":["node"],"lib":["ES2022"]},"include":["functions/**/*.ts","worker-configuration.d.ts"]}
+{
+  "files": [],
+  "references": [
+    { "path": "./tsconfig.app.json" },
+    { "path": "./tsconfig.functions.json" }
+  ]
+}
