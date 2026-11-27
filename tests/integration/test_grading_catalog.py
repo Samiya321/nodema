@@ -369,7 +369,7 @@ class FakeClient:
 def test_probe_round_plans_measures_and_records_counts(service, monitor_settings, fixture_bytes):
     seed(service, monitor_settings, fixture_bytes)
     client = FakeClient()
-    off_peak = datetime(2026, 11, 13, 4, 0, tzinfo=UTC)  # 12:00 Beijing
+    off_peak = datetime.now(UTC).replace(hour=4, minute=0, second=0, microsecond=0)  # 12:00 Beijing
     summary = runner.run(service.sessions, monitor_settings, client=client, clock=lambda: off_peak)
     assert (
         summary["status"] == "OK"
@@ -397,7 +397,7 @@ def test_probe_round_plans_measures_and_records_counts(service, monitor_settings
         service.sessions, monitor_settings, client=FakeClient(), clock=lambda: off_peak
     )
     assert again["planned"] == 0  # everything is fresh
-    peak = datetime(2026, 11, 13, 13, 0, tzinfo=UTC)
+    peak = off_peak.replace(hour=13)  # 21:00 Beijing
     evening = FakeClient()
     assert runner.run(service.sessions, monitor_settings, client=evening, clock=lambda: peak)[
         "peak"
